@@ -1,0 +1,18 @@
+{
+  "AWSEBDockerrunVersion": 2,
+  "containerDefinitions": [
+    {
+      "MemoryReservation": 1048,
+      "name": "awestruck",
+      "essential": true,
+      "image": "<your-aws-acct-id>.dkr.ecr.us-east-1.amazonaws.com/awestruck:latest",
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 80
+        }
+      ],
+      "memory": 512
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+<html> 
+  <head> 
+      <script type="text/javascript" src="demo.js"></script>
+      <link rel="stylesheet" href="demo.css">
+  </head>
+
+  <body>
+    <div id="demo">
+      This demo shows how algorithmic music can be synthesized in the cloud for realtime streaming and user interaction over the Internet.
+      <br/><br/>
+
+      Demo
+      <br/><br/>
+
+      You'll need access to a terminal for this demo to follow these instructions.<br/><br/>
+
+      1. Copy this command and run in a terminal. It'll hit the Awestruck API to boot up SuperCollider and respond with a token:
+      <br/><br/>
+
+      <input id="localSessionDescription">
+      <button onclick="copyText()">Copy command</button>
+      <br/><br/>
+
+      2. After running that command in a terminal, paste the response token you received in the terminal
+      in the form below. It'll be a long string of text in double quotes within a "remote_token" field in the response:<br />
+      <textarea id="remoteSessionDescription"></textarea>
+      <br/><br/>
+
+      3. Once you've pasted the result from your terminal above, click the button below to start streaming.
+      <br/><br/>
+
+      <button onclick="window.startSession()"> Stream Audio </button>
+      <br/><br/>
+
+      <div id="div"></div>
+      <br/><br/>
+
+      4. You should now hear music. To interact with it, copy, paste and run some of the
+      following commands in your terminal:
+      <br/><br/>
+
+      curl -X PUT http://localhost:8080/osc -d '{"var1": 1, "var2": 2, "var3": 3}'
+      <br/><br/>
+
+      curl -X PUT http://localhost:8080/osc -d '{"var1": 0, "var2": 2, "var3": 4}'
+      <br/><br/>
+
+      curl -X PUT http://localhost:8080/osc -d '{"var1": 2, "var2": 3, "var3": 1}'
+      <br/><br/>
+    </div>
+  </body>
+</html>
