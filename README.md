@@ -33,4 +33,4 @@ My original goal for Awestruck was to further open source music development and 
 * Fix the broken prototype – WebRTC is not connecting as it previously was. Likely version related since I am dusting this off several years later
 * Support n SuperCollider instances and client connections. Handle disconnections gracefully
 * Start collecting .scd submissions. Start by importing some of my old ones that live here: https://github.com/keypulsations/variations
-* Explore how LLMs can be used to create and refine new compositions using realtime input from humans
+* ***Explore how LLMs can be used to create and refine new compositions using realtime input from humans***
