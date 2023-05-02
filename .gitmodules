@@ -1,0 +1,3 @@
+[submodule "example-webrtc-applications"]
+	path = example-webrtc-applications
+	url = https://github.com/po-studio/example-webrtc-applications
