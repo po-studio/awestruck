@@ -9,7 +9,7 @@ Real-time synthesis and streaming with:
 * OSC (open sound control)
 * Go (simple server)
 
-**NOTE: this prototype currently broken. issues to come soon**
+**NOTE: this prototype is currently broken. Issues to come soon!**
 
 This is what it should be able to do: https://youtu.be/iEC6-pBFj2Q
 
