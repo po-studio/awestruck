@@ -16,9 +16,11 @@ This is what it should be able to do: https://youtu.be/iEC6-pBFj2Q
 ## Getting Started
 You'll need Docker/Docker Compose to build and run locally.
 
+```
 * make build
 * make up
 * localhost:8080
+```
 
 ## Deployments
 Docker is used to build an image, deploy to AWS ECR, and run within EB using ECS.
@@ -27,7 +29,7 @@ Make sure you set your AWS env vars according to .env.sample by creating your ow
 
 
 ## Vision
-My original goal for Awestruck was to further open source music development and composition with SuperCollider. My thought was that if compositions could be synthesized and manipulated in realtime by separate collaborators/clients, that this might open up new possibilities for music.
+My original goal for Awestruck was to further open source music development and composition with SuperCollider. My thought was that if compositions could be synthesized and manipulated in realtime by separate collaborators/clients, that this might open up new possibilities for music and further the case for algorithmic composition. With recent developments such as AutoGPT, I think the possibilities are endless.
 
 ### Next steps
 * Fix the broken prototype – WebRTC is not connecting as it previously was. Likely version related since I am dusting this off several years later
