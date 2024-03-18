@@ -1,6 +1,8 @@
 # Awestruck – Real-Time Audio Synthesis & Streaming
 ##  SuperCollider, Go, Pion/WebRTC, Jack, & GStreamer
 
+https://www.youtube.com/watch?v=iEC6-pBFj2Q
+
 This repository contains a Makefile and Docker configuration for building and running a demo that:
 * Let's a client request a WebRTC connection to a server
 * Boots up SuperCollider to run a hard-coded file "liljedahl.scd" headlessly
