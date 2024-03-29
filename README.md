@@ -1,6 +1,6 @@
-#![brandmark](https://github.com/po-studio/awestruck/assets/1250151/73a82d56-0f3e-4cff-a8bd-014ba2c94d1e)
+![brandmark](https://github.com/po-studio/awestruck/assets/1250151/73a82d56-0f3e-4cff-a8bd-014ba2c94d1e)
 
- Awestruck – Real-Time Audio Synthesis & Streaming
+# Awestruck – Real-Time Audio Synthesis & Streaming
 ##  SuperCollider, Go, Pion/WebRTC, Jack, & GStreamer
 
 https://www.youtube.com/watch?v=iEC6-pBFj2Q
