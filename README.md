@@ -6,7 +6,7 @@
 https://www.youtube.com/watch?v=iEC6-pBFj2Q
 
 This repository contains a Makefile and Docker configuration for building and running a demo that:
-* Let's a client request a WebRTC connection to a server
+* Allows a client request a WebRTC connection to a server
 * Boots up SuperCollider to run a hard-coded file "liljedahl.scd" headlessly
 * Pipes SuperCollider audio through the GStreamer JACK audio source
 
