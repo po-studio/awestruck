@@ -1,0 +1,31 @@
+version: "3.7"
+
+services:
+    
+    worker:
+        build:
+            context: .
+            dockerfile: docker/Dockerfile.streamer
+        user: "1000"
+        privileged: true
+        ulimits:
+          rtprio: 99
+          memlock: -1
+        volumes:
+            - ./go-webrtc-server:/build/go-webrtc-server/go-webrtc-server
+            - ./supercollider:/app/supercollider
+            - ./scripts:/app/scripts
+            - ./client:/app/client
+            - /dev/snd:/dev/snd
+            - /dev/shm:/dev/shm
+        ports:
+            - 8080:8080
+            - 3033:3033
+            - 3478:3478/udp
+            - 3478:3478/tcp
+            - 5349:5349/tcp
+            - 57120:57120/udp # supercollider osc
+            #- 50000:50000
+        environment:
+            - DEBIAN_FRONTEND=noninteractive
+            - PION_LOG_TRACE=all
