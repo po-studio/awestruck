@@ -2,6 +2,16 @@ version: "3.7"
 
 services:
     
+    controller:
+        build:
+            context: .
+            dockerfile: docker/Dockerfile.controller
+        command: flask --app server run --debug --host=0.0.0.0 --port 5432
+        volumes:
+            - ./controller:/code
+        ports:
+            - "0.0.0.0:5432:5432"    
+
     worker:
         build:
             context: .
