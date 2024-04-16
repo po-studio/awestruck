@@ -21,6 +21,16 @@
     <h2>WebRTC Audio Stream</h2>
     <button id="startButton">Start Streaming</button>
     <script src="script.js"></script>
+    <h2>Parameters</h2>
+    <input id="slider" type="range" min="0.0" max="1.0" step="0.1"/>
+    <script>
+        const slider = document.getElementById("slider");
+        slider.addEventListener("input", evt => {
+            fetch("http://localhost:5432/send_osc?address=test&value=" + evt.target.value)
+                .then((response) => response.json())
+                .then((json) => console.log(json));
+        })
+    </script>
 </body>
 
 </html>
