@@ -3,9 +3,12 @@ postln("SUPERCOLLIDER HAS STARTED");
 
 s.boot; // Ensure the server is booted
 
+postln("Listening OSC in port:");
+postln(NetAddr.langPort);
+
 // https://sccode.org/1-4Rn
 (
-SynthDef(\sawFilt, { |out = 0, freq = 440, amp = 0.1, gate = 1, cf = 100, wobble = 3, t_bd, t_sd, pw = 0.4|
+SynthDef(\sawFilt, { |out = 0, freq = 440, amp = 0.1, gate = 1, cf = 100, wobble = 3, t_bd, t_sd, pw = 0.4, out_amp = 0.5|
 	var base = Splay.ar(RLPF.ar(Pulse.ar(freq * [0.99,0.5,1.01],pw),cf.lag(0.05),0.3).madd(SinOsc.ar(wobble).range(0.5,4)).sin) * 0.5;
 	var env = Linen.kr(gate, attackTime: 0.01, releaseTime: 0.5, doneAction: 2);
 	var sig = base;
@@ -13,9 +16,14 @@ SynthDef(\sawFilt, { |out = 0, freq = 440, amp = 0.1, gate = 1, cf = 100, wobble
 	var sd = tanh(Ringz.ar(LPF.ar(Trig.ar(t_sd,SampleDur.ir),1000),120,0.75,PinkNoise.ar(2!2)).sin*2);
 	sd = HPF.ar(sd,60);
 	sig = tanh(GVerb.ar(HPF.ar(base * env,30), 70, 11, 0.15)*0.5 + sig + bd + sd);
-	Out.ar(out, sig*amp*env);
+	Out.ar(out, sig*amp*env*out_amp);
 }).add;
 );
+
+OSCdef.newMatching(\oscMatcher, {|msg, time, addr, recvPort| 
+									postln(msg[1]);  // This works as expected
+									// What could I do here to change \out_amp from \sawFilt? I tried "Ndef(\sawFilt).set(\out_amp, msg[1]);" and it does not work...
+								}, '/test'); // path matching
 
 s.waitForBoot({
 	
