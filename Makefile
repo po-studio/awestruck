@@ -9,7 +9,7 @@ BROWSER_PORT=8080
 build:
 	docker build -t $(IMAGE_NAME) .
 
-run: build
+up: build
 	docker run --rm --name $(CONTAINER_NAME) \
 		--user "1000" \
 		--privileged \
@@ -31,6 +31,14 @@ run: build
 		-e DEBIAN_FRONTEND=noninteractive \
 		-e PION_LOG_TRACE=all \
 		$(IMAGE_NAME) & echo "Attempting to open the browser..." & sleep 2 && $(MAKE) open-browser
+
+down:
+	@echo "Stopping the container..."
+	-docker stop $(CONTAINER_NAME)
+	@echo "Stopping SuperCollider server..."
+	-docker exec -it $(CONTAINER_NAME) pkill sclang || true
+	@echo "Everything stopped gracefully."
+
 
 open-browser:
 	@-if command -v xdg-open > /dev/null; then \

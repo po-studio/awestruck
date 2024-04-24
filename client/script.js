@@ -78,7 +78,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       if (pc) {
         pc.close();
         pc = null; // Reset the peer connection
-        this.textContent = 'Start Connection';
+        this.textContent = 'Start New Synth';
         this.disabled = false;
       }
     });
