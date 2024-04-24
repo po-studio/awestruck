@@ -13,9 +13,9 @@ Along with SuperCollider, Awestruck uses:
 ## Why?
 There are client-side audio frameworks such as [Tone.js](https://tonejs.github.io/), which are powerful in their own right. However, server-driven audio synthesis allows for using tools like SuperCollider, which offer more flexibility, complex audio processing, and algorithmic composition. It also paves the way for AI-powered audio synthesis and speech models, which are limited in client environments.
 
-While this repo doesn't currently include methods for controlling the synth from client requests, this is possible with OSC and old-fashioned JSON payloads (though protobufs could make more sense if latency is of utmost concern).
+While this repo doesn't currently include methods for controlling the synth from client requests, this is possible with [OpenSoundControl](https://ccrma.stanford.edu/groups/osc/index.html) and old-fashioned JSON payloads. Protobufs could offer more efficiency in size/speed for high-frequency, low-latency needs.
 
-The video demo below demonstrates a deployed instance of Awestruck which is controlled via remote requests.
+The video demo below demonstrates a deployed instance of Awestruck that is controlled via remote requests.
 
 ## Demo
 https://www.youtube.com/watch?v=iEC6-pBFj2Q
@@ -31,7 +31,7 @@ This repository contains a Makefile and Docker configuration for building and ru
 ## Prerequisites
 
 * Docker
-* NOTE: Docker Desktop does not easily allow for enabling IPv6, which is needed to connect to STUN. One fix is to use [OrbStack](https://orbstack.dev/), which let's you easily enable IPv6
+* NOTE: Docker Desktop does not easily allow for enabling IPv6, which is needed for STUN connections. One fix is to use [OrbStack](https://orbstack.dev/), which lets you easily enable IPv6.
 
 ## Getting Started
 
@@ -54,8 +54,8 @@ This should boot up the server and open a browser window. If you do not see a br
 * You should then hear audio
 
 ## Thoughts
-The synth examples in the `supercollider` directory are taken from simple "SC tweets" under 140 characters in length. However, SuperCollider can be used to create sophisticated [music](https://open.spotify.com/track/4VecDB1uhp44posWgt85yN?si=b226049745f14d82) beyond just bloops and bleeps. I started this project years ago because this piece by Jonatan Liljedahl fascinates me.
+The toy synth examples in the `supercollider` directory are taken from simple "SC tweets" under 140 characters in length, and are just examples. However, SuperCollider can be used to create sophisticated music beyond just bloops and bleeps. For example, Jonatan Liljedahl wrote this [music](https://open.spotify.com/track/4VecDB1uhp44posWgt85yN?si=b226049745f14d82) in ~100 lines of code. Imagine complex "applications" which represent pieces of music on the scale of symphonies or concertos.
 
 Now, I'm interested applications/integrations with AIs. This could include:
-* LLM-driven algorithmic composition. In an ideal scenario, given a prompt for a style of music, the LLM could write the .scd code before streaming it, with rapid feedback for the listener/co-composer. Unfortunately, there is little SuperCollider code out there for AIs to train on. This may change.
-* Streaming of text-to-speech audio that must originate from a server environment.
+* Streaming of LLM-powered [text-to-speech audio](https://github.com/suno-ai/bark) that calls for server-side origins.
+* LLM-driven algorithmic composition. In an ideal scenario, given a prompt for a style of music, the LLM could write the .scd code before streaming it, with rapid feedback for the listener/co-composer. Unfortunately, there is little SuperCollider code out there for AIs to train on, and even if there were, a higher-level system like [Devin](https://www.cognition-labs.com/introducing-devin) with knowledge of musical structure and aesthetics would be necessary in order to produce anything worth listening to. This may change.
