@@ -2,16 +2,23 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/hypebeast/go-osc/osc"
 	"github.com/pion/ice/v2" // Make sure the version is compatible with your webrtc version
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v3"
@@ -27,7 +34,19 @@ type BrowserOffer struct {
 	Type string `json:"type"`
 }
 
+// AppState holds the state of the application
+type AppState struct {
+	PeerConnection    *webrtc.PeerConnection
+	GStreamerPipeline *gst.Pipeline
+	SuperColliderCmd  *exec.Cmd
+}
+
+// Global variable to hold the application state
+var appState AppState
+var audioSrc = flag.String("audio-src", "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
+
 func main() {
+	flag.Parse()
 
 	// Handle SIGINT and SIGTERM signals
 	signalChannel := make(chan os.Signal, 1)
@@ -48,6 +67,7 @@ func main() {
 
 	router := mux.NewRouter()
 	router.HandleFunc("/offer", handleOffer).Methods("POST")
+	router.HandleFunc("/stop", handleStop).Methods("POST")
 	router.HandleFunc("/", serveHome).Methods("GET")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./client/")))
 	fmt.Println("Server started at http://localhost:8080")
@@ -58,8 +78,18 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "./client/index.html")
 }
 
+func handleStop(w http.ResponseWriter, r *http.Request) {
+	// Insert logic to stop streaming and clean up
+	fmt.Println("Stop signal received, cleaning up...")
+	// Assuming you have functions to stop processes
+	stopAllProcesses()
+	w.WriteHeader(http.StatusOK)
+}
+
 func handleOffer(w http.ResponseWriter, r *http.Request) {
 	var browserOffer BrowserOffer
+	var err error
+
 	if err := json.NewDecoder(r.Body).Decode(&browserOffer); err != nil {
 		log.Println("Error decoding offer:", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -93,7 +123,7 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Now, use this API instance to create your PeerConnection
-	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{
+	appState.PeerConnection, err = api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
 				URLs: []string{"stun:stun.l.google.com:19302"},
@@ -107,14 +137,9 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	peerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+	appState.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("ICE Connection State has changed: %s\n", state.String())
 	})
-
-	if err != nil {
-		http.Error(w, "Failed to create peer connection: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 
 	audioTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "pion1")
 
@@ -124,43 +149,43 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = peerConnection.AddTrack(audioTrack)
+	_, err = appState.PeerConnection.AddTrack(audioTrack)
 	if err != nil {
 		log.Printf("Failed to add audio track to the peer connection: %v\n", err)
 		http.Error(w, "Failed to add audio track to the peer connection: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	err = peerConnection.SetRemoteDescription(offer)
+	err = appState.PeerConnection.SetRemoteDescription(offer)
 	if err != nil {
 		log.Println("set remote description error:", err)
 		http.Error(w, "Failed to set remote description: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	answer, err := peerConnection.CreateAnswer(nil)
+	answer, err := appState.PeerConnection.CreateAnswer(nil)
 	if err != nil {
 		log.Println("Error creating answer:", err)
 		http.Error(w, "Failed to create answer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+	gatherComplete := webrtc.GatheringCompletePromise(appState.PeerConnection)
 
-	err = peerConnection.SetLocalDescription(answer)
+	err = appState.PeerConnection.SetLocalDescription(answer)
 	if err != nil {
 		log.Println("Error setting local description:", err)
 		http.Error(w, "Failed to set local description: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	audioSrc := flag.String("audio-src", "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
+	// audioSrc := flag.String("audio-src", "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
 	pipelineReady := make(chan struct{})
 
 	go func() {
 		log.Println("creating pipeline...")
-		pipeline := gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, *audioSrc)
-		pipeline.Start()
+		appState.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, *audioSrc)
+		appState.GStreamerPipeline.Start()
 
 		log.Println("Pipeline created and started")
 		close(pipelineReady)
@@ -174,7 +199,7 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	<-gatherComplete
 
-	localDescription := peerConnection.LocalDescription()
+	localDescription := appState.PeerConnection.LocalDescription()
 	encodedLocalDesc, err := json.Marshal(localDescription)
 	if err != nil {
 		log.Println("Error encoding local description:", err)
@@ -186,35 +211,71 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	w.Write(encodedLocalDesc) // This writes the JSON representation of the local description
 }
 
-func startSuperCollider() {
-	cmd := exec.Command("xvfb-run", "-a", "sclang", "/app/supercollider/liljedahl.scd")
+func getRandomSCDFile(dir string) (string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
 
-	// Create pipes for stdout and stderr
-	stdout, err := cmd.StdoutPipe()
+	var scdFiles []string
+	for _, file := range files {
+		if filepath.Ext(file.Name()) == ".scd" {
+			scdFiles = append(scdFiles, filepath.Join(dir, file.Name()))
+		}
+	}
+
+	if len(scdFiles) == 0 {
+		return "", fmt.Errorf("no .scd files found in %s", dir)
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	return scdFiles[rand.Intn(len(scdFiles))], nil
+}
+
+func startSuperCollider() {
+	scdFile, err := getRandomSCDFile("/app/supercollider")
+	if err != nil {
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+
+	// Set the command with the random .scd file
+	log.Printf("SC FILE: %v\n", scdFile)
+	appState.SuperColliderCmd = exec.Command("xvfb-run", "-a", "sclang", scdFile)
+
+	stdout, err := appState.SuperColliderCmd.StdoutPipe()
 	if err != nil {
 		log.Printf("Error obtaining stdout: %v\n", err)
 		return
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, err := appState.SuperColliderCmd.StderrPipe()
 	if err != nil {
 		log.Printf("Error obtaining stderr: %v\n", err)
 		return
 	}
 
-	// Start the command
-	if err := cmd.Start(); err != nil {
+	if err := appState.SuperColliderCmd.Start(); err != nil {
 		log.Printf("Failed to start SuperCollider: %v\n", err)
 		return
 	}
-	log.Println("SuperCollider started")
+	log.Println("SuperCollider command started")
 
-	// Create scanner to read stdout and stderr
+	scanner := bufio.NewScanner(stdout)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			log.Println("SuperCollider stdout: ", scanner.Text())
+			text := scanner.Text()
+			log.Println("SuperCollider stdout: ", text)
+			// if strings.Contains(text, "SUPERCOLLIDER_READY_FOR_JACK_CONNECTIONS") {
+			if strings.Contains(text, "JackDriver: connected  SuperCollider:out_2 to system:playback_2") {
+				log.Println("SuperCollider is ready. Connecting JACK ports...")
+				if err := connectJackPorts(); err != nil {
+					log.Printf("Error connecting JACK ports: %v\n", err)
+				}
+				break // Exit the loop after triggering connection
+			}
 		}
 	}()
+
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
@@ -223,10 +284,177 @@ func startSuperCollider() {
 	}()
 
 	// Wait for the command to finish
-	err = cmd.Wait()
+	err = appState.SuperColliderCmd.Wait()
 	if err != nil {
 		log.Printf("SuperCollider exited with error: %v\n", err)
 	} else {
 		log.Println("SuperCollider finished successfully")
 	}
+}
+
+func findJackPorts() ([]string, error) {
+	cmd := exec.Command("jack_lsp")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("error listing JACK ports: %w", err)
+	}
+
+	ports := strings.Split(out.String(), "\n")
+	var webrtcPorts []string
+	for _, port := range ports {
+		if strings.Contains(port, "webrtc-server:in_jackaudiosrc") {
+			webrtcPorts = append(webrtcPorts, port)
+		}
+	}
+
+	return webrtcPorts, nil
+}
+
+func connectJackPorts() error {
+	webrtcPorts, err := findJackPorts()
+	if err != nil {
+		return fmt.Errorf("error finding JACK ports: %w", err)
+	}
+
+	var connectErrors []string
+	for _, webrtcPort := range webrtcPorts {
+		if err := connectPort("SuperCollider:out_1", webrtcPort); err != nil {
+			connectErrors = append(connectErrors, err.Error())
+		}
+	}
+
+	if len(connectErrors) > 0 {
+		return fmt.Errorf("failed to connect some ports: %s", strings.Join(connectErrors, "; "))
+	}
+
+	// Send the new port names to SuperCollider
+	if err := sendOSCUpdate("/updateJACKOutputs", webrtcPorts); err != nil {
+		return fmt.Errorf("failed to send OSC update for JACK ports: %w", err)
+	}
+
+	return nil
+}
+
+func connectPort(outputPort, inputPort string) error {
+	cmd := exec.Command("jack_connect", outputPort, inputPort)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to connect %s to %s: %w", outputPort, inputPort, err)
+	}
+	return nil
+}
+
+func disconnectJackPorts() error {
+	webrtcPorts, err := findJackPorts()
+	if err != nil {
+		return fmt.Errorf("error finding JACK ports: %w", err)
+	}
+
+	var disconnectErrors []string
+	for _, webrtcPort := range webrtcPorts {
+		if err := disconnectPort("SuperCollider:out_1", webrtcPort); err != nil {
+			disconnectErrors = append(disconnectErrors, err.Error())
+		}
+	}
+
+	if len(disconnectErrors) > 0 {
+		return fmt.Errorf("failed to disconnect some ports: %s", strings.Join(disconnectErrors, "; "))
+	}
+	return nil
+}
+
+func disconnectPort(outputPort, inputPort string) error {
+	cmd := exec.Command("jack_disconnect", outputPort, inputPort)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to disconnect %s from %s: %w", outputPort, inputPort, err)
+	}
+	return nil
+}
+
+func stopAllProcesses() {
+	fmt.Println("Stopping all processes...")
+
+	stopSuperCollider()
+
+	if err := disconnectJackPorts(); err != nil {
+		fmt.Println("Error disconnecting JACK ports:", err)
+	} else {
+		fmt.Println("JACK ports disconnected successfully.")
+	}
+
+	if appState.PeerConnection != nil {
+		if err := appState.PeerConnection.Close(); err != nil {
+			fmt.Println("Error closing peer connection:", err)
+		} else {
+			fmt.Println("Peer connection closed successfully.")
+		}
+		appState.PeerConnection = nil // Ensure reference is released
+	}
+
+	if appState.GStreamerPipeline != nil {
+		appState.GStreamerPipeline.Stop()
+		appState.GStreamerPipeline = nil // Ensure reference is released
+	}
+
+	fmt.Println("All processes have been stopped.")
+}
+
+// Function to stop SuperCollider gracefully
+func stopSuperCollider() error {
+	if appState.SuperColliderCmd == nil || appState.SuperColliderCmd.Process == nil {
+		fmt.Println("SuperCollider is not running")
+		return nil // Or appropriate error
+	}
+
+	// Create OSC client and send /quit command
+	client := osc.NewClient("localhost", 57110) // Change port if different
+	msg := osc.NewMessage("/quit")
+	err := client.Send(msg)
+	if err != nil {
+		fmt.Printf("Error sending OSC /quit message: %v\n", err)
+		return err
+	}
+	fmt.Println("OSC /quit message sent successfully.")
+
+	// Optionally, wait for the process to finish
+	err = appState.SuperColliderCmd.Wait()
+	if err != nil {
+		fmt.Printf("Error waiting for SuperCollider to quit: %v\n", err)
+		return err
+	}
+
+	fmt.Println("SuperCollider stopped gracefully.")
+	return nil
+}
+
+func sendOSCMessage(address string) error {
+	// Create a new OSC client
+	client := osc.NewClient("localhost", 57110)
+
+	// Create an OSC message with the specified address
+	msg := osc.NewMessage(address)
+
+	// Send the OSC message to SuperCollider
+	err := client.Send(msg)
+	if err != nil {
+		fmt.Println("Error sending OSC message:", err)
+		return err
+	}
+
+	fmt.Println("OSC message sent successfully.")
+	return nil
+}
+
+func sendOSCUpdate(address string, ports []string) error {
+	client := osc.NewClient("localhost", 57110)
+	msg := osc.NewMessage(address)
+	for _, port := range ports {
+		msg.Append(port)
+	}
+	if err := client.Send(msg); err != nil {
+		return fmt.Errorf("error sending OSC message: %w", err)
+	}
+	fmt.Println("OSC message sent successfully with ports update.")
+	return nil
 }
