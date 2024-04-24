@@ -8,18 +8,74 @@
         :root {
             --text-color: #fff;
             --background-color: #333;
+            --button-bg-color: #007BFF;
+            --button-text-color: #fff;
+            --button-hover-bg-color: #0056b3;
+            --button-active-bg-color: #004099;
+            --button-disabled-bg-color: #004099;
         }
 
         body {
             color: var(--text-color);
             background-color: var(--background-color);
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        h2 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 4vh;
+        }
+
+        button {
+            background-color: var(--button-bg-color);
+            color: var(--button-text-color);
+            border: none;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            transition: background-color 0.3s ease;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        button:hover {
+            background-color: var(--button-hover-bg-color);
+        }
+
+        button:active {
+            background-color: var(--button-active-bg-color);
+        }
+
+        button:disabled {
+            background-color: var(--button-disabled-bg-color);
+            cursor: not-allowed;
+        }
+
+        .container {
+            text-align: center;
         }
     </style>
 </head>
 
 <body>
-    <h2>WebRTC Audio Stream</h2>
-    <button id="startButton">Start Streaming</button>
+    <div id="container" class="container">
+        <h2>WebRTC Audio Stream</h2>
+        <button id="toggleConnection">Start Synthesis</button>
+    </div>
     <script src="script.js"></script>
 </body>
 

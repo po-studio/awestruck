@@ -2,20 +2,21 @@
 
 IMAGE_NAME=go-webrtc-server
 CONTAINER_NAME=go-webrtc-server-instance
+BROWSER_PORT=8080
 
-.PHONY: build run
+.PHONY: build run open-browser
 
 build:
 	docker build -t $(IMAGE_NAME) .
 
-run:
+run: build
 	docker run --rm --name $(CONTAINER_NAME) \
 		--user "1000" \
 		--privileged \
 		--ulimit memlock=-1:-1 \
 		--ulimit rtprio=99:99 \
 		--cap-add SYS_NICE \
-		-p 8080:8080 \
+		-p $(BROWSER_PORT):$(BROWSER_PORT) \
 		-p 3033:3033 \
 		-p 3478:3478/udp \
 		-p 3478:3478/tcp \
@@ -29,5 +30,15 @@ run:
 		-v "/dev/shm:/dev/shm" \
 		-e DEBIAN_FRONTEND=noninteractive \
 		-e PION_LOG_TRACE=all \
-		$(IMAGE_NAME)
+		$(IMAGE_NAME) & echo "Attempting to open the browser..." & sleep 2 && $(MAKE) open-browser
 
+open-browser:
+	@-if command -v xdg-open > /dev/null; then \
+		xdg-open http://localhost:$(BROWSER_PORT); \
+	elif command -v open > /dev/null; then \
+		open http://localhost:$(BROWSER_PORT); \
+	elif command -v cmd /c start > /dev/null; then \
+		cmd /c start http://localhost:$(BROWSER_PORT); \
+	else \
+		echo "Please open http://localhost:$(BROWSER_PORT) in your browser."; \
+	fi

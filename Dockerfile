@@ -52,6 +52,7 @@ RUN chown -R appuser:appuser /app
 # Install runtime dependencies
 # Include gstreamer1.0-tools here
 RUN apt-get update && apt-get install -y \
+    procps \
     jackd2 \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
