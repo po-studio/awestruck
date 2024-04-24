@@ -21,12 +21,13 @@ The video demo below demonstrates a deployed instance of Awestruck that is contr
 https://www.youtube.com/watch?v=iEC6-pBFj2Q
 
 ## Contents
-This repository contains a Makefile and Docker configuration for building and running a demo that:
+This repository contains a Makefile and Docker configuration for building and running a demo that provides a browser interface for starting the synth. Starting the synth does the following:
 
-* Allows a client request a WebRTC connection to a server
-* Headlessly starts SuperCollider with a random, hard-coded [.scd](https://sctweets.tumblr.com/) file.
-* Pipes SuperCollider audio through the GStreamer JACK audio source
-* Plays audio through the browser
+* Forms a Pion/WebRTC connection to the running server via handshakes
+* Creates a GStreamer pipeline with JACK audio
+* Headlessly starts SuperCollider with a random, hard-coded [.scd](https://sctweets.tumblr.com/) file
+* Pipes SuperCollider output audio through GStreamer via JACK
+* Uses Pion/WebRTC to stream the audio to the browser
 
 ## Prerequisites
 
