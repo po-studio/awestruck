@@ -1,6 +1,10 @@
 ![brandmark](https://github.com/po-studio/awestruck/assets/1250151/84795f2f-31de-4db3-b653-becab5dc06b9)
 
 # Awestruck
+
+## WARNING
+Before streaming audio, please turn the volume on your machine down, especially if you're using headphones. While I've tried to ensure the examples play at a reasonable volume, glitches can occur in rare cases.
+
 ## Real-Time Audio Synthesis, Streaming, & Manipulation
 
 Awestruck aims to provide a framework for real-time, server-driven audio synthesis and streaming. It uses SuperCollider, a powerful language for audio programming, but any number of synthesis engines could be supported.
