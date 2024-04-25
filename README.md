@@ -39,6 +39,7 @@ This repository contains a Makefile and Docker configuration for building and ru
 
 ## Getting Started
 
+### Build & Run
 To start using this repository, clone it to your local machine and navigate into the directory:
 
 ```
@@ -46,16 +47,17 @@ make build
 make up
 ```
 
-To gracefully stop all processes:
-```
-make down
-```
-
 This should boot up the server and open a browser window. If you do not see a browser window, go to:
 * localhost:8080
 * Click "Start Random Synth" – view the browser console logs and you'll see the connection take place
 * View the server logs to see the handshakes occur, the connection to succeed, and SuperCollider to start
 * You should then hear audio
+
+### Graceful Shutdown
+To gracefully stop all processes:
+```
+make down
+```
 
 ## Thoughts
 The synth examples in the `supercollider` directory are taken from simple [SC tweets](https://sctweets.tumblr.com) under 140 characters in length, and are highly minimal. That's not to say these nano-compositions aren't interesting, just that they were written by various artists within tight constraints. However, SuperCollider can be used to create larger-scale music.
