@@ -1,18 +1,20 @@
 (
 s.waitForBoot({
-    // Allocate 8 consecutive buffers with varying sine wave contents
-    Buffer.allocConsecutive(8, s, 1024, 1, {|b, i|
-        b.sine1Msg(1 / (1..((i + 1) * 6)))  // Fill each buffer with a sine wave where the frequency decreases
-    }, 0);
-
-    // Play block
-    {
-        var f = [50, 75, 99];  // Frequency array for VOsc3
-        // Vector oscillator with three frequency components modulated by noise and lagged slightly
-        VOsc3.ar(
-            LFNoise1.kr(1 / 4, 3, 4),  // Low-frequency noise as frequency modulator
-            *f  // Spread the frequencies as arguments to VOsc3
-        ).lag(3e-3) ! 2  // Apply a small lag to the output and duplicate for stereo
-    }.play;
+  play {
+    var x = SinOsc; 
+    var y = LFNoise0; 
+    var a = y.ar(8); 
+    
+    var output = (
+      x.ar(Pulse.ar(1) * 24) + 
+      x.ar(90 + (a * 90)) + 
+      MoogFF.ar(
+        Saw.ar(y.ar(4, 333, 666)), 
+        a * XLine.ar(1, 39, 99, 99, 0, 2) 
+      )
+    ) ! 2 / 3; 
+    
+    output; 
+  };
 });
 )
