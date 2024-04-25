@@ -58,8 +58,10 @@ This should boot up the server and open a browser window. If you do not see a br
 * You should then hear audio
 
 ## Thoughts
-The toy synth examples in the `supercollider` directory are taken from simple "SC tweets" under 140 characters in length, and are just examples. However, SuperCollider can be used to create sophisticated music beyond just bloops and bleeps. For example, Jonatan Liljedahl wrote this [music](https://open.spotify.com/track/4VecDB1uhp44posWgt85yN?si=b226049745f14d82) in ~100 lines of code. Imagine complex "applications" which represent pieces of music on the scale of symphonies or concertos.
+The synth examples in the `supercollider` directory are taken from simple [SC tweets](https://sctweets.tumblr.com) under 140 characters in length, and are highly minimal. That's not to say these nano-compositions aren't interesting, just that they were written by various artists within tight constraints. However, SuperCollider can be used to create larger-scale music.
 
-Now, I'm interested applications/integrations with AIs. This could include:
+For example, Jonatan Liljedahl wrote this [track](https://open.spotify.com/track/4VecDB1uhp44posWgt85yN?si=b226049745f14d82) in ~100 lines of SC code. Imagine complex "applications" which represent pieces of music on the scale of symphonies or concertos. This is possible with SuperCollider.
+
+I'm currently interested applications/integrations with AIs. This could include:
 * Streaming of LLM-powered [text-to-speech audio](https://github.com/suno-ai/bark) that calls for server-side origins.
 * LLM-driven algorithmic composition. In an ideal scenario, given a prompt for a style of music, the LLM could write the .scd code before streaming it, with rapid feedback for the listener/co-composer. Unfortunately, there is little SuperCollider code out there for AIs to train on, and even if there were, a higher-level system like [Devin](https://www.cognition-labs.com/introducing-devin) with knowledge of musical structure and aesthetics would be necessary in order to produce anything worth listening to. This may change.
