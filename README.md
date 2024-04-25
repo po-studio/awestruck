@@ -2,11 +2,11 @@
 
 # Awestruck
 
-## Real-Time Audio Synthesis, Streaming, & Manipulation
-Awestruck aims to provide a framework for real-time, server-driven audio synthesis and streaming. It uses SuperCollider, a powerful language for audio programming, but any number of synthesis engines could be supported.
-
 ### WARNING
 Protect your ears! Before streaming audio, please turn the volume on your machine DOWN, especially if you're using headphones. While I've tried to ensure the examples play at a reasonable volume, this software gets close to audio hardware and rare glitches such as amplitude spikes can occur.
+
+## Real-Time Audio Synthesis, Streaming, & Manipulation
+Awestruck aims to provide a framework for real-time, server-driven audio synthesis and streaming. It uses SuperCollider, a powerful language for audio programming, but any number of synthesis engines could be supported.
 
 Along with SuperCollider, Awestruck uses:
 * [JACK](https://jackaudio.org/) as a sound server API for low-latency connections
