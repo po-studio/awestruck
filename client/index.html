@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Streaming Test</title>
+    <title>Awestruck</title>
     <style>
         :root {
             --text-color: #fff;
@@ -13,6 +13,8 @@
             --button-hover-bg-color: #0056b3;
             --button-active-bg-color: #004099;
             --button-disabled-bg-color: #004099;
+            --button-disconnect-bg-color: #d6372e;
+            --button-disconnect-hover-bg-color: #a62b24;
         }
 
         body {
@@ -37,6 +39,12 @@
             gap: 4vh;
         }
 
+        .button-disconnect {
+            background-color: var(--button-disconnect-bg-color);
+            color: var(--text-color);
+        }
+
+
         button {
             background-color: var(--button-bg-color);
             color: var(--button-text-color);
@@ -54,6 +62,9 @@
 
         button:hover {
             background-color: var(--button-hover-bg-color);
+        }
+        .button-disconnect:hover {
+            background-color: var(--button-disconnect-hover-bg-color);
         }
 
         button:active {
@@ -73,8 +84,8 @@
 
 <body>
     <div id="container" class="container">
-        <h2>WebRTC Audio Stream</h2>
-        <button id="toggleConnection">Start Random Synth</button>
+        <h2>RT Synthesis Stream</h2>
+        <button id="toggleConnection">Stream Synth</button>
     </div>
     <script src="script.js"></script>
 </body>

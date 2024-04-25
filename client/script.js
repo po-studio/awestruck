@@ -15,12 +15,15 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       console.log(`Connection state change: ${pc.connectionState}`);
       if (pc.connectionState === 'connected') {
         document.getElementById('toggleConnection').textContent = 'Disconnect';
+        document.getElementById('toggleConnection').classList.add('button-disconnect');
         document.getElementById('toggleConnection').disabled = false;
       } else if (pc.connectionState === 'failed') {
+        document.getElementById('toggleConnection').classList.remove('button-disconnect');
         document.getElementById('toggleConnection').textContent = 'Failed to Connect - Retry?';
         document.getElementById('toggleConnection').disabled = false;
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-        document.getElementById('toggleConnection').textContent = 'Start Connection';
+        document.getElementById('toggleConnection').classList.remove('button-disconnect');
+        document.getElementById('toggleConnection').textContent = 'Stream Synth';
         document.getElementById('toggleConnection').disabled = false;
       }
     };
@@ -31,7 +34,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       console.log('Track received:', event.track.kind);
       var container = document.getElementById('container');
       var el = container.querySelector(event.track.kind); // Find an existing element of the same kind (audio or video)
-    
+
       if (!el) {
         el = document.createElement(event.track.kind);
         el.autoplay = true;
@@ -41,9 +44,9 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       } else {
         console.log('Updating existing audio element.');
       }
-    
+
       el.srcObject = event.streams[0]; // Set or update the source object
-    };    
+    };
 
     pc.onicecandidate = event => {
       if (event.candidate === null && isNegotiationNeeded) {
@@ -76,9 +79,12 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     console.log("Stopping connection...");
     stopSynthesis().then(() => {
       if (pc) {
+        document.getElementById('toggleConnection').classList.remove('button-disconnect');
+        
         pc.close();
         pc = null; // Reset the peer connection
-        this.textContent = 'Start New Synth';
+        
+        this.textContent = 'Stream New Synth';
         this.disabled = false;
       }
     });

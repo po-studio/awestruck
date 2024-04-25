@@ -19,7 +19,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/hypebeast/go-osc/osc"
-	"github.com/pion/ice/v2" // Make sure the version is compatible with your webrtc version
+	"github.com/pion/ice/v2"
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v3"
 
@@ -34,21 +34,18 @@ type BrowserOffer struct {
 	Type string `json:"type"`
 }
 
-// AppState holds the state of the application
 type AppState struct {
 	PeerConnection    *webrtc.PeerConnection
 	GStreamerPipeline *gst.Pipeline
 	SuperColliderCmd  *exec.Cmd
 }
 
-// Global variable to hold the application state
 var appState AppState
 var audioSrc = flag.String("audio-src", "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
 
 func main() {
 	flag.Parse()
 
-	// Handle SIGINT and SIGTERM signals
 	signalChannel := make(chan os.Signal, 1)
 	osSignal.Notify(signalChannel, syscall.SIGINT, syscall.SIGTERM)
 
@@ -56,11 +53,7 @@ func main() {
 		<-signalChannel
 		log.Println("Received shutdown signal. Stopping processes...")
 
-		// TODO perform cleanup here
-		// Stop the running processes gracefully
-		// Stop any WebRTC-related processes
-		// Stop any GStreamer pipelines
-		// Stop SuperCollider or any other audio processing tasks
+		stopAllProcesses()
 
 		os.Exit(0)
 	}()
@@ -79,9 +72,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleStop(w http.ResponseWriter, r *http.Request) {
-	// Insert logic to stop streaming and clean up
 	fmt.Println("Stop signal received, cleaning up...")
-	// Assuming you have functions to stop processes
 	stopAllProcesses()
 	w.WriteHeader(http.StatusOK)
 }
@@ -99,30 +90,24 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	offer := webrtc.SessionDescription{}
 	signal.Decode(browserOffer.SDP, &offer)
 
-	// Create a logger factory with the desired log level
 	loggerFactory := logging.NewDefaultLoggerFactory()
 	loggerFactory.DefaultLogLevel = logging.LogLevelTrace
 
-	// Create a setting engine and apply the logger factory
 	settingEngine := webrtc.SettingEngine{
 		LoggerFactory: loggerFactory,
 	}
 	settingEngine.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
-
-	// Create the media engine
 	mediaEngine := webrtc.MediaEngine{}
-	// Ensure default codecs are registered
+
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
 		log.Fatalf("Failed to register default codecs: %v", err)
 	}
 
-	// Create the API object with the setting engine and media engine
 	api := webrtc.NewAPI(
 		webrtc.WithSettingEngine(settingEngine),
 		webrtc.WithMediaEngine(&mediaEngine),
 	)
 
-	// Now, use this API instance to create your PeerConnection
 	appState.PeerConnection, err = api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -179,7 +164,6 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// audioSrc := flag.String("audio-src", "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
 	pipelineReady := make(chan struct{})
 
 	go func() {
@@ -208,7 +192,9 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(encodedLocalDesc) // This writes the JSON representation of the local description
+
+	// This writes the JSON representation of the local description for the client
+	w.Write(encodedLocalDesc)
 }
 
 func getRandomSCDFile(dir string) (string, error) {
@@ -240,6 +226,7 @@ func startSuperCollider() {
 	}
 
 	// Set the command with the random .scd file
+	// TODO: render this in the client as an audio player
 	log.Printf("SC FILE: %v\n", scdFile)
 	appState.SuperColliderCmd = exec.Command("xvfb-run", "-a", "sclang", scdFile)
 
@@ -265,13 +252,17 @@ func startSuperCollider() {
 		for scanner.Scan() {
 			text := scanner.Text()
 			log.Println("SuperCollider stdout: ", text)
-			// if strings.Contains(text, "SUPERCOLLIDER_READY_FOR_JACK_CONNECTIONS") {
+
+			// HACK – find an explicit way to signal/determine when we can
+			// set the dynamic, GStreamer-determined JACK ports for the new
+			// sclang/scsynth
 			if strings.Contains(text, "JackDriver: connected  SuperCollider:out_2 to system:playback_2") {
 				log.Println("SuperCollider is ready. Connecting JACK ports...")
 				if err := connectJackPorts(); err != nil {
 					log.Printf("Error connecting JACK ports: %v\n", err)
 				}
-				break // Exit the loop after triggering connection
+				// Exit the loop after triggering connection
+				break
 			}
 		}
 	}()
@@ -330,6 +321,7 @@ func connectJackPorts() error {
 	}
 
 	// Send the new port names to SuperCollider
+	// See startup.scd, which defines the API for "/updateJACKOutputs"
 	if err := sendOSCUpdate("/updateJACKOutputs", webrtcPorts); err != nil {
 		return fmt.Errorf("failed to send OSC update for JACK ports: %w", err)
 	}
@@ -408,7 +400,11 @@ func stopSuperCollider() error {
 	}
 
 	// Create OSC client and send /quit command
-	client := osc.NewClient("localhost", 57110) // Change port if different
+	// Change port if different
+
+	// TODO specify SC ports as environment variables
+	// we may need to use multiple ports
+	client := osc.NewClient("localhost", 57110)
 	msg := osc.NewMessage("/quit")
 	err := client.Send(msg)
 	if err != nil {
@@ -425,24 +421,6 @@ func stopSuperCollider() error {
 	}
 
 	fmt.Println("SuperCollider stopped gracefully.")
-	return nil
-}
-
-func sendOSCMessage(address string) error {
-	// Create a new OSC client
-	client := osc.NewClient("localhost", 57110)
-
-	// Create an OSC message with the specified address
-	msg := osc.NewMessage(address)
-
-	// Send the OSC message to SuperCollider
-	err := client.Send(msg)
-	if err != nil {
-		fmt.Println("Error sending OSC message:", err)
-		return err
-	}
-
-	fmt.Println("OSC message sent successfully.")
 	return nil
 }
 
