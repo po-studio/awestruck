@@ -52,10 +52,8 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 	defer sm.mutex.Unlock()
 	appSession := &AppSession{}
 	appSession.Id = id
-	// audioSrcId := fmt.Sprintf("audio-src-%s", id)
-	// audioSrcWithID := fmt.Sprintf("jackaudiosrc ! audioconvert ! audioresample", id)
-	audioSrcWithID := "jackaudiosrc ! audioconvert ! audioresample"
-	appSession.AudioSrc = flag.String("audio-src", audioSrcWithID, "GStreamer audio src")
+	audioSrcId := fmt.Sprintf("audio-src-%s", id)
+	appSession.AudioSrc = flag.String(audioSrcId, "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
 	sm.Sessions[id] = appSession
 	return appSession
 }
@@ -78,17 +76,14 @@ var sessionManager = SessionManager{
 }
 
 func main() {
-	flag.Parse()
-
 	signalChannel := make(chan os.Signal, 1)
-	// osSignal.Notify(signalChannel, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-signalChannel
 		log.Println("Received shutdown signal. Stopping processes...")
 
-		// need all appSessions to do this gracefully
 		// revisit...
+		// need all appSessions to do this gracefully
 		// stopAllProcesses()
 
 		os.Exit(0)
@@ -124,9 +119,9 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 func handleStop(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Stop signal received, cleaning up...")
 
-	appSession, ok := getAppSessionBySessionID(r, w)
+	appSession, ok := getOrCreateAppSession(r, w)
 	if !ok {
-		// If getAppSessionBySessionID returned false, an error has already been sent to the client
+		// If getOrCreateAppSession returned false, an error has already been sent to the client
 		return
 	}
 
@@ -142,7 +137,7 @@ func getSessionIDFromHeader(r *http.Request) (string, bool) {
 	return sessionID, true
 }
 
-func getAppSessionBySessionID(r *http.Request, w http.ResponseWriter) (*AppSession, bool) {
+func getOrCreateAppSession(r *http.Request, w http.ResponseWriter) (*AppSession, bool) {
 	// Extract session ID from the HTTP header
 	sessionID, ok := getSessionIDFromHeader(r)
 	if !ok {
@@ -162,11 +157,12 @@ func getAppSessionBySessionID(r *http.Request, w http.ResponseWriter) (*AppSessi
 }
 
 func handleOffer(w http.ResponseWriter, r *http.Request) {
-	var err error
+	flag.Parse()
 
-	appSession, ok := getAppSessionBySessionID(r, w)
+	var err error
+	appSession, ok := getOrCreateAppSession(r, w)
 	if !ok {
-		// If getAppSessionBySessionID returned false, an error has already been sent to the client
+		// If getOrCreateAppSession returned false, an error has already been sent to the client
 		return
 	}
 
@@ -341,7 +337,6 @@ func startSuperCollider(appSession *AppSession) {
 	}
 	jackPortsString := strings.Join(jackPorts, ",")
 
-	// Setup command
 	cmd := exec.Command(
 		"scsynth",
 		"-u", "57110",
@@ -377,7 +372,6 @@ func startSuperCollider(appSession *AppSession) {
 	appSession.SuperColliderCmd = cmd
 	log.Println("scsynth command started with dynamically assigned port:", port)
 
-	// Monitor output (for demonstration, assuming you want to parse it live)
 	go monitorSCSynthOutput(logFile, appSession.SuperColliderPort)
 }
 
@@ -407,7 +401,7 @@ func findJackPorts(appSession *AppSession) ([]string, error) {
 	// searchString := fmt.Sprintf("webrtc-server:in_%s", appSession.Id) // Construct the search string dynamically
 	searchString := fmt.Sprintf("webrtc-server:in_jackaudiosrc")
 	for _, port := range ports {
-		if strings.Contains(port, searchString) { // Use the dynamically constructed search string
+		if strings.Contains(port, searchString) {
 			webrtcPorts = append(webrtcPorts, port)
 		}
 	}
@@ -487,12 +481,12 @@ func stopAllProcesses(appSession *AppSession) {
 		} else {
 			fmt.Println("Peer connection closed successfully.")
 		}
-		appSession.PeerConnection = nil // Ensure reference is released
+		appSession.PeerConnection = nil
 	}
 
 	if appSession.GStreamerPipeline != nil {
 		appSession.GStreamerPipeline.Stop()
-		appSession.GStreamerPipeline = nil // Ensure reference is released
+		appSession.GStreamerPipeline = nil
 	}
 
 	fmt.Println("All processes have been stopped.")
@@ -502,14 +496,9 @@ func stopAllProcesses(appSession *AppSession) {
 func stopSuperCollider(appSession *AppSession) error {
 	if appSession.SuperColliderCmd == nil || appSession.SuperColliderCmd.Process == nil {
 		fmt.Println("SuperCollider is not running")
-		return nil // Or appropriate error
+		return nil
 	}
 
-	// Create OSC client and send /quit command
-	// Change port if different
-
-	// TODO specify SC ports as environment variables
-	// we may need to use multiple ports
 	client := osc.NewClient("localhost", appSession.SuperColliderPort)
 	msg := osc.NewMessage("/quit")
 	err := client.Send(msg)
