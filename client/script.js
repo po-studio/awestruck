@@ -2,7 +2,7 @@ let pc;
 
 document.getElementById('toggleConnection').addEventListener('click', async function () {
   if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') {
-    // Start or retry the connection
+
     this.textContent = 'Connecting...';
     this.disabled = true;
     console.log("Stream starting...");
@@ -33,7 +33,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     pc.ontrack = function (event) {
       console.log('Track received:', event.track.kind);
       var container = document.getElementById('container');
-      var el = container.querySelector(event.track.kind); // Find an existing element of the same kind (audio or video)
+      var el = container.querySelector(event.track.kind);
 
       if (!el) {
         el = document.createElement(event.track.kind);
@@ -45,7 +45,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         console.log('Updating existing audio element.');
       }
 
-      el.srcObject = event.streams[0]; // Set or update the source object
+      el.srcObject = event.streams[0];
     };
 
     pc.onicecandidate = event => {
@@ -70,20 +70,20 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       }
     };
 
-    // Add audio transceiver
+
     pc.addTransceiver('audio', { 'direction': 'recvonly' });
   } else {
-    // Disconnect if connected
+
     this.textContent = 'Disconnecting...';
     this.disabled = true;
     console.log("Stopping connection...");
     stopSynthesis().then(() => {
       if (pc) {
         document.getElementById('toggleConnection').classList.remove('button-disconnect');
-        
+
         pc.close();
-        pc = null; // Reset the peer connection
-        
+        pc = null;
+
         this.textContent = 'Stream New Synth';
         this.disabled = false;
       }
@@ -95,7 +95,8 @@ async function sendOffer(sdp) {
   const response = await fetch('/offer', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'X-Session-ID': sessionID
     },
     body: JSON.stringify({ sdp: sdp, type: 'offer' })
   });
@@ -119,7 +120,12 @@ async function sendOffer(sdp) {
 
 async function stopSynthesis() {
   try {
-    const response = await fetch('/stop', { method: 'POST' });
+    const response = await fetch('/stop', {
+      method: 'POST',
+      headers: {
+        'X-Session-ID': sessionID
+      }
+    });
     if (response.ok) {
       console.log("All backend processes have been stopped.");
     } else {
@@ -129,3 +135,16 @@ async function stopSynthesis() {
     console.error("Error stopping the backend processes:", error);
   }
 }
+
+
+function getSessionID() {
+  let sessionID = sessionStorage.getItem('sessionID');
+  if (!sessionID) {
+    sessionID = 'sid_' + Math.random().toString(36).substr(2, 9);
+    sessionStorage.setItem('sessionID', sessionID);
+  }
+  return sessionID;
+}
+
+
+const sessionID = getSessionID();

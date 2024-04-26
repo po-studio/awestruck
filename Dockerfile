@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
     supercollider \
-    xvfb \
+    # xvfb \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-good \
     gstreamer1.0-tools \
     supercollider \
-    xvfb \
+    # xvfb \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     && rm -rf /var/lib/apt/lists/*

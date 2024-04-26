@@ -6,12 +6,13 @@
 Protect your ears! Before streaming audio, please turn the volume on your machine DOWN, especially if you're using headphones. While I've tried to ensure the examples play at a reasonable volume, this software gets close to audio hardware and rare glitches such as amplitude spikes can occur.
 
 ## Real-Time Audio Synthesis, Streaming, & Manipulation
-Awestruck aims to provide a framework for real-time, server-driven audio synthesis and streaming. It uses SuperCollider, a powerful language for audio programming, but any number of synthesis engines could be supported.
+Awestruck aims to provide a framework for real-time, server-driven audio synthesis, streaming, and control over the Internet. It uses SuperCollider, a powerful language for audio programming, but other synthesis engines could be supported.
 
-Along with SuperCollider, Awestruck uses:
+Awestruck uses:
+* [SuperCollider](https://supercollider.github.io/) for real-time sound synthesis
 * [JACK](https://jackaudio.org/) as a sound server API for low-latency connections
 * [GStreamer](https://gstreamer.freedesktop.org/documentation/?gi-language=c) for creating audio pipelines
-* [Pion/WebRTC](https://github.com/pion/webrtc) for capturing the GStreamer audio and streaming it over the web
+* [Pion/WebRTC](https://github.com/pion/webrtc) for streaming captured audio over the web
 
 ## Why?
 There are client-side audio frameworks such as [Tone.js](https://tonejs.github.io/), which are powerful in their own right. However, server-driven audio synthesis allows for using tools like SuperCollider, which offer more flexibility, complex audio processing, and algorithmic composition. It also paves the way for AI-powered audio synthesis and speech models, which are limited in client environments.
