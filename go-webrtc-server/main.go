@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -274,6 +273,8 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	<-gatherComplete
 
+	sendPlaySynthMessage(57110)
+
 	localDescription := appSession.PeerConnection.LocalDescription()
 	encodedLocalDesc, err := json.Marshal(localDescription)
 	if err != nil {
@@ -312,182 +313,84 @@ func getRandomSynthDefName(dir string) (string, error) {
 	return chosenFile, nil
 }
 
-// func sendOSCUpdate(address string, jackGStreamerPorts []string, scsynthPort int) error {
-// 	client := osc.NewClient("localhost", scsynthPort)
-// 	msg := osc.NewMessage(address)
-// 	for _, port := range jackGStreamerPorts {
-// 		msg.Append(port)
-// 	}
-// 	if err := client.Send(msg); err != nil {
-// 		return fmt.Errorf("error sending OSC message: %w", err)
-// 	}
-// 	fmt.Println("OSC message sent successfully with ports update.")
-// 	return nil
-// }
+func sendPlaySynthMessage(port int) {
+	client := osc.NewClient("127.0.0.1", port)
+	msg := osc.NewMessage("/s_new")
+	msg.Append("simpleSine")
+	msg.Append(int32(1)) // node ID
+	msg.Append(int32(0)) // action: 0 for add to head
+	msg.Append(int32(0)) // target group ID
 
-func sendPlaySynthMessage(port int, synthDefName string) {
-	client := osc.NewClient("localhost", port)
-
-	// Create and send the /s_new message to start the synth
-	msg := osc.NewMessage("/s_new simpleTone 1 0 1")
-	// msg.Append(synthDefName) // SynthDef name
-	// msg.Append(int32(-1))    // Node ID, -1 lets the server choose the ID
-	// msg.Append(int32(0))     // Position in the node tree, 0 for default group
-	// msg.Append(int32(1))     // Add to the head of the group
-	// Optionally append any initial parameters your SynthDef supports
-	// e.g., msg.Append("freq", float32(440.0))
-
-	log.Printf("SENDING MESSAGE: %v\n", msg)
-	err := client.Send(msg)
-	if err != nil {
+	log.Printf("Sending OSC message: %v", msg)
+	if err := client.Send(msg); err != nil {
 		log.Printf("Error sending OSC message: %v\n", err)
-		return
+	} else {
+		log.Println("OSC message sent successfully.")
 	}
-	fmt.Println("Synth message sent successfully.")
-
-	// Create and send the /synthdef/query message to query available SynthDefs
-	queryMsg := osc.NewMessage("/synthdef/query")
-	err = client.Send(queryMsg)
-	if err != nil {
-		log.Printf("Error sending synthdef query OSC message: %v\n", err)
-		return
-	}
-	fmt.Println("Synthdef query message sent successfully.")
 }
 
-// func startSuperCollider(appSession *AppSession) {
-// 	port := 57110 // Assuming static for example, you should dynamically find this as per your existing setup.
-// 	appSession.SuperColliderPort = port
-
-// 	synthDefDirectory := "/app/supercollider/synthdefs"
-// 	jackPorts, err := findJackPorts(appSession)
-// 	if err != nil {
-// 		log.Printf("Error finding JACK ports: %v\n", err)
-// 		return
-// 	}
-// 	jackPortsString := strings.Join(jackPorts, ",")
-
-// 	cmd := exec.Command(
-// 		"scsynth", // Command to run the SuperCollider server
-// 		"-u", "57110",
-// 		// "-l", "1", // Number of audio bus channels to allocate (control rate or audio rate)
-// 		"-i", "0", // Number of audio input buses (stereo input)
-// 		"-o", "2", // Number of audio output buses (stereo output)
-// 	)
-
-// 	cmd.Env = append(os.Environ(),
-// 		"SC_JACK_DEFAULT_OUTPUTS="+jackPortsString,
-// 		"SC_SYNTHDEF_PATH="+synthDefDirectory,
-// 	)
-
-// 	stdout, err := cmd.StdoutPipe()
-// 	if err != nil {
-// 		log.Printf("Error obtaining stdout: %v\n", err)
-// 		return
-// 	}
-// 	stderr, err := cmd.StderrPipe()
-// 	if err != nil {
-// 		log.Printf("Error obtaining stderr: %v\n", err)
-// 		return
-// 	}
-
-// 	if err := cmd.Start(); err != nil {
-// 		log.Printf("Failed to start scsynth: %v\n", err)
-// 		return
-// 	}
-// 	log.Println("scsynth command started with dynamically assigned port:", port)
-
-// 	synthDef, err := getRandomSynthDefName(synthDefDirectory)
-// 	if err != nil {
-// 		log.Printf("Error obtaining synthdef: %v\n", err)
-// 		return
-// 	}
-// 	sendPlaySynthMessage(port, synthDef)
-
-// 	go handleSuperColliderOutput(stdout, stderr)
-// }
-
 func startSuperCollider(appSession *AppSession) {
-	port := 57110 // Assuming static for example, you should dynamically find this as per your existing setup.
+	port := 57110 // This should ideally be dynamically assigned
 	appSession.SuperColliderPort = port
 
 	synthDefDirectory := "/app/supercollider/synthdefs"
 	jackPorts, err := findJackPorts(appSession)
 	if err != nil {
-		log.Printf("Error finding JACK ports: %v\n", err)
+		log.Printf("Error finding JACK ports: %v", err)
 		return
 	}
 	jackPortsString := strings.Join(jackPorts, ",")
 
+	// Setup command
 	cmd := exec.Command(
-		"scsynth", // Command to run the SuperCollider server
-		"-u", fmt.Sprintf("%d", port),
-		"-i", "0", // Number of audio input buses (stereo input)
-		"-o", "2", // Number of audio output buses (stereo output)
+		"scsynth",
+		"-u", "57110",
+		"-a", "1024",
+		"-i", "2",
+		"-o", "2",
+		"-b", "1026",
+		"-R", "0",
+		"-C", "0",
+		"-l", "1",
 	)
-
 	cmd.Env = append(os.Environ(),
 		"SC_JACK_DEFAULT_OUTPUTS="+jackPortsString,
 		"SC_SYNTHDEF_PATH="+synthDefDirectory,
 	)
 
-	stdout, err := cmd.StdoutPipe()
+	// Open a file to log scsynth output
+	logFile, err := os.OpenFile("/app/scsynth.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("Error obtaining stdout: %v\n", err)
+		log.Printf("Failed to open log file: %v", err)
 		return
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		log.Printf("Error obtaining stderr: %v\n", err)
-		return
-	}
+	defer logFile.Close()
 
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	// Start the command
 	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start scsynth: %v\n", err)
+		log.Printf("Failed to start scsynth: %v", err)
 		return
 	}
+	appSession.SuperColliderCmd = cmd
 	log.Println("scsynth command started with dynamically assigned port:", port)
 
-	// Wait for SuperCollider to report it's ready
-	scanner := bufio.NewScanner(stdout)
-	go func() {
-		for scanner.Scan() {
-			line := scanner.Text()
-			log.Println("STDOUT:", line)
-			if strings.Contains(line, "SuperCollider 3 server ready.") {
-				synthDef, err := getRandomSynthDefName(synthDefDirectory)
-				if err != nil {
-					log.Printf("Error obtaining synthdef: %v\n", err)
-					return
-				}
-				sendPlaySynthMessage(port, synthDef)
-				break
-			}
-		}
-	}()
-
-	errScanner := bufio.NewScanner(stderr)
-	go func() {
-		for errScanner.Scan() {
-			log.Println("STDERR:", errScanner.Text())
-		}
-	}()
+	// Monitor output (for demonstration, assuming you want to parse it live)
+	go monitorSCSynthOutput(logFile, appSession.SuperColliderPort)
 }
 
-func handleSuperColliderOutput(stdout, stderr io.ReadCloser) {
-	scanner := bufio.NewScanner(stdout)
-	go func() {
-		for scanner.Scan() {
-			log.Println("STDOUT:", scanner.Text())
+func monitorSCSynthOutput(logFile *os.File, port int) {
+	scanner := bufio.NewScanner(logFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		log.Println("SCSynth Log:", line)
+		if strings.Contains(line, "SuperCollider 3 server ready.") {
+			sendPlaySynthMessage(port)
+			break
 		}
-	}()
-
-	errScanner := bufio.NewScanner(stderr)
-	go func() {
-		for errScanner.Scan() {
-			log.Println("STDERR:", errScanner.Text())
-		}
-	}()
+	}
 }
 
 func findJackPorts(appSession *AppSession) ([]string, error) {
@@ -528,12 +431,6 @@ func connectJackPorts(appSession *AppSession) error {
 	if len(connectErrors) > 0 {
 		return fmt.Errorf("failed to connect some ports: %s", strings.Join(connectErrors, "; "))
 	}
-
-	// Send the new port names to SuperCollider
-	// See startup.scd, which defines the API for "/updateJACKOutputs"
-	// if err := sendOSCUpdate("/updateJACKOutputs", webrtcPorts, appSession.SuperColliderPort); err != nil {
-	// 	return fmt.Errorf("failed to send OSC update for JACK ports: %w", err)
-	// }
 
 	return nil
 }
@@ -630,18 +527,5 @@ func stopSuperCollider(appSession *AppSession) error {
 	}
 
 	fmt.Println("SuperCollider stopped gracefully.")
-	return nil
-}
-
-func sendOSCUpdate(address string, jackGStreamerPorts []string, scsynthPort int) error {
-	client := osc.NewClient("localhost", scsynthPort)
-	msg := osc.NewMessage(address)
-	for _, port := range jackGStreamerPorts {
-		msg.Append(port)
-	}
-	if err := client.Send(msg); err != nil {
-		return fmt.Errorf("error sending OSC message: %w", err)
-	}
-	fmt.Println("OSC message sent successfully with ports update.")
 	return nil
 }

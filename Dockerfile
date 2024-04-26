@@ -48,7 +48,13 @@ RUN apt-get update && apt-get install -y \
     libgstreamer-plugins-base1.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY startup.scd /home/appuser/.config/SuperCollider/startup.scd
+# Install Python and pip
+RUN apt-get update && apt-get install -y python3 python3-pip
+
+# Install python-osc library
+RUN pip3 install python-osc
+
+# COPY startup.scd /home/appuser/.config/SuperCollider/startup.scd
 COPY startup.sh /app/startup.sh
 
 RUN chmod +x /app/startup.sh
