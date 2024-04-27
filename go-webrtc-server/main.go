@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -14,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,11 +50,17 @@ type SessionManager struct {
 func (sm *SessionManager) CreateSession(id string) *AppSession {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
+
 	appSession := &AppSession{}
 	appSession.Id = id
-	audioSrcId := fmt.Sprintf("audio-src-%s", id)
-	appSession.AudioSrc = flag.String(audioSrcId, "jackaudiosrc ! audioconvert ! audioresample", "GStreamer audio src")
+
+	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
+	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s ! audioconvert ! audioresample", id)
+
+	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio src")
+
 	sm.Sessions[id] = appSession
+
 	return appSession
 }
 
@@ -74,6 +80,8 @@ func (sm *SessionManager) DeleteSession(id string) {
 var sessionManager = SessionManager{
 	Sessions: make(map[string]*AppSession),
 }
+
+var synthDefDirectory = "/app/supercollider/synthdefs"
 
 func main() {
 	signalChannel := make(chan os.Signal, 1)
@@ -119,9 +127,9 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 func handleStop(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Stop signal received, cleaning up...")
 
-	appSession, ok := getOrCreateAppSession(r, w)
+	appSession, ok := getOrCreateSession(r, w)
 	if !ok {
-		// If getOrCreateAppSession returned false, an error has already been sent to the client
+		// If getOrCreateSession returned false, an error has already been sent to the client
 		return
 	}
 
@@ -137,7 +145,7 @@ func getSessionIDFromHeader(r *http.Request) (string, bool) {
 	return sessionID, true
 }
 
-func getOrCreateAppSession(r *http.Request, w http.ResponseWriter) (*AppSession, bool) {
+func getOrCreateSession(r *http.Request, w http.ResponseWriter) (*AppSession, bool) {
 	// Extract session ID from the HTTP header
 	sessionID, ok := getSessionIDFromHeader(r)
 	if !ok {
@@ -160,9 +168,9 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	flag.Parse()
 
 	var err error
-	appSession, ok := getOrCreateAppSession(r, w)
+	appSession, ok := getOrCreateSession(r, w)
 	if !ok {
-		// If getOrCreateAppSession returned false, an error has already been sent to the client
+		// If getOrCreateSession returned false, an error has already been sent to the client
 		return
 	}
 
@@ -253,8 +261,13 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	pipelineReady := make(chan struct{})
 
 	go func() {
-		log.Println("creating pipeline...")
-		appSession.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, *appSession.AudioSrc)
+		log.Println("Creating pipeline...")
+
+		appSession.GStreamerPipeline = gst.CreatePipeline(
+			"opus",
+			[]*webrtc.TrackLocalStaticSample{audioTrack},
+			*appSession.AudioSrc,
+		)
 		appSession.GStreamerPipeline.Start()
 
 		log.Println("Pipeline created and started")
@@ -264,12 +277,12 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	// Wait for the pipeline to be ready
 	<-pipelineReady
 
-	log.Println("starting supercollider...")
+	log.Println("Starting SuperCollider...")
 	go startSuperCollider(appSession)
 
 	<-gatherComplete
 
-	sendPlaySynthMessage(57110)
+	sendPlaySynthMessage(appSession.SuperColliderPort)
 
 	localDescription := appSession.PeerConnection.LocalDescription()
 	encodedLocalDesc, err := json.Marshal(localDescription)
@@ -285,34 +298,46 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	w.Write(encodedLocalDesc)
 }
 
-func getRandomSynthDefName(dir string) (string, error) {
-	files, err := ioutil.ReadDir(dir)
+func getRandomSynthDefName() (string, error) {
+	files, err := os.ReadDir(synthDefDirectory)
 	if err != nil {
 		return "", err
 	}
 
 	var synthDefs []string
 	for _, file := range files {
+
+		// Trim the '.scsyndef' extension from the filename before adding to the list
 		if filepath.Ext(file.Name()) == ".scsyndef" {
-			// Trim the '.scsyndef' extension from the filename before adding to the list
 			baseName := strings.TrimSuffix(file.Name(), ".scsyndef")
 			synthDefs = append(synthDefs, baseName)
 		}
 	}
 
 	if len(synthDefs) == 0 {
-		return "", fmt.Errorf("no .scsyndef files found in %s", dir)
+		return "", fmt.Errorf("no .scsyndef files found in %s", synthDefDirectory)
 	}
 
-	rand.Seed(time.Now().UnixNano())
-	chosenFile := synthDefs[rand.Intn(len(synthDefs))]
+	randTimeSeed := rand.NewSource(time.Now().UnixNano())
+	rnd := rand.New(randTimeSeed)
+
+	chosenFile := synthDefs[rnd.Intn(len(synthDefs))]
+
 	return chosenFile, nil
 }
 
 func sendPlaySynthMessage(port int) {
 	client := osc.NewClient("127.0.0.1", port)
 	msg := osc.NewMessage("/s_new")
-	msg.Append("simpleSine")
+
+	synthDefName, err := getRandomSynthDefName()
+	if err != nil {
+		log.Printf("Could not find synthdef name: %v", err)
+		return
+	}
+
+	msg.Append(synthDefName)
+
 	msg.Append(int32(1)) // node ID
 	msg.Append(int32(0)) // action: 0 for add to head
 	msg.Append(int32(0)) // target group ID
@@ -326,20 +351,23 @@ func sendPlaySynthMessage(port int) {
 }
 
 func startSuperCollider(appSession *AppSession) {
-	port := 57110 // This should ideally be dynamically assigned
-	appSession.SuperColliderPort = port
-
-	synthDefDirectory := "/app/supercollider/synthdefs"
-	jackPorts, err := findJackPorts(appSession)
+	scPort, err := findAvailableSuperColliderPort()
 	if err != nil {
-		log.Printf("Error finding JACK ports: %v", err)
+		log.Printf("Error finding SuperCollider port: %v", err)
 		return
 	}
-	jackPortsString := strings.Join(jackPorts, ",")
+	appSession.SuperColliderPort = scPort
+
+	gstJackPorts, err := setGStreamerJackPorts(appSession)
+	if err != nil {
+		log.Printf("Error finding GStreamer-JACK ports: %v", err)
+		return
+	}
+	gstJackPortsStr := strings.Join(gstJackPorts, ",")
 
 	cmd := exec.Command(
 		"scsynth",
-		"-u", "57110",
+		"-u", strconv.Itoa(scPort),
 		"-a", "1024",
 		"-i", "2",
 		"-o", "2",
@@ -349,12 +377,12 @@ func startSuperCollider(appSession *AppSession) {
 		"-l", "1",
 	)
 	cmd.Env = append(os.Environ(),
-		"SC_JACK_DEFAULT_OUTPUTS="+jackPortsString,
+		"SC_JACK_DEFAULT_OUTPUTS="+gstJackPortsStr,
 		"SC_SYNTHDEF_PATH="+synthDefDirectory,
 	)
 
 	// Open a file to log scsynth output
-	logFile, err := os.OpenFile("/app/scsynth.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile("/app/scsynth_"+appSession.Id+".log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Failed to open log file: %v", err)
 		return
@@ -370,11 +398,36 @@ func startSuperCollider(appSession *AppSession) {
 		return
 	}
 	appSession.SuperColliderCmd = cmd
-	log.Println("scsynth command started with dynamically assigned port:", port)
+	log.Println("scsynth command started with dynamically assigned port:", scPort)
 
 	go monitorSCSynthOutput(logFile, appSession.SuperColliderPort)
 }
 
+// TODO find a better way to set ports from jack_lsp
+func setGStreamerJackPorts(appSession *AppSession) ([]string, error) {
+	cmd := exec.Command("jack_lsp")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("error listing JACK ports: %w", err)
+	}
+
+	ports := strings.Split(out.String(), "\n")
+	var gstJackPorts []string
+	prefix := "webrtc-server"
+
+	log.Println("appSession.Id: ", appSession.Id)
+	for _, port := range ports {
+		if strings.HasPrefix(port, prefix) && strings.Contains(port, appSession.Id) {
+			gstJackPorts = append(gstJackPorts, port)
+		}
+	}
+
+	return gstJackPorts, nil
+}
+
+// TODO find a deterministic way to sendPlaySynthMessage when SC is ready
 func monitorSCSynthOutput(logFile *os.File, port int) {
 	scanner := bufio.NewScanner(logFile)
 	for scanner.Scan() {
@@ -387,58 +440,37 @@ func monitorSCSynthOutput(logFile *os.File, port int) {
 	}
 }
 
-func findJackPorts(appSession *AppSession) ([]string, error) {
-	cmd := exec.Command("jack_lsp")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("error listing JACK ports: %w", err)
-	}
+// func connectJackPorts(appSession *AppSession) error {
+// 	webrtcPorts, err := setGStreamerJackPorts(appSession)
+// 	if err != nil {
+// 		return fmt.Errorf("error finding JACK ports: %w", err)
+// 	}
 
-	ports := strings.Split(out.String(), "\n")
-	var webrtcPorts []string
-	// searchString := fmt.Sprintf("webrtc-server:in_%s", appSession.Id) // Construct the search string dynamically
-	searchString := fmt.Sprintf("webrtc-server:in_jackaudiosrc")
-	for _, port := range ports {
-		if strings.Contains(port, searchString) {
-			webrtcPorts = append(webrtcPorts, port)
-		}
-	}
+// 	var connectErrors []string
+// 	for _, webrtcPort := range webrtcPorts {
+// 		if err := connectPort("SuperCollider:out_1", webrtcPort); err != nil {
+// 			connectErrors = append(connectErrors, err.Error())
+// 		}
+// 	}
 
-	return webrtcPorts, nil
-}
+// 	if len(connectErrors) > 0 {
+// 		return fmt.Errorf("failed to connect some ports: %s", strings.Join(connectErrors, "; "))
+// 	}
 
-func connectJackPorts(appSession *AppSession) error {
-	webrtcPorts, err := findJackPorts(appSession)
-	if err != nil {
-		return fmt.Errorf("error finding JACK ports: %w", err)
-	}
+// 	return nil
+// }
 
-	var connectErrors []string
-	for _, webrtcPort := range webrtcPorts {
-		if err := connectPort("SuperCollider:out_1", webrtcPort); err != nil {
-			connectErrors = append(connectErrors, err.Error())
-		}
-	}
+// func connectPort(outputPort, inputPort string) error {
+// 	cmd := exec.Command("jack_connect", outputPort, inputPort)
+// 	if err := cmd.Run(); err != nil {
+// 		return fmt.Errorf("failed to connect %s to %s: %w", outputPort, inputPort, err)
+// 	}
+// 	return nil
+// }
 
-	if len(connectErrors) > 0 {
-		return fmt.Errorf("failed to connect some ports: %s", strings.Join(connectErrors, "; "))
-	}
-
-	return nil
-}
-
-func connectPort(outputPort, inputPort string) error {
-	cmd := exec.Command("jack_connect", outputPort, inputPort)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to connect %s to %s: %w", outputPort, inputPort, err)
-	}
-	return nil
-}
-
+// STOP LOGIC /////////////////////////////////////////////////////////
 func disconnectJackPorts(appSession *AppSession) error {
-	webrtcPorts, err := findJackPorts(appSession)
+	webrtcPorts, err := setGStreamerJackPorts(appSession)
 	if err != nil {
 		return fmt.Errorf("error finding JACK ports: %w", err)
 	}

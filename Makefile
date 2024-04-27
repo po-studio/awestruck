@@ -24,7 +24,6 @@ up:
 		-p 50000:50000 \
 		-v "$(PWD)/go-webrtc-server:/build/go-webrtc-server/go-webrtc-server" \
 		-v "$(PWD)/supercollider:/app/supercollider" \
-		-v "$(PWD)/scripts:/app/scripts" \
 		-v "$(PWD)/client:/app/client" \
 		-v "/dev/snd:/dev/snd" \
 		-v "/dev/shm:/dev/shm" \
