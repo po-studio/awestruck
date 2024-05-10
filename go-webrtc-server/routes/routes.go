@@ -44,7 +44,8 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session.StopAllProcesses(appSession)
+	// session.StopAllProcesses(appSession)
+	appSession.StopAllProcesses()
 	w.WriteHeader(http.StatusOK)
 }
 
