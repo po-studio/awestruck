@@ -1,8 +1,8 @@
-package supercollider
+// supercollider.go
+package synth
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"log"
 	"math/rand"
@@ -12,65 +12,130 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hypebeast/go-osc/osc"
-	"github.com/po-studio/go-webrtc-server/session"
 )
 
 var synthDefDirectory = "/app/supercollider/synthdefs"
 
-func StartSuperCollider(appSession *session.AppSession) {
-	scPort, err := findAvailableSuperColliderPort()
-	if err != nil {
-		log.Printf("Error finding SuperCollider port: %v", err)
-		return
-	}
-	appSession.SuperColliderPort = scPort
+type SuperColliderSynth struct {
+	Id             string
+	Cmd            *exec.Cmd
+	Port           int
+	LogFile        *os.File
+	GStreamerPorts string
+}
 
-	gstJackPorts, err := SetGStreamerJackPorts(appSession)
-	if err != nil {
-		log.Printf("Error finding GStreamer-JACK ports: %v", err)
-		return
-	}
-	gstJackPortsStr := strings.Join(gstJackPorts, ",")
+func (s *SuperColliderSynth) GetPort() int {
+	return s.Port
+}
 
-	cmd := exec.Command(
+func (s *SuperColliderSynth) Start() error {
+	port, err := findAvailableSuperColliderPort()
+	if err != nil {
+		return fmt.Errorf("error finding SuperCollider port: %v", err)
+	}
+	s.Port = port
+
+	gstJackPorts, err := findGStreamerJackPorts(s.Id)
+	if err != nil {
+		return fmt.Errorf("error finding GStreamer-JACK ports: %v", err)
+	}
+	s.GStreamerPorts = strings.Join(gstJackPorts, ",")
+
+	s.Cmd = exec.Command(
 		"scsynth",
-		"-u", strconv.Itoa(scPort),
+		"-u", strconv.Itoa(s.Port),
 		"-a", "1024",
-		"-i", "2",
+		"-i", "0",
 		"-o", "2",
 		"-b", "1026",
 		"-R", "0",
 		"-C", "0",
 		"-l", "1",
 	)
-	cmd.Env = append(os.Environ(),
-		"SC_JACK_DEFAULT_OUTPUTS="+gstJackPortsStr,
+	s.Cmd.Env = append(os.Environ(),
+		"SC_JACK_DEFAULT_OUTPUTS="+s.GStreamerPorts,
 		"SC_SYNTHDEF_PATH="+synthDefDirectory,
 	)
 
-	// Open a file to log scsynth output
-	logFile, err := os.OpenFile("/app/scsynth_"+appSession.Id+".log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFilePath := fmt.Sprintf("/app/scsynth_%s.log", s.Id)
+	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("Failed to open log file: %v", err)
+		return fmt.Errorf("failed to open log file: %v", err)
+	}
+	s.LogFile = logFile
+	s.Cmd.Stdout = logFile
+	s.Cmd.Stderr = logFile
+
+	if err := s.Cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start scsynth: %v", err)
+	}
+	log.Println("scsynth command started with dynamically assigned port:", s.Port)
+
+	// Start monitoring the log file output for the server ready message
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		monitorSCSynthOutput(logFilePath, s.Port)
+	}()
+	wg.Wait()
+
+	return nil
+}
+
+func (s *SuperColliderSynth) Stop() error {
+	if s.Cmd == nil || s.Cmd.Process == nil {
+		fmt.Println("SuperCollider is not running")
+		return nil
+	}
+
+	client := osc.NewClient("localhost", s.Port)
+	msg := osc.NewMessage("/quit")
+	err := client.Send(msg)
+	if err != nil {
+		fmt.Printf("Error sending OSC /quit message: %v\n", err)
+		return err
+	}
+	fmt.Println("OSC /quit message sent successfully.")
+
+	err = s.Cmd.Wait()
+	if err != nil {
+		fmt.Printf("Error waiting for SuperCollider to quit: %v\n", err)
+		return err
+	}
+
+	fmt.Println("SuperCollider stopped gracefully.")
+	return nil
+}
+
+func monitorSCSynthOutput(logFilePath string, port int) {
+	log.Println("Monitoring Synth with port:", port)
+
+	// Open the log file in read-only mode
+	logFile, err := os.Open(logFilePath)
+	if err != nil {
+		log.Printf("Error opening log file for monitoring: %v", err)
 		return
 	}
 	defer logFile.Close()
 
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	// Start the command
-	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start scsynth: %v", err)
-		return
+	scanner := bufio.NewScanner(logFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		log.Println("SCSynth Log:", line)
+		if strings.Contains(line, "SuperCollider 3 server ready.") {
+			SendPlaySynthMessage(port)
+			break
+		}
 	}
-	appSession.SuperColliderCmd = cmd
-	log.Println("scsynth command started with dynamically assigned port:", scPort)
 
-	go monitorSCSynthOutput(logFile, appSession.SuperColliderPort)
+	if err := scanner.Err(); err != nil {
+		log.Printf("Error reading from log file: %v", err)
+	}
 }
 
 func getRandomSynthDefName() (string, error) {
@@ -81,8 +146,6 @@ func getRandomSynthDefName() (string, error) {
 
 	var synthDefs []string
 	for _, file := range files {
-
-		// Trim the '.scsyndef' extension from the filename before adding to the list
 		if filepath.Ext(file.Name()) == ".scsyndef" {
 			baseName := strings.TrimSuffix(file.Name(), ".scsyndef")
 			synthDefs = append(synthDefs, baseName)
@@ -101,18 +164,6 @@ func getRandomSynthDefName() (string, error) {
 	return chosenFile, nil
 }
 
-func monitorSCSynthOutput(logFile *os.File, port int) {
-	scanner := bufio.NewScanner(logFile)
-	for scanner.Scan() {
-		line := scanner.Text()
-		log.Println("SCSynth Log:", line)
-		if strings.Contains(line, "SuperCollider 3 server ready.") {
-			SendPlaySynthMessage(port)
-			break
-		}
-	}
-}
-
 func SendPlaySynthMessage(port int) {
 	client := osc.NewClient("127.0.0.1", port)
 	msg := osc.NewMessage("/s_new")
@@ -124,7 +175,6 @@ func SendPlaySynthMessage(port int) {
 	}
 
 	msg.Append(synthDefName)
-
 	msg.Append(int32(1)) // node ID
 	msg.Append(int32(0)) // action: 0 for add to head
 	msg.Append(int32(0)) // target group ID
@@ -151,9 +201,9 @@ func findAvailableSuperColliderPort() (int, error) {
 	return l.LocalAddr().(*net.UDPAddr).Port, nil
 }
 
-func SetGStreamerJackPorts(appSession *session.AppSession) ([]string, error) {
+func findGStreamerJackPorts(id string) ([]string, error) {
 	cmd := exec.Command("jack_lsp")
-	var out bytes.Buffer
+	var out strings.Builder
 	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
@@ -164,9 +214,8 @@ func SetGStreamerJackPorts(appSession *session.AppSession) ([]string, error) {
 	var gstJackPorts []string
 	prefix := "webrtc-server"
 
-	log.Println("appSession.Id: ", appSession.Id)
 	for _, port := range ports {
-		if strings.HasPrefix(port, prefix) && strings.Contains(port, appSession.Id) {
+		if strings.HasPrefix(port, prefix) && strings.Contains(port, id) {
 			gstJackPorts = append(gstJackPorts, port)
 		}
 	}

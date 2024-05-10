@@ -1,3 +1,4 @@
+// main.go
 package main
 
 import (
@@ -7,18 +8,15 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"strings"
+	"sync"
 
 	"github.com/gorilla/mux"
-	"github.com/hypebeast/go-osc/osc"
 	"github.com/pion/ice/v2"
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v3"
 
 	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
 	"github.com/po-studio/go-webrtc-server/internal/signal"
-
 	"github.com/po-studio/go-webrtc-server/session"
 	sc "github.com/po-studio/go-webrtc-server/supercollider"
 )
@@ -61,7 +59,7 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stopAllProcesses(appSession)
+	session.StopAllProcesses(appSession)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -177,12 +175,28 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	// Wait for the pipeline to be ready
 	<-pipelineReady
 
-	log.Println("Starting SuperCollider...")
-	go sc.StartSuperCollider(appSession)
+	log.Println("Starting synth engine...")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Start the synth engine in a goroutine and ensure error logging
+	go func() {
+		defer wg.Done()
+		err = appSession.Synth.Start()
+		if err != nil {
+			log.Println("Error starting synth engine:", err)
+			http.Error(w, "Failed to start synth engine: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Println("Synth engine started successfully.")
+	}()
+
+	wg.Wait()
 
 	<-gatherComplete
 
-	sc.SendPlaySynthMessage(appSession.SuperColliderPort)
+	sc.SendPlaySynthMessage(appSession.Synth.GetPort())
 
 	localDescription := appSession.PeerConnection.LocalDescription()
 	encodedLocalDesc, err := json.Marshal(localDescription)
@@ -193,88 +207,5 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-
-	// This writes the JSON representation of the local description for the client
 	w.Write(encodedLocalDesc)
-}
-
-func disconnectJackPorts(appSession *session.AppSession) error {
-	webrtcPorts, err := sc.SetGStreamerJackPorts(appSession)
-	if err != nil {
-		return fmt.Errorf("error finding JACK ports: %w", err)
-	}
-
-	var disconnectErrors []string
-	for _, webrtcPort := range webrtcPorts {
-		if err := disconnectPort("SuperCollider:out_1", webrtcPort); err != nil {
-			disconnectErrors = append(disconnectErrors, err.Error())
-		}
-	}
-
-	if len(disconnectErrors) > 0 {
-		return fmt.Errorf("failed to disconnect some ports: %s", strings.Join(disconnectErrors, "; "))
-	}
-	return nil
-}
-
-func disconnectPort(outputPort, inputPort string) error {
-	cmd := exec.Command("jack_disconnect", outputPort, inputPort)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to disconnect %s from %s: %w", outputPort, inputPort, err)
-	}
-	return nil
-}
-
-func stopAllProcesses(appSession *session.AppSession) {
-	fmt.Println("Stopping all processes...")
-
-	stopSuperCollider(appSession)
-
-	if err := disconnectJackPorts(appSession); err != nil {
-		fmt.Println("Error disconnecting JACK ports:", err)
-	} else {
-		fmt.Println("JACK ports disconnected successfully.")
-	}
-
-	if appSession.PeerConnection != nil {
-		if err := appSession.PeerConnection.Close(); err != nil {
-			fmt.Println("Error closing peer connection:", err)
-		} else {
-			fmt.Println("Peer connection closed successfully.")
-		}
-		appSession.PeerConnection = nil
-	}
-
-	if appSession.GStreamerPipeline != nil {
-		appSession.GStreamerPipeline.Stop()
-		appSession.GStreamerPipeline = nil
-	}
-
-	fmt.Println("All processes have been stopped.")
-}
-
-func stopSuperCollider(appSession *session.AppSession) error {
-	if appSession.SuperColliderCmd == nil || appSession.SuperColliderCmd.Process == nil {
-		fmt.Println("SuperCollider is not running")
-		return nil
-	}
-
-	client := osc.NewClient("localhost", appSession.SuperColliderPort)
-	msg := osc.NewMessage("/quit")
-	err := client.Send(msg)
-	if err != nil {
-		fmt.Printf("Error sending OSC /quit message: %v\n", err)
-		return err
-	}
-	fmt.Println("OSC /quit message sent successfully.")
-
-	// Optionally, wait for the process to finish
-	err = appSession.SuperColliderCmd.Wait()
-	if err != nil {
-		fmt.Printf("Error waiting for SuperCollider to quit: %v\n", err)
-		return err
-	}
-
-	fmt.Println("SuperCollider stopped gracefully.")
-	return nil
 }
