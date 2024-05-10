@@ -7,7 +7,7 @@ import (
 )
 
 func DisconnectJackPorts(appSessionId string) error {
-	gstJackPorts, err := getGStreamerJackPorts(appSessionId)
+	gstJackPorts, err := GetGStreamerJackPorts(appSessionId)
 	if err != nil {
 		return fmt.Errorf("error finding JACK ports: %w", err)
 	}
@@ -27,7 +27,7 @@ func DisconnectJackPorts(appSessionId string) error {
 	return nil
 }
 
-func getGStreamerJackPorts(appSessionId string) ([]string, error) {
+func GetGStreamerJackPorts(appSessionId string) ([]string, error) {
 	cmd := exec.Command("jack_lsp")
 	var out strings.Builder
 	cmd.Stdout = &out

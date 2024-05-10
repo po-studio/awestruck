@@ -8,6 +8,7 @@ type Synth interface {
 	Start() error
 	Stop() error
 	GetPort() int
+	SendPlayMessage()
 }
 
 func NewSuperColliderSynth(id string) *sc.SuperColliderSynth {

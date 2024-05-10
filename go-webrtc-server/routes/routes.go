@@ -12,7 +12,6 @@ import (
 	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
 	"github.com/po-studio/go-webrtc-server/internal/signal"
 	"github.com/po-studio/go-webrtc-server/session"
-	sc "github.com/po-studio/go-webrtc-server/supercollider"
 )
 
 type BrowserOffer struct {
@@ -44,7 +43,6 @@ func handleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// session.StopAllProcesses(appSession)
 	appSession.StopAllProcesses()
 	w.WriteHeader(http.StatusOK)
 }
@@ -130,6 +128,10 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	pipelineReady := make(chan struct{})
 
+	// NOTE fix this
+	// 2024/05/10 20:57:49 Pipeline created and started
+	// 2024/05/10 20:57:49 Starting synth engine...
+	// (webrtc-server:8): GStreamer-CRITICAL **: 20:57:49.678: range start is not smaller than end for `GstIntRange'
 	go func() {
 		log.Println("Creating pipeline...")
 
@@ -166,7 +168,8 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	<-gatherComplete
 
-	sc.SendPlaySynthMessage(appSession.Synth.GetPort())
+	// sc.SendPlaySynthMessage(appSession.Synth.GetPort())
+	appSession.Synth.SendPlayMessage()
 
 	localDescription := appSession.PeerConnection.LocalDescription()
 	encodedLocalDesc, err := json.Marshal(localDescription)
