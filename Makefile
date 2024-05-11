@@ -9,7 +9,7 @@ BROWSER_PORT=8080
 build:
 	docker build -t $(IMAGE_NAME) .
 
-up: build
+up: 
 	docker run --rm --name $(CONTAINER_NAME) \
 		--user "1000" \
 		--privileged \
@@ -24,7 +24,6 @@ up: build
 		-p 50000:50000 \
 		-v "$(PWD)/go-webrtc-server:/build/go-webrtc-server/go-webrtc-server" \
 		-v "$(PWD)/supercollider:/app/supercollider" \
-		-v "$(PWD)/scripts:/app/scripts" \
 		-v "$(PWD)/client:/app/client" \
 		-v "/dev/snd:/dev/snd" \
 		-v "/dev/shm:/dev/shm" \
@@ -36,8 +35,24 @@ down:
 	@echo "Stopping the container..."
 	-docker stop $(CONTAINER_NAME)
 	@echo "Stopping SuperCollider server..."
-	-docker exec -it $(CONTAINER_NAME) pkill sclang || true
+	-docker exec -it $(CONTAINER_NAME) pkill scsynth || true
 	@echo "Everything stopped gracefully."
+
+rshell:
+	@CONTAINER_ID=$$(docker ps --filter "ancestor=go-webrtc-server" --format "{{.ID}}" | head -n 1); \
+	if [ -z "$$CONTAINER_ID" ]; then \
+		echo "No running container found for 'go-webrtc-server'."; \
+	else \
+		docker exec -u root -it $$CONTAINER_ID /bin/bash; \
+	fi
+
+shell:
+	@CONTAINER_ID=$$(docker ps --filter "ancestor=go-webrtc-server" --format "{{.ID}}" | head -n 1); \
+	if [ -z "$$CONTAINER_ID" ]; then \
+		echo "No running container found for 'go-webrtc-server'."; \
+	else \
+		docker exec -it $$CONTAINER_ID /bin/bash; \
+	fi
 
 
 open-browser:
