@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # Start jackd
-# jackd -r --port-max 40 -d dummy &
-
+# NOTE the port-max should be 4x the number of simultaneous synths we can support
 jackd -r --port-max 40 -d dummy -C /dev/null -P /dev/null &
 
 echo "Current working directory: $(pwd)"
