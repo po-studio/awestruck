@@ -19,12 +19,11 @@ type SessionManager struct {
 	mutex    sync.Mutex
 }
 
-func GetOrCreateSession(r *http.Request, w http.ResponseWriter) (*AppSession, bool) {
+func GetOrCreateSession(r *http.Request, w http.ResponseWriter) (*AppSession, error) {
 	sessionID, ok := getSessionIDFromHeader(r)
 	if !ok {
 		log.Println("No session ID provided in the header")
-		http.Error(w, "No session ID provided", http.StatusBadRequest)
-		return nil, false
+		return nil, fmt.Errorf("no session ID provided")
 	}
 
 	appSession, exists := sessionManager.GetSession(sessionID)
@@ -32,7 +31,7 @@ func GetOrCreateSession(r *http.Request, w http.ResponseWriter) (*AppSession, bo
 		appSession = sessionManager.CreateSession(sessionID)
 	}
 
-	return appSession, true
+	return appSession, nil
 }
 
 func getSessionIDFromHeader(r *http.Request) (string, bool) {
