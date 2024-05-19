@@ -150,6 +150,11 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 	appSession.PeerConnection = peerConnection
 	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("ICE Connection State has changed: %s\n", state.String())
+
+		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
+			log.Println("Connection failed or disconnected, initiating cleanup...")
+			cleanUpSession(appSession)
+		}
 	})
 
 	return appSession, nil
@@ -221,18 +226,26 @@ func HandleStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
-
-	// Close the peer connection
-	err = closePeerConnection(appSession.PeerConnection)
+	err = cleanUpSession(appSession)
 	if err != nil {
-		log.Printf("Error closing peer connection: %v", err)
 		http.Error(w, "Error closing peer connection", http.StatusInternalServerError)
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
+}
+
+func cleanUpSession(appSession *session.AppSession) error {
+	// Close the peer connection
+	err := closePeerConnection(appSession.PeerConnection)
+	if err != nil {
+		log.Printf("Error closing peer connection: %v", err)
+		return err
+	}
+
 	appSession.StopAllProcesses()
 
-	w.WriteHeader(http.StatusOK)
+	return nil
 }
 
 // ClosePeerConnection gracefully closes the given peer connection
