@@ -14,8 +14,11 @@ func DisconnectJackPorts(appSessionId string) error {
 
 	var disconnectErrors []string
 	for _, gstJackPort := range gstJackPorts {
-		// NOTE this is hardcoded for SuperCollider, but move away from the
+		// NOTE 1: this is hardcoded for SuperCollider, but move away from the
 		// coupling with SuperCollider so that we can configure for multiple synths
+		//
+		// NOTE 2: this is a bug – this is the auto-generated channel name for only
+		// the first SC connected output port
 		if err := disconnectPort("SuperCollider:out_1", gstJackPort); err != nil {
 			disconnectErrors = append(disconnectErrors, err.Error())
 		}

@@ -1,0 +1,7 @@
+# capture all udp traffic (debug webrtc)
+sudo tcpdump -i any udp -vv -l
+
+# capture udp traffic on specific port 19302
+sudo tcpdump -i any udp port 19302 -vv -l
+
+

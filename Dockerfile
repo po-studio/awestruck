@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
     supercollider \
-    # xvfb \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -38,17 +37,21 @@ RUN chown -R appuser:appuser /app
 
 RUN apt-get update && apt-get install -y \
     procps \
+    sudo \
+    tcpdump \
     jackd2 \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-tools \
     supercollider \
-    # xvfb \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# COPY startup.scd /home/appuser/.config/SuperCollider/startup.scd
+# DANGER: for debugging purposes only
+# Grant appuser sudo privileges without password prompt
+RUN echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
 COPY startup.sh /app/startup.sh
 
 RUN chmod +x /app/startup.sh

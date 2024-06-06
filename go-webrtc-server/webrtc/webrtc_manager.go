@@ -21,6 +21,7 @@ type BrowserOffer struct {
 
 // HandleOffer handles the incoming WebRTC offer
 func HandleOffer(w http.ResponseWriter, r *http.Request) {
+	log.Println("Received offer")
 	offer, err := processOffer(r)
 	if err != nil {
 		log.Printf("Error processing request offer: %v", err)
@@ -71,20 +72,25 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
 
+	log.Println("Setting local description")
 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
 		log.Println("Error setting local description:", err)
 		return fmt.Errorf("failed to set local description: %v", err)
 	}
 
+	log.Println("Starting media pipeline")
 	if err := startMediaPipeline(appSession, audioTrack); err != nil {
 		return err
 	}
 
+	log.Println("Starting synth engine")
 	if err := startSynthEngine(appSession); err != nil {
 		return err
 	}
 
+	log.Println("Waiting for ICE gathering to complete")
 	<-gatherComplete
+	log.Println("ICE gathering complete")
 	return nil
 }
 
@@ -131,6 +137,7 @@ func startSynthEngine(appSession *session.AppSession) error {
 func processOffer(r *http.Request) (*webrtc.SessionDescription, error) {
 	var browserOffer BrowserOffer
 
+	log.Println("Decoding offer")
 	err := json.NewDecoder(r.Body).Decode(&browserOffer)
 	if err != nil {
 		return nil, err
@@ -138,6 +145,7 @@ func processOffer(r *http.Request) (*webrtc.SessionDescription, error) {
 
 	offer := webrtc.SessionDescription{}
 	signal.Decode(browserOffer.SDP, &offer)
+	log.Printf("Received offer: %v", offer.SDP)
 
 	return &offer, nil
 }
@@ -154,6 +162,14 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
 			log.Println("Connection failed or disconnected, initiating cleanup...")
 			cleanUpSession(appSession)
+		}
+	})
+
+	appSession.PeerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate != nil {
+			log.Printf("New ICE candidate: %s\n", candidate.String())
+		} else {
+			log.Println("All ICE candidates have been sent")
 		}
 	})
 
@@ -196,12 +212,14 @@ func createPeerConnection() (*webrtc.PeerConnection, error) {
 
 // setRemoteDescription sets the offer as the remote description for the peer connection
 func setRemoteDescription(pc *webrtc.PeerConnection, offer webrtc.SessionDescription) error {
+	log.Printf("Setting remote description: %v", offer.SDP)
 	sdp := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer.SDP}
 	return pc.SetRemoteDescription(sdp)
 }
 
 // createAnswer generates an SDP answer after setting the remote description
 func createAnswer(pc *webrtc.PeerConnection) (webrtc.SessionDescription, error) {
+	log.Println("Creating answer")
 	return pc.CreateAnswer(nil)
 }
 
@@ -212,6 +230,7 @@ func sendAnswer(w http.ResponseWriter, answer *webrtc.SessionDescription) {
 		http.Error(w, "Failed to encode answer", http.StatusInternalServerError)
 		return
 	}
+	log.Printf("Sending answer: %v", string(answerJSON))
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(answerJSON)
 }
@@ -244,14 +263,14 @@ func cleanUpSession(appSession *session.AppSession) error {
 	}
 
 	appSession.StopAllProcesses()
-
 	return nil
 }
 
-// ClosePeerConnection gracefully closes the given peer connection
+// closePeerConnection gracefully closes the given peer connection
 func closePeerConnection(pc *webrtc.PeerConnection) error {
 	if pc == nil {
 		return nil // If the peer connection is already nil, no need to close
 	}
+	log.Println("Closing peer connection")
 	return pc.Close()
 }
