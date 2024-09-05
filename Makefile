@@ -1,19 +1,22 @@
-# Makefile for building and running a Docker container based on your Docker Compose configuration
-
-IMAGE_NAME=go-webrtc-server
-CONTAINER_NAME=go-webrtc-server-instance
+IMAGE_NAME=go-webrtc-server-arm64
+CONTAINER_NAME=go-webrtc-server-arm64-instance
 BROWSER_PORT=8080
 
-.PHONY: build run open-browser
+.PHONY: build up down rshell shell open-browser
 
 build:
-	docker build -t $(IMAGE_NAME) .
+	docker buildx build --platform linux/arm64 -t $(IMAGE_NAME) .
 
 up: 
 	docker run --rm --name $(CONTAINER_NAME) \
+		--platform linux/arm64 \
 		-p $(BROWSER_PORT):$(BROWSER_PORT) \
+		--network host \
+		--shm-size=1g \
+		--ulimit memlock=-1 \
+		--ulimit stack=67108864 \
 		$(IMAGE_NAME)
-		
+
 down:
 	@echo "Stopping the container..."
 	-docker stop $(CONTAINER_NAME)
@@ -22,21 +25,20 @@ down:
 	@echo "Everything stopped gracefully."
 
 rshell:
-	@CONTAINER_ID=$$(docker ps --filter "ancestor=go-webrtc-server" --format "{{.ID}}" | head -n 1); \
-	if [ -z "$$CONTAINER_ID" ]; then \
-		echo "No running container found for 'go-webrtc-server'."; \
-	else \
+	@CONTAINER_ID=$$(docker ps --filter "ancestor=$(IMAGE_NAME)" --format "{{.ID}}" | head -n 1); \
+	if [ -n "$$CONTAINER_ID" ]; then \
 		docker exec -u root -it $$CONTAINER_ID /bin/bash; \
+	else \
+		echo "No running container found for '$(IMAGE_NAME)'."; \
 	fi
 
 shell:
-	@CONTAINER_ID=$$(docker ps --filter "ancestor=go-webrtc-server" --format "{{.ID}}" | head -n 1); \
-	if [ -z "$$CONTAINER_ID" ]; then \
-		echo "No running container found for 'go-webrtc-server'."; \
-	else \
+	@CONTAINER_ID=$$(docker ps --filter "ancestor=$(IMAGE_NAME)" --format "{{.ID}}" | head -n 1); \
+	if [ -n "$$CONTAINER_ID" ]; then \
 		docker exec -it $$CONTAINER_ID /bin/bash; \
+	else \
+		echo "No running container found for '$(IMAGE_NAME)'."; \
 	fi
-
 
 open-browser:
 	@-if command -v xdg-open > /dev/null; then \

@@ -64,4 +64,6 @@ USER appuser
 
 EXPOSE 8080
 
+# ENV GST_DEBUG=3
+
 CMD ["./startup.sh"]
