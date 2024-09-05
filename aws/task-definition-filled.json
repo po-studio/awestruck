@@ -1,0 +1,69 @@
+{
+  "family": "go-webrtc-server-arm64",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::911402296037:role/ecsTaskExecutionRole",
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "containerDefinitions": [
+    {
+      "name": "go-webrtc-server-arm64",
+      "image": "911402296037.dkr.ecr.us-east-1.amazonaws.com/po-studio/awestruck:latest",
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 8080,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 49152,
+          "hostPort": 49152,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 65535,
+          "hostPort": 65535,
+          "protocol": "udp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "JACK_NO_AUDIO_RESERVATION",
+          "value": "1"
+        },
+        {
+          "name": "JACK_OPTIONS",
+          "value": "-R -d dummy"
+        },
+        {
+          "name": "JACK_SAMPLE_RATE",
+          "value": "48000"
+        }
+      ],
+      "ulimits": [
+        {
+          "name": "memlock",
+          "softLimit": -1,
+          "hardLimit": -1
+        },
+        {
+          "name": "stack",
+          "softLimit": 67108864,
+          "hardLimit": 67108864
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/go-webrtc-server-arm64",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
