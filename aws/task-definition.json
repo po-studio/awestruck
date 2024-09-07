@@ -20,8 +20,8 @@
           "protocol": "tcp"
         },
         {
-          "containerPort": 49152,
-          "hostPort": 49152,
+          "containerPort": 10000,
+          "hostPort": 10000,
           "protocol": "udp"
         },
         {
@@ -65,5 +65,12 @@
         }
       }
     }
-  ]
+  ],
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "assignPublicIp": "ENABLED",
+      "securityGroups": ["{{SG_ID}}"],
+      "subnets": ["{{SUBNET1_ID}}", "{{SUBNET2_ID}}"]
+    }
+  }
 }
