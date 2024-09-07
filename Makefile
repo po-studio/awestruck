@@ -47,6 +47,7 @@ up:
 	docker run --rm --name $(CONTAINER_NAME) \
 		--platform $(PLATFORM) \
 		-p $(BROWSER_PORT):$(BROWSER_PORT) \
+		--network host \
 		--shm-size=1g \
 		--ulimit memlock=-1 \
 		--ulimit stack=67108864 \
@@ -96,7 +97,8 @@ aws-push: aws-login
 	docker tag $(IMAGE_NAME) $(ECR_URL)/$(ECR_REPO):latest
 	docker push $(ECR_URL)/$(ECR_REPO):latest
 
-aws-deploy: aws-push
+aws-deploy: aws-push update-security-group
+	@echo "Updating ECS task definition..."
 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; s|{{AWS_REGION}}|$(AWS_REGION)|g; s|{{ECR_REPO}}|$(ECR_REPO)|g; s|{{SSL_CERT_ARN}}|$(SSL_CERT_ARN)|g; s|{{EXECUTION_ROLE_ARN}}|$(EXECUTION_ROLE_ARN)|g; s|{{TASK_DEFINITION_FAMILY}}|$(TASK_DEFINITION_FAMILY)|g' aws/task-definition.json > aws/task-definition-filled.json
 	aws ecs register-task-definition --cli-input-json file://aws/task-definition-filled.json
 
@@ -307,16 +309,20 @@ check-logs:
 	fi
 
 update-security-group:
-	@echo "Updating security group..."
-	aws ec2 authorize-security-group-ingress --group-id $(SG_ID) --protocol tcp --port 8080 --cidr 0.0.0.0/0
-	aws ec2 authorize-security-group-ingress --group-id $(SG_ID) --protocol udp --port 49152 --cidr 0.0.0.0/0
-	aws ec2 authorize-security-group-ingress --group-id $(SG_ID) --protocol udp --port 65535 --cidr 0.0.0.0/0
+	@echo "Updating security group rules for WebRTC..."
+	@aws ec2 authorize-security-group-ingress \
+		--group-id $(SG_ID) \
+		--protocol udp \
+		--port 10000-60000 \
+		--cidr 0.0.0.0/0 \
+		--region $(AWS_REGION) || true
+	@echo "Security group updated for WebRTC ports."
 
-# check-target-group:
-# 	@echo "Checking target group configuration..."
-# 	aws elbv2 describe-target-group-attributes --target-group-arn $(TG_ARN)
-# 	@echo "Checking health check configuration..."
-# 	aws elbv2 describe-target-groups --target-group-arns $(TG_ARN) --query 'TargetGroups[0].HealthCheckPath'
+check-target-group:
+	@echo "Checking target group configuration..."
+	aws elbv2 describe-target-group-attributes --target-group-arn $(TG_ARN)
+	@echo "Checking health check configuration..."
+	aws elbv2 describe-target-groups --target-group-arns $(TG_ARN) --query 'TargetGroups[0].HealthCheckPath'
 
 update-target-group:
 	@echo "Updating target group health check..."
@@ -361,12 +367,6 @@ update-ecs-service:
 check-port-mappings:
 	@echo "Checking container port mappings..."
 	aws ecs describe-task-definition --task-definition $(TASK_DEFINITION_FAMILY) --query 'taskDefinition.containerDefinitions[0].portMappings'
-
-check-target-group:
-	@echo "Checking target group configuration..."
-	aws elbv2 describe-target-group-attributes --target-group-arn $(TG_ARN)
-	@echo "Checking health check configuration..."
-	aws elbv2 describe-target-groups --target-group-arns $(TG_ARN) --query 'TargetGroups[0].HealthCheckPath'
 
 check-iam-role-trust:
 	@echo "Checking IAM role trust policy..."
