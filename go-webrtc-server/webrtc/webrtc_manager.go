@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/pion/webrtc/v3"
@@ -193,20 +195,52 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 }
 
 // createPeerConnection initializes a new WebRTC peer connection
+// func createPeerConnection() (*webrtc.PeerConnection, error) {
+// 	mediaEngine := webrtc.MediaEngine{}
+// 	err := mediaEngine.RegisterDefaultCodecs()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine))
+// 	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{
+// 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
+// 	})
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return peerConnection, nil
+// }
+
 func createPeerConnection() (*webrtc.PeerConnection, error) {
-	mediaEngine := webrtc.MediaEngine{}
-	err := mediaEngine.RegisterDefaultCodecs()
+	// Your existing configuration
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302"}},
+		},
+	}
+
+	// Get your ALB's public IP
+	albDNS := os.Getenv("ALB_DNS") // Set this in your ECS task definition
+	ips, err := net.LookupIP(albDNS)
+	if err != nil {
+		return nil, err
+	}
+	publicIP := ips[0].String()
+
+	// Create the peer connection
+	peerConnection, err := webrtc.NewPeerConnection(config)
 	if err != nil {
 		return nil, err
 	}
 
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine))
-	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
-	})
-	if err != nil {
+	// Add the NAT 1:1 candidate
+	if err = peerConnection.AddICECandidate(webrtc.ICECandidateInit{
+		Candidate: fmt.Sprintf("candidate:1 1 udp 2130706431 %s 8080 typ host", publicIP),
+	}); err != nil {
 		return nil, err
 	}
+
 	return peerConnection, nil
 }
 

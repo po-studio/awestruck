@@ -111,6 +111,21 @@ aws-push: aws-login
 # 	@echo "Updating ECS service..."
 # 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
 
+# aws-deploy: aws-push update-security-group
+# 	@echo "Updating ECS task definition..."
+# 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; \
+# 		s|{{AWS_REGION}}|$(AWS_REGION)|g; \
+# 		s|{{ECR_REPO}}|$(ECR_REPO)|g; \
+# 		s|{{EXECUTION_ROLE_ARN}}|$(EXECUTION_ROLE_ARN)|g; \
+# 		s|{{TASK_DEFINITION_FAMILY}}|$(TASK_DEFINITION_FAMILY)|g; \
+# 		s|{{PROJECT_NAME}}|$(PROJECT_NAME)|g; \
+# 		s|{{SG_ID}}|$(SG_ID)|g' \
+# 		aws/task-definition.json > aws/task-definition-filled.json
+# 	aws ecs register-task-definition --cli-input-json file://aws/task-definition-filled.json
+
+# 	@echo "Updating ECS service..."
+# 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
+
 aws-deploy: aws-push update-security-group-all-ports
 	@echo "Updating ECS task definition..."
 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; \
@@ -121,10 +136,10 @@ aws-deploy: aws-push update-security-group-all-ports
 		s|{{PROJECT_NAME}}|$(PROJECT_NAME)|g; \
 		s|{{SG_ID}}|$(SG_ID)|g; \
 		s|{{SUBNET1_ID}}|$(SUBNET1_ID)|g; \
-		s|{{SUBNET2_ID}}|$(SUBNET2_ID)|g' \
+		s|{{SUBNET2_ID}}|$(SUBNET2_ID)|g; \
+		s|{{ALB_DNS}}|$(ALB_DNS)|g' \
 		aws/task-definition.json > aws/task-definition-filled.json
-	aws ecs register-task-definition --cli-input-json file://aws/task-definition-filled.json
-
+	
 	@echo "Updating ECS service..."
 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
 
