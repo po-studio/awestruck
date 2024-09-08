@@ -65,12 +65,5 @@
         }
       }
     }
-  ],
-  "networkConfiguration": {
-    "awsvpcConfiguration": {
-      "assignPublicIp": "ENABLED",
-      "securityGroups": ["{{SG_ID}}"],
-      "subnets": ["{{SUBNET1_ID}}", "{{SUBNET2_ID}}"]
-    }
-  }
+  ]
 }

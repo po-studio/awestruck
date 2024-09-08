@@ -111,7 +111,7 @@ aws-push: aws-login
 # 	@echo "Updating ECS service..."
 # 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
 
-aws-deploy: aws-push update-security-group
+aws-deploy: aws-push update-security-group-all-ports
 	@echo "Updating ECS task definition..."
 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; \
 		s|{{AWS_REGION}}|$(AWS_REGION)|g; \
