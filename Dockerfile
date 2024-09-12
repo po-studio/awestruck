@@ -48,12 +48,13 @@ WORKDIR /app
 RUN chown -R appuser:appuser /app && \
     echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-COPY startup.sh /app/startup.sh
-RUN chmod +x /app/startup.sh
 
 COPY --from=builder /app/webrtc-server /app/webrtc-server
 COPY supercollider /app/supercollider
 COPY client /app/client
+
+COPY startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
 
 USER appuser
 
