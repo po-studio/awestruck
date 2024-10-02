@@ -46,6 +46,11 @@ build:
 	else \
 		docker buildx use mybuilder; \
 	fi
+
+	# local dev only ####
+	docker network create --driver bridge awestruck_network || true
+	#####################
+	
 	docker buildx inspect --bootstrap
 	docker buildx build --platform $(PLATFORM) -t $(IMAGE_NAME) --load .
 
@@ -53,7 +58,8 @@ up:
 	docker run --rm --name $(CONTAINER_NAME) \
 		--platform $(PLATFORM) \
 		-p $(BROWSER_PORT):$(BROWSER_PORT) \
-		--network host \
+		-p 10000-10010:10000-10010/udp \
+		--network awestruck_network \
 		--shm-size=1g \
 		--ulimit memlock=-1 \
 		--ulimit stack=67108864 \
@@ -61,6 +67,7 @@ up:
 		-e JACK_OPTIONS="-R -d dummy" \
 		-e JACK_SAMPLE_RATE=48000 \
 		$(IMAGE_NAME)
+
 
 down:
 	@echo "Stopping the container..."
@@ -126,7 +133,7 @@ aws-push: aws-login
 # 	@echo "Updating ECS service..."
 # 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
 
-aws-deploy: aws-push update-security-group-all-ports
+aws-deploy: aws-push update-security-group-all-ports update-security-group
 	@echo "Updating ECS task definition..."
 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; \
 		s|{{AWS_REGION}}|$(AWS_REGION)|g; \

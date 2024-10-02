@@ -59,8 +59,9 @@ RUN chmod +x /app/startup.sh
 USER appuser
 
 EXPOSE 8080
+EXPOSE 10000-10100/udp
 
-ENV GST_DEBUG=3 \
+ENV GST_DEBUG=4 \
     JACK_NO_AUDIO_RESERVATION=1 \
     JACK_NO_START_SERVER=1 \
     XDG_RUNTIME_DIR=/tmp/runtime-appuser \
