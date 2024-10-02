@@ -25,8 +25,53 @@
           "protocol": "udp"
         },
         {
-          "containerPort": 65535,
-          "hostPort": 65535,
+          "containerPort": 10001,
+          "hostPort": 10001,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10002,
+          "hostPort": 10002,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10003,
+          "hostPort": 10003,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10004,
+          "hostPort": 10004,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10005,
+          "hostPort": 10005,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10006,
+          "hostPort": 10006,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10007,
+          "hostPort": 10007,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10008,
+          "hostPort": 10008,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10009,
+          "hostPort": 10009,
+          "protocol": "udp"
+        },
+        {
+          "containerPort": 10010,
+          "hostPort": 10010,
           "protocol": "udp"
         }
       ],
