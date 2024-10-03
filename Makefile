@@ -27,7 +27,6 @@ ECR_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 TG_ARN := $(shell aws elbv2 describe-target-groups --names $(PROJECT_NAME)-tg --query 'TargetGroups[0].TargetGroupArn' --output text)
 
 # Security Group ID
-# SG_ID := $(shell aws ec2 describe-security-groups --filters "Name=group-name,Values=$(PROJECT_NAME)-sg" --query 'SecurityGroups[0].GroupId' --output text)
 VPC_ID := $(shell aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$(PROJECT_NAME)-vpc" --query 'Vpcs[0].VpcId' --output text)
 SG_ID := $(shell aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$(VPC_ID)" "Name=group-name,Values=$(PROJECT_NAME)-sg" --query 'SecurityGroups[0].GroupId' --output text)
 SUBNET1_ID ?= $(shell aws ec2 describe-subnets --filters "Name=tag:Name,Values=$(PROJECT_NAME)-subnet-1" --query 'Subnets[0].SubnetId' --output text)
@@ -109,29 +108,6 @@ aws-login:
 aws-push: aws-login
 	docker tag $(IMAGE_NAME) $(ECR_URL)/$(ECR_REPO):latest
 	docker push $(ECR_URL)/$(ECR_REPO):latest
-
-# aws-deploy: aws-push update-security-group-all-ports
-# 	@echo "Updating ECS task definition..."
-# 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; s|{{AWS_REGION}}|$(AWS_REGION)|g; s|{{ECR_REPO}}|$(ECR_REPO)|g; s|{{SSL_CERT_ARN}}|$(SSL_CERT_ARN)|g; s|{{EXECUTION_ROLE_ARN}}|$(EXECUTION_ROLE_ARN)|g; s|{{TASK_DEFINITION_FAMILY}}|$(TASK_DEFINITION_FAMILY)|g' aws/task-definition.json > aws/task-definition-filled.json
-# 	aws ecs register-task-definition --cli-input-json file://aws/task-definition-filled.json
-
-# 	@echo "Updating ECS service..."
-# 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
-
-# aws-deploy: aws-push update-security-group
-# 	@echo "Updating ECS task definition..."
-# 	sed 's|{{AWS_ACCOUNT_ID}}|$(AWS_ACCOUNT_ID)|g; \
-# 		s|{{AWS_REGION}}|$(AWS_REGION)|g; \
-# 		s|{{ECR_REPO}}|$(ECR_REPO)|g; \
-# 		s|{{EXECUTION_ROLE_ARN}}|$(EXECUTION_ROLE_ARN)|g; \
-# 		s|{{TASK_DEFINITION_FAMILY}}|$(TASK_DEFINITION_FAMILY)|g; \
-# 		s|{{PROJECT_NAME}}|$(PROJECT_NAME)|g; \
-# 		s|{{SG_ID}}|$(SG_ID)|g' \
-# 		aws/task-definition.json > aws/task-definition-filled.json
-# 	aws ecs register-task-definition --cli-input-json file://aws/task-definition-filled.json
-
-# 	@echo "Updating ECS service..."
-# 	aws ecs update-service --cluster $(ECS_CLUSTER) --service $(ECS_SERVICE_NAME) --task-definition $(TASK_DEFINITION_FAMILY) --force-new-deployment
 
 aws-deploy: aws-push update-security-group-all-ports update-security-group
 	@echo "Updating ECS task definition..."

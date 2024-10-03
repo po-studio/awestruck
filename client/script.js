@@ -7,10 +7,6 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     this.disabled = true;
     console.log("Stream starting...");
 
-    // pc = new RTCPeerConnection({
-    //   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    // });
-
     pc = new RTCPeerConnection({
       iceServers: [
           {
@@ -58,23 +54,6 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     let isNegotiationNeeded = false;
 
-    // pc.ontrack = function (event) {
-    //   console.log('Track received:', event.track.kind);
-    //   var container = document.getElementById('container');
-    //   var el = container.querySelector(event.track.kind);
-
-    //   if (!el) {
-    //     el = document.createElement(event.track.kind);
-    //     el.autoplay = true;
-    //     el.controls = true;
-    //     container.appendChild(el);
-    //     console.log('New audio element added to the document.');
-    //   } else {
-    //     console.log('Updating existing audio element.');
-    //   }
-
-    //   el.srcObject = event.streams[0];
-    // };
     pc.ontrack = function (event) {
       console.log('Track received:', event.track);
       console.log('Track kind:', event.track.kind);
@@ -141,7 +120,6 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         console.error(err);
       }
     };
-
 
     pc.addTransceiver('audio', { 'direction': 'recvonly' });
   } else {
@@ -211,7 +189,6 @@ async function stopSynthesis() {
   }
 }
 
-
 function getSessionID() {
   let sessionID = sessionStorage.getItem('sessionID');
   if (!sessionID) {
@@ -220,6 +197,5 @@ function getSessionID() {
   }
   return sessionID;
 }
-
 
 const sessionID = getSessionID();
