@@ -42,7 +42,7 @@ func GetRandomSynthDefName() (string, error) {
 
 // TODO reserve port ranges for specific processes like scsynth
 func FindAvailablePort() (int, error) {
-	addr, err := net.ResolveUDPAddr("udp", "localhost:0")
+	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}

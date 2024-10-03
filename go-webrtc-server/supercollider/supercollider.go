@@ -98,7 +98,7 @@ func (s *SuperColliderSynth) Stop() error {
 		return nil
 	}
 
-	client := osc.NewClient("localhost", s.Port)
+	client := osc.NewClient("127.0.0.1", s.Port)
 	msg := osc.NewMessage("/quit")
 	if err := client.Send(msg); err != nil {
 		log.Printf("Error sending OSC /quit message: %v\n", err)

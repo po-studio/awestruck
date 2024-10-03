@@ -48,20 +48,18 @@ WORKDIR /app
 RUN chown -R appuser:appuser /app && \
     echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
+COPY startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
 
 COPY --from=builder /app/webrtc-server /app/webrtc-server
 COPY supercollider /app/supercollider
 COPY client /app/client
 
-COPY startup.sh /app/startup.sh
-RUN chmod +x /app/startup.sh
-
 USER appuser
 
 EXPOSE 8080
-EXPOSE 10000-10100/udp
 
-ENV GST_DEBUG=4 \
+ENV GST_DEBUG=3 \
     JACK_NO_AUDIO_RESERVATION=1 \
     JACK_NO_START_SERVER=1 \
     XDG_RUNTIME_DIR=/tmp/runtime-appuser \

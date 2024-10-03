@@ -15,26 +15,30 @@ import (
 
 // BrowserOffer represents the SDP offer from the browser
 type BrowserOffer struct {
-	SDP  string `json:"sdp"`
-	Type string `json:"type"`
+	SDP        string             `json:"sdp"`
+	Type       string             `json:"type"`
+	ICEServers []webrtc.ICEServer `json:"iceServers"`
 }
 
 // HandleOffer handles the incoming WebRTC offer
 func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	log.Println("Received offer")
-	offer, err := processOffer(r)
+	offer, iceServers, err := processOffer(r)
 	if err != nil {
-		log.Printf("Error processing request offer: %v", err)
-		http.Error(w, "Failed to process peer request", http.StatusInternalServerError)
+		log.Printf("Error processing offer: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to process offer: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	peerConnection, err := createPeerConnection()
+	log.Println("Creating peer connection")
+	peerConnection, err := createPeerConnection(iceServers)
 	if err != nil {
 		log.Printf("Error creating peer connection: %v", err)
-		http.Error(w, "Failed to create peer connection", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create peer connection: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Peer connection created with config: %+v", peerConnection.GetConfiguration())
 
 	appSession, err := setSessionToConnection(w, r, peerConnection)
 	if err != nil {
@@ -48,25 +52,36 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = setRemoteDescription(appSession.PeerConnection, *offer)
+	log.Println("Setting remote description")
+	err = setRemoteDescription(peerConnection, *offer)
 	if err != nil {
-		http.Error(w, "Failed to set remote description", http.StatusInternalServerError)
+		log.Printf("Error setting remote description: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to set remote description: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	answer, err := createAnswer(appSession.PeerConnection)
+	log.Println("Creating answer")
+	log.Printf("Creating answer with transceivers: %+v", peerConnection.GetTransceivers())
+	answer, err := createAnswer(peerConnection)
 	if err != nil {
-		http.Error(w, "Failed to create answer", http.StatusInternalServerError)
+		log.Printf("Error creating answer: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to create answer: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("Answer SDP: %s", answer.SDP)
+
+	log.Println("Finalizing connection setup")
 	if err := finalizeConnectionSetup(appSession, audioTrack, answer); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Error finalizing connection setup: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to finalize connection setup: %v", err), http.StatusInternalServerError)
 		return
 	}
+
 	appSession.Synth.SendPlayMessage()
 
-	sendAnswer(w, appSession.PeerConnection.LocalDescription())
+	log.Println("Sending answer to client")
+	sendAnswer(w, peerConnection.LocalDescription())
 }
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
@@ -134,20 +149,22 @@ func startSynthEngine(appSession *session.AppSession) error {
 	return nil
 }
 
-func processOffer(r *http.Request) (*webrtc.SessionDescription, error) {
+func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServer, error) {
 	var browserOffer BrowserOffer
 
 	log.Println("Decoding offer")
 	err := json.NewDecoder(r.Body).Decode(&browserOffer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	offer := webrtc.SessionDescription{}
 	signal.Decode(browserOffer.SDP, &offer)
 	log.Printf("Received offer: %v", offer.SDP)
 
-	return &offer, nil
+	log.Printf("Offer SDP: %s", offer.SDP)
+
+	return &offer, browserOffer.ICEServers, nil
 }
 
 func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnection *webrtc.PeerConnection) (*session.AppSession, error) {
@@ -158,9 +175,12 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 	appSession.PeerConnection = peerConnection
 	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("ICE Connection State has changed: %s\n", state.String())
+		log.Printf("Signaling State: %s\n", appSession.PeerConnection.SignalingState().String())
+		log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
 
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
 			log.Println("Connection failed or disconnected, initiating cleanup...")
+			log.Printf("Last known ICE Candidates: %v\n", appSession.PeerConnection.GetStats())
 			cleanUpSession(appSession)
 		}
 	})
@@ -193,21 +213,39 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 }
 
 // createPeerConnection initializes a new WebRTC peer connection
-func createPeerConnection() (*webrtc.PeerConnection, error) {
-	mediaEngine := webrtc.MediaEngine{}
-	err := mediaEngine.RegisterDefaultCodecs()
-	if err != nil {
+func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
 		return nil, err
 	}
 
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine))
-	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
-	})
-	if err != nil {
-		return nil, err
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetEphemeralUDPPortRange(10000, 10100)
+
+	api := webrtc.NewAPI(
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithSettingEngine(settingEngine),
+	)
+
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.relay.metered.ca:80"},
+			},
+			{
+				URLs: []string{
+					"turn:global.relay.metered.ca:80",
+					"turn:global.relay.metered.ca:80?transport=tcp",
+					"turn:global.relay.metered.ca:443",
+					"turns:global.relay.metered.ca:443?transport=tcp",
+				},
+				Username:   "b6be1a94a4dbaa7c04a65bc9",
+				Credential: "FLXvDM76W65uQiLc",
+			},
+		},
 	}
-	return peerConnection, nil
+
+	return api.NewPeerConnection(config)
 }
 
 // setRemoteDescription sets the offer as the remote description for the peer connection

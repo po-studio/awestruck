@@ -7,8 +7,36 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     this.disabled = true;
     console.log("Stream starting...");
 
+    // pc = new RTCPeerConnection({
+    //   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    // });
+
     pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+          {
+            urls: "stun:stun.relay.metered.ca:80",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:80",
+            username: "b6be1a94a4dbaa7c04a65bc9",
+            credential: "FLXvDM76W65uQiLc",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:80?transport=tcp",
+            username: "b6be1a94a4dbaa7c04a65bc9",
+            credential: "FLXvDM76W65uQiLc",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:443",
+            username: "b6be1a94a4dbaa7c04a65bc9",
+            credential: "FLXvDM76W65uQiLc",
+          },
+          {
+            urls: "turns:global.relay.metered.ca:443?transport=tcp",
+            username: "b6be1a94a4dbaa7c04a65bc9",
+            credential: "FLXvDM76W65uQiLc",
+          },
+      ],
     });
 
     pc.onconnectionstatechange = function (event) {
@@ -30,22 +58,66 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     let isNegotiationNeeded = false;
 
+    // pc.ontrack = function (event) {
+    //   console.log('Track received:', event.track.kind);
+    //   var container = document.getElementById('container');
+    //   var el = container.querySelector(event.track.kind);
+
+    //   if (!el) {
+    //     el = document.createElement(event.track.kind);
+    //     el.autoplay = true;
+    //     el.controls = true;
+    //     container.appendChild(el);
+    //     console.log('New audio element added to the document.');
+    //   } else {
+    //     console.log('Updating existing audio element.');
+    //   }
+
+    //   el.srcObject = event.streams[0];
+    // };
     pc.ontrack = function (event) {
-      console.log('Track received:', event.track.kind);
-      var container = document.getElementById('container');
-      var el = container.querySelector(event.track.kind);
+      console.log('Track received:', event.track);
+      console.log('Track kind:', event.track.kind);
+      console.log('Track readyState:', event.track.readyState);
+      console.log('Track muted:', event.track.muted);
+      console.log('Track enabled:', event.track.enabled);
+      
+      if (event.track.kind === 'audio') {
+        console.log('Audio track received. WebRTC audio connection established.');
+        
+        var container = document.getElementById('container');
+        var audioElement = container.querySelector('audio');
+    
+        if (!audioElement) {
+          audioElement = document.createElement('audio');
+          audioElement.autoplay = true;
+          audioElement.controls = true;
+          container.appendChild(audioElement);
+          console.log('New audio element added to the document.');
+        } else {
+          console.log('Updating existing audio element.');
+        }
+    
+        audioElement.srcObject = event.streams[0];
+        
+        audioElement.onloadedmetadata = function() {
+          console.log('Audio metadata loaded');
+        };
 
-      if (!el) {
-        el = document.createElement(event.track.kind);
-        el.autoplay = true;
-        el.controls = true;
-        container.appendChild(el);
-        console.log('New audio element added to the document.');
-      } else {
-        console.log('Updating existing audio element.');
+        audioElement.onplay = function() {
+          console.log('Audio playback started');
+        };
+
+        audioElement.onerror = function(e) {
+          console.error('Audio playback error:', e);
+        };
+
+        // Optional: Add a visual indicator
+        var indicator = document.createElement('div');
+        indicator.textContent = 'Audio Connected';
+        indicator.style.color = 'green';
+        container.appendChild(indicator);
       }
-
-      el.srcObject = event.streams[0];
     };
 
     pc.onicecandidate = event => {
@@ -92,29 +164,32 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 });
 
 async function sendOffer(sdp) {
-  const response = await fetch('/offer', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Session-ID': sessionID
-    },
-    body: JSON.stringify({ sdp: sdp, type: 'offer' })
-  });
-
-  if (!response.ok) {
-    alert('Failed to send the offer to the server');
-    return;
-  }
-
-  const resp = await response.json();
-  const answer = resp;
-  console.log("Received answer:", answer);
-
   try {
+    const response = await fetch('/offer', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-ID': sessionID
+      },
+      body: JSON.stringify({ sdp: sdp, type: 'offer' })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Server responded with status ${response.status}: ${errorText}`);
+      alert(`Failed to send the offer to the server. Status: ${response.status}, Error: ${errorText}`);
+      return;
+    }
+
+    const resp = await response.json();
+    const answer = resp;
+    console.log("Received answer:", answer);
+
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     console.log("Remote description set successfully.");
   } catch (err) {
-    console.error("Failed to set the remote description:", err);
+    console.error("Error in sendOffer:", err);
+    alert(`Failed to send the offer to the server: ${err.message}`);
   }
 }
 

@@ -26,6 +26,6 @@ func main() {
 
 	router := routes.NewRouter()
 
-	fmt.Println("Server started at http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", router))
+	fmt.Println("Server started at http://0.0.0.0:8080")
+	log.Fatal(http.ListenAndServe("0.0.0.0:8080", router))
 }

@@ -1,11 +1,16 @@
 #!/bin/bash
+set -e
 
-# Start jackd
-# NOTE the port-max should be 4x the number of simultaneous synths we can support
-jackd -r --port-max 40 -d dummy -C /dev/null -P /dev/null &
+echo "Starting JACK..."
+jackd -r -d dummy -r $JACK_SAMPLE_RATE &
+JACK_PID=$!
 
-echo "Current working directory: $(pwd)"
+sleep 2
 
-# Start the Go WebRTC server
+if ! kill -0 $JACK_PID 2>/dev/null; then
+    echo "JACK failed to start"
+    exit 1
+fi
+
 echo "Starting Go WebRTC server..."
-./webrtc-server
+exec ./webrtc-server
