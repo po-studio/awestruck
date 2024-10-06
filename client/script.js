@@ -17,21 +17,21 @@ document.getElementById('toggleConnection').addEventListener('click', async func
             username: "b6be1a94a4dbaa7c04a65bc9",
             credential: "FLXvDM76W65uQiLc",
           },
-          {
-            urls: "turn:global.relay.metered.ca:80?transport=tcp",
-            username: "b6be1a94a4dbaa7c04a65bc9",
-            credential: "FLXvDM76W65uQiLc",
-          },
+          // {
+          //   urls: "turn:global.relay.metered.ca:80?transport=tcp",
+          //   username: "b6be1a94a4dbaa7c04a65bc9",
+          //   credential: "FLXvDM76W65uQiLc",
+          // },
           {
             urls: "turn:global.relay.metered.ca:443",
             username: "b6be1a94a4dbaa7c04a65bc9",
             credential: "FLXvDM76W65uQiLc",
           },
-          {
-            urls: "turns:global.relay.metered.ca:443?transport=tcp",
-            username: "b6be1a94a4dbaa7c04a65bc9",
-            credential: "FLXvDM76W65uQiLc",
-          },
+          // {
+          //   urls: "turns:global.relay.metered.ca:443?transport=tcp",
+          //   username: "b6be1a94a4dbaa7c04a65bc9",
+          //   credential: "FLXvDM76W65uQiLc",
+          // },
       ],
     });
 
