@@ -19,13 +19,23 @@ import { IamRolePolicyAttachment } from "@cdktf/provider-aws/lib/iam-role-policy
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
 import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 class AwestruckInfrastructure extends TerraformStack {
   constructor(scope: Construct, id: string) {
     super(scope, id);
 
+    const awsAccountId = process.env.AWS_ACCOUNT_ID || this.node.tryGetContext('awsAccountId');
+    const sslCertificateArn = process.env.SSL_CERTIFICATE_ARN || this.node.tryGetContext('sslCertificateArn');
+
+    if (!awsAccountId || !sslCertificateArn) {
+      throw new Error('AWS_ACCOUNT_ID and SSL_CERTIFICATE_ARN must be set in environment variables or cdktf.json context');
+    }
+
     new AwsProvider(this, "AWS", {
-      region: "us-east-1",
+      region: this.node.tryGetContext("awsRegion") || "us-east-1",
     });
 
     const vpc = new Vpc(this, "awestruck-vpc", {
@@ -161,6 +171,7 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     const ecsTaskExecutionRole = new IamRole(this, "ecs-task-execution-role", {
+      name: "ecsTaskExecutionRole",
       assumeRolePolicy: JSON.stringify({
         Version: "2012-10-17",
         Statement: [
@@ -192,12 +203,16 @@ class AwestruckInfrastructure extends TerraformStack {
       networkMode: "awsvpc",
       requiresCompatibilities: ["FARGATE"],
       executionRoleArn: ecsTaskExecutionRole.arn,
+      runtimePlatform: {
+        cpuArchitecture: "ARM64",
+        operatingSystemFamily: "LINUX",
+      },
       containerDefinitions: JSON.stringify([
         {
           name: "go-webrtc-server-arm64",
-          image: "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/po-studio/awestruck:latest",
+          image: `${this.node.tryGetContext("awsAccountId")}.dkr.ecr.us-east-1.amazonaws.com/po-studio/awestruck:latest`,
           portMappings: [
-            { containerPort: 8080, hostPort: 8080 },
+            { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
             ...Array.from({ length: 11 }, (_, i) => ({
               containerPort: 10000 + i,
               hostPort: 10000 + i,
@@ -255,7 +270,7 @@ class AwestruckInfrastructure extends TerraformStack {
       port: 443,
       protocol: "HTTPS",
       sslPolicy: "ELBSecurityPolicy-2016-08",
-      certificateArn: "arn:aws:acm:us-east-1:${AWS_ACCOUNT_ID}:certificate/3fa50879-056c-46a9-9ad5-74af71d719d7",
+      certificateArn: this.node.tryGetContext("sslCertificateArn"),
       defaultAction: [
         {
           type: "forward",
