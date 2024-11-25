@@ -91,7 +91,6 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     pc.onicecandidate = event => {
       if (event.candidate) {
         console.log("New ICE candidate:", event.candidate);
-        // Send individual candidates as they arrive
         fetch('/ice-candidate', {
           method: 'POST',
           headers: {
@@ -99,7 +98,12 @@ document.getElementById('toggleConnection').addEventListener('click', async func
             'X-Session-ID': sessionID
           },
           body: JSON.stringify({
-            candidate: event.candidate
+            candidate: {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+              usernameFragment: event.candidate.usernameFragment
+            }
           })
         }).catch(err => console.error("Error sending ICE candidate:", err));
       } else {
@@ -110,11 +114,9 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     pc.onnegotiationneeded = async () => {
       try {
         isNegotiationNeeded = true;
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await sendOffer(pc.localDescription);
+        await pc.setLocalDescription(await pc.createOffer());
       } catch (err) {
-        console.error("Error during negotiation:", err);
+        console.error(err);
       }
     };
 
@@ -202,10 +204,10 @@ async function fetchTurnCredentials(retries = 3) {
       
       const credentials = await response.json();
       return [{
-        urls: [
-          `stun:${credentials.domain}:${credentials.ports.stun}`,
-          `turn:${credentials.domain}:${credentials.ports.turn}`,
-          `turns:${credentials.domain}:${credentials.ports.turns}`
+        urls: credentials.urls || [
+          "stun:turn.awestruck.io:3478",
+          "turn:turn.awestruck.io:3478",
+          "turns:turn.awestruck.io:5349"
         ],
         username: credentials.username,
         credential: credentials.password
