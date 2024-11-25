@@ -154,7 +154,7 @@ async function sendOffer(offer) {
       iceServers: [] // Server will handle ICE servers
     };
 
-    const response = await fetch("/webrtc", {
+    const response = await fetch("/offer", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -178,7 +178,6 @@ async function sendOffer(offer) {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     isConnectionEstablished = true;
 
-    // Process any pending ICE candidates
     if (pendingIceCandidates.length > 0) {
       console.log(`Processing ${pendingIceCandidates.length} pending ICE candidates`);
       for (const candidate of pendingIceCandidates) {
@@ -188,7 +187,7 @@ async function sendOffer(offer) {
     }
   } catch (e) {
     console.error("Error in sendOffer:", e);
-    throw e; // Let the caller handle the error
+    throw e;
   }
 }
 
