@@ -248,9 +248,13 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 
 	appSession.PeerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
-			log.Printf("New ICE candidate: %s\n", candidate.String())
-		} else {
-			log.Println("All ICE candidates have been sent")
+			log.Printf("[ICE] New candidate for session %s: type=%s protocol=%s address=%s port=%d priority=%d",
+				appSession.Id,
+				candidate.Component,
+				candidate.Protocol,
+				candidate.Address,
+				candidate.Port,
+				candidate.Priority)
 		}
 	})
 

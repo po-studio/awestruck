@@ -20,6 +20,11 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     this.disabled = true;
     console.log("Stream starting...");
 
+    console.log('Using ICE servers:', isProduction ? 
+        await fetchTurnCredentials() : 
+        TURN_CONFIG.development
+    );
+
     pc = new RTCPeerConnection(
       isProduction 
         ? { iceServers: await fetchTurnCredentials() }
@@ -122,6 +127,34 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     };
 
     pc.addTransceiver('audio', { 'direction': 'recvonly' });
+
+    pc.addEventListener('icegatheringstatechange', () => {
+      console.log('ICE gathering state:', pc.iceGatheringState);
+    });
+
+    pc.addEventListener('iceconnectionstatechange', () => {
+      console.log('ICE connection state:', pc.iceConnectionState);
+      console.log('Current ICE candidates:', pc.localDescription.sdp);
+    });
+
+    pc.onicegatheringstatechange = () => {
+      console.log(`ICE gathering state: ${pc.iceGatheringState}`);
+      if (pc.iceGatheringState === 'complete') {
+        console.log('Final SDP with ICE candidates:', pc.localDescription.sdp);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log(`ICE connection state: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'failed') {
+        console.log('ICE connection details:', {
+          localDescription: pc.localDescription?.sdp,
+          remoteDescription: pc.remoteDescription?.sdp,
+          iceGatheringState: pc.iceGatheringState,
+          signalingState: pc.signalingState
+        });
+      }
+    };
   } else {
 
     this.textContent = 'Disconnecting...';
