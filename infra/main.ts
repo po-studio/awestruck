@@ -159,6 +159,10 @@ class AwestruckInfrastructure extends TerraformStack {
       zoneId: hostedZone.zoneId,
       name: "awestruck.io",
       type: "A",
+      allowOverwrite: true, // used for initial deployment
+      lifecycle: {
+        preventDestroy: true
+      },
       alias: {
         name: alb.dnsName,
         zoneId: alb.zoneId,
@@ -210,7 +214,7 @@ class AwestruckInfrastructure extends TerraformStack {
       containerDefinitions: JSON.stringify([
         {
           name: "go-webrtc-server-arm64",
-          image: `${this.node.tryGetContext("awsAccountId")}.dkr.ecr.us-east-1.amazonaws.com/po-studio/awestruck:latest`,
+          image: `${awsAccountId}.dkr.ecr.us-east-1.amazonaws.com/po-studio/awestruck:latest`,
           portMappings: [
             { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
             ...Array.from({ length: 11 }, (_, i) => ({
@@ -245,6 +249,20 @@ class AwestruckInfrastructure extends TerraformStack {
       retentionInDays: 30,
     });
 
+    const listener = new LbListener(this, "awestruck-https-listener", {
+      loadBalancerArn: alb.arn,
+      port: 443,
+      protocol: "HTTPS",
+      sslPolicy: "ELBSecurityPolicy-2016-08",
+      certificateArn: sslCertificateArn,
+      defaultAction: [
+        {
+          type: "forward",
+          targetGroupArn: targetGroup.arn,
+        },
+      ],
+    });
+
     new EcsService(this, "awestruck-service", {
       name: "awestruck-service",
       cluster: ecsCluster.arn,
@@ -263,20 +281,7 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         },
       ],
-    });
-
-    new LbListener(this, "awestruck-https-listener", {
-      loadBalancerArn: alb.arn,
-      port: 443,
-      protocol: "HTTPS",
-      sslPolicy: "ELBSecurityPolicy-2016-08",
-      certificateArn: this.node.tryGetContext("sslCertificateArn"),
-      defaultAction: [
-        {
-          type: "forward",
-          targetGroupArn: targetGroup.arn,
-        },
-      ],
+      dependsOn: [listener],
     });
   }
 }
