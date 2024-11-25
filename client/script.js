@@ -43,8 +43,6 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       }
     };
 
-    let isNegotiationNeeded = false;
-
     pc.ontrack = function (event) {
       console.log('Track received:', event.track);
       console.log('Track kind:', event.track.kind);
@@ -106,7 +104,6 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     pc.onnegotiationneeded = async () => {
       try {
-        isNegotiationNeeded = true;
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         console.log("Local description set, sending offer to server");
@@ -144,7 +141,10 @@ async function sendOffer(sdp) {
         'Content-Type': 'application/json',
         'X-Session-ID': sessionID
       },
-      body: JSON.stringify({ sdp: sdp, type: 'offer' })
+      body: JSON.stringify({
+        sdp: sdp.sdp,
+        type: sdp.type
+      })
     });
 
     if (!response.ok) {
@@ -160,7 +160,6 @@ async function sendOffer(sdp) {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     console.log("Remote description set successfully.");
     
-    // Connection is now established, send any pending candidates
     isConnectionEstablished = true;
     console.log(`Sending ${pendingIceCandidates.length} pending ICE candidates`);
     for (const candidate of pendingIceCandidates) {
