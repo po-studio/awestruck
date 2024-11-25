@@ -1,0 +1,9 @@
+.git
+.gitignore
+README.md
+**/node_modules
+**/dist
+.env
+**/tmp
+.buildx-cache
+.buildx-cache-new

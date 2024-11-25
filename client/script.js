@@ -1,3 +1,14 @@
+const sessionID = getSessionID();
+
+function getSessionID() {
+  let sessionID = sessionStorage.getItem('sessionID');
+  if (!sessionID) {
+    sessionID = 'sid_' + Math.random().toString(36).substr(2, 9);
+    sessionStorage.setItem('sessionID', sessionID);
+  }
+  return sessionID;
+}
+
 let pc;
 
 document.getElementById('toggleConnection').addEventListener('click', async function () {
@@ -7,33 +18,11 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     this.disabled = true;
     console.log("Stream starting...");
 
-    pc = new RTCPeerConnection({
-      iceServers: [
-          {
-            urls: "stun:stun.relay.metered.ca:80",
-          },
-          {
-            urls: "turn:global.relay.metered.ca:80",
-            username: "b6be1a94a4dbaa7c04a65bc9",
-            credential: "FLXvDM76W65uQiLc",
-          },
-          // {
-          //   urls: "turn:global.relay.metered.ca:80?transport=tcp",
-          //   username: "b6be1a94a4dbaa7c04a65bc9",
-          //   credential: "FLXvDM76W65uQiLc",
-          // },
-          {
-            urls: "turn:global.relay.metered.ca:443",
-            username: "b6be1a94a4dbaa7c04a65bc9",
-            credential: "FLXvDM76W65uQiLc",
-          },
-          // {
-          //   urls: "turns:global.relay.metered.ca:443?transport=tcp",
-          //   username: "b6be1a94a4dbaa7c04a65bc9",
-          //   credential: "FLXvDM76W65uQiLc",
-          // },
-      ],
-    });
+    pc = new RTCPeerConnection(
+      isProduction 
+        ? { iceServers: await fetchTurnCredentials() }
+        : TURN_CONFIG.development
+    );
 
     pc.onconnectionstatechange = function (event) {
       console.log(`Connection state change: ${pc.connectionState}`);
@@ -100,13 +89,19 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     };
 
     pc.onicecandidate = event => {
-      if (event.candidate === null && isNegotiationNeeded) {
-        isNegotiationNeeded = false;
-        let sdp = btoa(JSON.stringify(pc.localDescription));
-        console.log("Local Session Description:", sdp);
-        sendOffer(sdp);
-      } else if (event.candidate) {
-        console.log("Sending ICE candidate:", event.candidate);
+      if (event.candidate) {
+        console.log("New ICE candidate:", event.candidate);
+        // Send individual candidates as they arrive
+        fetch('/ice-candidate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-ID': sessionID
+          },
+          body: JSON.stringify({
+            candidate: event.candidate
+          })
+        }).catch(err => console.error("Error sending ICE candidate:", err));
       } else {
         console.log("End of candidates.");
       }
@@ -115,9 +110,11 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     pc.onnegotiationneeded = async () => {
       try {
         isNegotiationNeeded = true;
-        await pc.setLocalDescription(await pc.createOffer());
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await sendOffer(pc.localDescription);
       } catch (err) {
-        console.error(err);
+        console.error("Error during negotiation:", err);
       }
     };
 
@@ -189,13 +186,57 @@ async function stopSynthesis() {
   }
 }
 
-function getSessionID() {
-  let sessionID = sessionStorage.getItem('sessionID');
-  if (!sessionID) {
-    sessionID = 'sid_' + Math.random().toString(36).substr(2, 9);
-    sessionStorage.setItem('sessionID', sessionID);
+async function fetchTurnCredentials(retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch('/turn-credentials', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-ID': sessionID
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch TURN credentials: ${response.statusText}`);
+      }
+      
+      const credentials = await response.json();
+      return [{
+        urls: [
+          `stun:${credentials.domain}:${credentials.ports.stun}`,
+          `turn:${credentials.domain}:${credentials.ports.turn}`,
+          `turns:${credentials.domain}:${credentials.ports.turns}`
+        ],
+        username: credentials.username,
+        credential: credentials.password
+      }];
+    } catch (error) {
+      console.error(`Attempt ${i + 1}/${retries} failed:`, error);
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+    }
   }
-  return sessionID;
 }
 
-const sessionID = getSessionID();
+const TURN_CONFIG = {
+  development: {
+    iceServers: [{
+      urls: [
+        "stun:localhost:3478",
+        "turn:localhost:3478"
+      ],
+      username: "test",
+      credential: "test123"
+    }]
+  },
+  production: {
+    fetchCredentials: true,
+    urls: [
+      "stun:turn.awestruck.io:3478",
+      "turn:turn.awestruck.io:3478",
+      "turns:turn.awestruck.io:5349"
+    ]
+  }
+};
+
+const isProduction = window.location.hostname !== 'localhost';

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v3"
 	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
@@ -18,6 +19,10 @@ type BrowserOffer struct {
 	SDP        string             `json:"sdp"`
 	Type       string             `json:"type"`
 	ICEServers []webrtc.ICEServer `json:"iceServers"`
+}
+
+type ICECandidateRequest struct {
+	Candidate webrtc.ICECandidateInit `json:"candidate"`
 }
 
 // HandleOffer handles the incoming WebRTC offer
@@ -84,9 +89,32 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
-func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
-	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
+// func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
+// 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
 
+// 	log.Println("Setting local description")
+// 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
+// 		log.Println("Error setting local description:", err)
+// 		return fmt.Errorf("failed to set local description: %v", err)
+// 	}
+
+// 	log.Println("Starting media pipeline")
+// 	if err := startMediaPipeline(appSession, audioTrack); err != nil {
+// 		return err
+// 	}
+
+// 	log.Println("Starting synth engine")
+// 	if err := startSynthEngine(appSession); err != nil {
+// 		return err
+// 	}
+
+// 	log.Println("Waiting for ICE gathering to complete")
+// 	<-gatherComplete
+// 	log.Println("ICE gathering complete")
+// 	return nil
+// }
+
+func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
 	log.Println("Setting local description")
 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
 		log.Println("Error setting local description:", err)
@@ -103,9 +131,6 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 		return err
 	}
 
-	log.Println("Waiting for ICE gathering to complete")
-	<-gatherComplete
-	log.Println("ICE gathering complete")
 	return nil
 }
 
@@ -179,8 +204,11 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 		log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
 
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
-			log.Println("Connection failed or disconnected, initiating cleanup...")
-			log.Printf("Last known ICE Candidates: %v\n", appSession.PeerConnection.GetStats())
+			log.Printf("[ICE][ERROR] Connection %s for session %s, initiating cleanup...",
+				state.String(), appSession.Id)
+			stats := appSession.PeerConnection.GetStats()
+			log.Printf("[ICE] Last known ICE stats for session %s: %+v",
+				appSession.Id, stats)
 			cleanUpSession(appSession)
 		}
 	})
@@ -220,7 +248,13 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	}
 
 	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetEphemeralUDPPortRange(10000, 10100)
+	settingEngine.SetICETimeouts(
+		5*time.Second,  // Disconnected timeout
+		10*time.Second, // Failed timeout
+		5*time.Second,  // Keepalive interval
+	)
+	settingEngine.SetEphemeralUDPPortRange(10000, 10010)
+	settingEngine.SetLite(true)
 
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(mediaEngine),
@@ -228,21 +262,8 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	)
 
 	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:stun.relay.metered.ca:80"},
-			},
-			{
-				URLs: []string{
-					"turn:global.relay.metered.ca:80",
-					// "turn:global.relay.metered.ca:80?transport=tcp",
-					"turn:global.relay.metered.ca:443",
-					// "turns:global.relay.metered.ca:443?transport=tcp",
-				},
-				Username:   "b6be1a94a4dbaa7c04a65bc9",
-				Credential: "FLXvDM76W65uQiLc",
-			},
-		},
+		ICEServers:         iceServers,
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
 
 	return api.NewPeerConnection(config)
@@ -311,4 +332,46 @@ func closePeerConnection(pc *webrtc.PeerConnection) error {
 	}
 	log.Println("Closing peer connection")
 	return pc.Close()
+}
+
+func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Header.Get("X-Session-ID")
+	log.Printf("[ICE] Handling candidate for session: %s from IP: %s",
+		sessionID, r.RemoteAddr)
+
+	var candidateReq ICECandidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&candidateReq); err != nil {
+		log.Printf("[ICE][ERROR] Failed to decode candidate for session %s: %v",
+			sessionID, err)
+		http.Error(w, "Failed to decode ICE candidate", http.StatusBadRequest)
+		return
+	}
+	log.Printf("[ICE] Received candidate for session %s: %v",
+		sessionID, candidateReq.Candidate)
+
+	appSession, err := session.GetOrCreateSession(r, w)
+	if err != nil {
+		log.Printf("[ICE][ERROR] Failed to get/create session %s: %v",
+			sessionID, err)
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	log.Printf("[ICE] Successfully got/created session: %s", sessionID)
+
+	if appSession.PeerConnection == nil {
+		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
+		http.Error(w, "No peer connection established", http.StatusBadRequest)
+		return
+	}
+
+	if err := appSession.PeerConnection.AddICECandidate(candidateReq.Candidate); err != nil {
+		log.Printf("[ICE][ERROR] Failed to add candidate for session %s: %v",
+			sessionID, err)
+		http.Error(w, "Failed to add ICE candidate", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[ICE] Successfully added candidate for session: %s", sessionID)
+
+	w.WriteHeader(http.StatusOK)
+	log.Printf("[ICE] Completed handling candidate for session: %s", sessionID)
 }

@@ -1,6 +1,9 @@
 # Base image with common dependencies
-FROM debian:buster AS base
+FROM debian:buster AS deps
+
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Install all system dependencies in a single layer
 RUN apt-get update && apt-get install -y \
     jackd2 \
     gstreamer1.0-tools \
@@ -16,13 +19,16 @@ RUN apt-get update && apt-get install -y \
     procps \
     sudo \
     tcpdump \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "* soft memlock 524288" >> /etc/security/limits.conf \
+    && echo "* hard memlock 524288" >> /etc/security/limits.conf \
+    && echo "* soft rtprio 99" >> /etc/security/limits.conf \
+    && echo "* hard rtprio 99" >> /etc/security/limits.conf
 
-# Builder stage
+# Go builder stage with dependencies
 FROM golang:1.18-buster AS builder
-WORKDIR /go-webrtc-server
 
-# Install GStreamer development packages
+# Install system dependencies first (rarely changes)
 RUN apt-get update && apt-get install -y \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
@@ -30,15 +36,23 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
-    gstreamer1.0-libav
+    gstreamer1.0-libav \
+    && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /go-webrtc-server
+
+# Copy only go.mod and go.sum first (change less frequently)
 COPY go-webrtc-server/go.mod go-webrtc-server/go.sum ./
 RUN go mod download
+
+# Copy source code (changes most frequently)
 COPY go-webrtc-server/ .
 RUN go build -o /app/webrtc-server .
 
 # Final stage
-FROM base AS final
+FROM deps AS final
+
+# Create user and setup permissions
 RUN useradd -m appuser && \
     usermod -a -G audio appuser && \
     mkdir -p /tmp/runtime-appuser && \
@@ -48,11 +62,10 @@ WORKDIR /app
 RUN chown -R appuser:appuser /app && \
     echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-
+# Copy built artifacts and application files
 COPY --from=builder /app/webrtc-server /app/webrtc-server
 COPY supercollider /app/supercollider
 COPY client /app/client
-
 COPY startup.sh /app/startup.sh
 RUN chmod +x /app/startup.sh
 

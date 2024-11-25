@@ -3,9 +3,12 @@ module github.com/po-studio/go-webrtc-server
 go 1.18
 
 require (
+	github.com/aws/aws-sdk-go v1.55.5
 	github.com/gorilla/mux v1.8.1
 	github.com/pion/webrtc/v3 v3.2.29
 )
+
+require github.com/jmespath/go-jmespath v0.4.0 // indirect
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -13,9 +16,9 @@ require (
 	github.com/hypebeast/go-osc v0.0.0-20220308234300-cec5a8a1e5f5
 	github.com/pion/datachannel v1.5.5 // indirect
 	github.com/pion/dtls/v2 v2.2.10 // indirect
-	github.com/pion/ice/v2 v2.3.14
+	github.com/pion/ice/v2 v2.3.14 // indirect
 	github.com/pion/interceptor v0.1.25 // indirect
-	github.com/pion/logging v0.2.2
+	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/mdns v0.0.12 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.14 // indirect

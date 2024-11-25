@@ -13,6 +13,8 @@ func NewRouter() *mux.Router {
 	router.HandleFunc("/offer", webrtc.HandleOffer).Methods("POST")
 	router.HandleFunc("/stop", webrtc.HandleStop).Methods("POST")
 	router.HandleFunc("/", serveHome).Methods("GET")
+	router.HandleFunc("/turn-credentials", webrtc.HandleTURNCredentials).Methods("GET")
+	router.HandleFunc("/ice-candidate", webrtc.HandleICECandidate).Methods("POST")
 	router.PathPrefix("/").Handler(serveStatic("./client/"))
 	return router
 }

@@ -4,10 +4,11 @@ import (
 	"fmt"
 
 	"github.com/pion/webrtc/v3"
-	"github.com/po-studio/go-webrtc-server/jack"
-	"github.com/po-studio/go-webrtc-server/synth"
 
 	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
+	"github.com/po-studio/go-webrtc-server/jack"
+	"github.com/po-studio/go-webrtc-server/synth"
+	"github.com/po-studio/go-webrtc-server/types"
 )
 
 type AppSession struct {
@@ -17,6 +18,7 @@ type AppSession struct {
 	Synth             synth.Synth
 	AudioSrc          *string
 	SynthPort         int
+	TURNCredentials   *types.TURNCredentials
 }
 
 func (as *AppSession) StopAllProcesses() {
