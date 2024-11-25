@@ -99,3 +99,13 @@ aws-push: aws-login
 	# Move the new cache
 	rm -rf /tmp/.buildx-cache
 	mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+.PHONY: deploy-all
+
+deploy-all: build aws-login
+	# Tag image for ECR
+	docker tag $(IMAGE_NAME) $(ECR_URL)/$(ECR_REPO):latest
+	# Push to ECR
+	docker push $(ECR_URL)/$(ECR_REPO):latest
+	# Deploy infrastructure
+	cd infra && npm install && cdktf deploy --auto-approve

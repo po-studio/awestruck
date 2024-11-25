@@ -10,6 +10,8 @@ function getSessionID() {
 }
 
 let pc;
+let pendingIceCandidates = [];
+let isConnectionEstablished = false;
 
 document.getElementById('toggleConnection').addEventListener('click', async function () {
   if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') {
@@ -96,42 +98,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
           sdpMLineIndex: event.candidate.sdpMLineIndex,
           usernameFragment: event.candidate.usernameFragment
         });
-
-        const requestBody = {
-          candidate: {
-            candidate: event.candidate.candidate,
-            sdpMid: event.candidate.sdpMid,
-            sdpMLineIndex: event.candidate.sdpMLineIndex,
-            usernameFragment: event.candidate.usernameFragment
-          }
-        };
-
-        console.log("Sending ICE candidate to server:", requestBody);
-
-        fetch('/ice-candidate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Session-ID': sessionID
-          },
-          body: JSON.stringify(requestBody)
-        })
-        .then(response => {
-          if (!response.ok) {
-            return response.text().then(text => {
-              console.error(`ICE candidate request failed: ${response.status} ${response.statusText}`, text);
-              throw new Error(`Failed to send ICE candidate: ${response.status} ${text}`);
-            });
-          }
-          console.log("Successfully sent ICE candidate to server");
-        })
-        .catch(err => {
-          console.error("Error sending ICE candidate:", {
-            error: err.message,
-            sessionID: sessionID,
-            candidate: event.candidate
-          });
-        });
+        sendIceCandidate(event.candidate);
       } else {
         console.log("End of ICE candidates gathering");
       }
@@ -140,9 +107,12 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     pc.onnegotiationneeded = async () => {
       try {
         isNegotiationNeeded = true;
-        await pc.setLocalDescription(await pc.createOffer());
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        console.log("Local description set, sending offer to server");
+        await sendOffer(pc.localDescription);
       } catch (err) {
-        console.error(err);
+        console.error("Error during negotiation:", err);
       }
     };
 
@@ -184,15 +154,64 @@ async function sendOffer(sdp) {
       return;
     }
 
-    const resp = await response.json();
-    const answer = resp;
+    const answer = await response.json();
     console.log("Received answer:", answer);
 
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     console.log("Remote description set successfully.");
+    
+    // Connection is now established, send any pending candidates
+    isConnectionEstablished = true;
+    console.log(`Sending ${pendingIceCandidates.length} pending ICE candidates`);
+    for (const candidate of pendingIceCandidates) {
+      await sendIceCandidate(candidate);
+    }
+    pendingIceCandidates = [];
   } catch (err) {
     console.error("Error in sendOffer:", err);
     alert(`Failed to send the offer to the server: ${err.message}`);
+  }
+}
+
+async function sendIceCandidate(candidate) {
+  if (!isConnectionEstablished) {
+    console.log("Connection not established yet, queuing ICE candidate");
+    pendingIceCandidates.push(candidate);
+    return;
+  }
+
+  const requestBody = {
+    candidate: {
+      candidate: candidate.candidate,
+      sdpMid: candidate.sdpMid,
+      sdpMLineIndex: candidate.sdpMLineIndex,
+      usernameFragment: candidate.usernameFragment
+    }
+  };
+
+  console.log("Sending ICE candidate to server:", requestBody);
+
+  try {
+    const response = await fetch('/ice-candidate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-ID': sessionID
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to send ICE candidate: ${response.status} ${text}`);
+    }
+    console.log("Successfully sent ICE candidate to server");
+  } catch (err) {
+    console.error("Error sending ICE candidate:", {
+      error: err.message,
+      sessionID: sessionID,
+      candidate: candidate
+    });
   }
 }
 
