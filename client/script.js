@@ -142,7 +142,7 @@ async function sendOffer(sdp) {
         'X-Session-ID': sessionID
       },
       body: JSON.stringify({
-        sdp: sdp.sdp,
+        sdp: btoa(sdp.sdp),
         type: sdp.type
       })
     });
@@ -156,6 +156,10 @@ async function sendOffer(sdp) {
 
     const answer = await response.json();
     console.log("Received answer:", answer);
+
+    if (answer.sdp) {
+      answer.sdp = atob(answer.sdp);
+    }
 
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     console.log("Remote description set successfully.");
