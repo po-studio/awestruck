@@ -137,6 +137,10 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         this.textContent = 'Stream New Synth';
         this.disabled = false;
       }
+    }).catch(error => {
+      console.error("Failed to stop synthesis:", error);
+      this.textContent = 'Error - Try Again';
+      this.disabled = false;
     });
   }
 });
@@ -154,6 +158,16 @@ async function sendOffer(offer) {
       iceServers: [] // Server will handle ICE servers
     };
 
+    console.log("Sending WebRTC offer:", {
+      type: browserOffer.type,
+      sdpLength: browserOffer.sdp.length,
+      sdpPreview: browserOffer.sdp.substring(0, 100) + '...',
+      connectionState: pc.connectionState,
+      signalingState: pc.signalingState,
+      iceGatheringState: pc.iceGatheringState,
+      iceConnectionState: pc.iceConnectionState
+    });
+
     const response = await fetch("/offer", {
       method: "POST",
       headers: {
@@ -163,19 +177,52 @@ async function sendOffer(offer) {
       body: JSON.stringify(browserOffer)
     });
 
+    console.log("Server response status:", response.status);
+    console.log("Server response headers:", Object.fromEntries(response.headers.entries()));
+
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("Server error response:", {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText
+      });
       throw new Error(`Server returned ${response.status}: ${errorText}`);
     }
 
-    const answer = await response.json();
-    console.log("Received answer:", answer);
+    const rawResponse = await response.text();
+    console.log("Raw server response:", rawResponse);
+
+    let answer;
+    try {
+      answer = JSON.parse(rawResponse);
+    } catch (parseError) {
+      console.error("Failed to parse server response:", {
+        error: parseError,
+        rawResponse: rawResponse
+      });
+      throw new Error(`Invalid JSON response: ${parseError.message}`);
+    }
+
+    console.log("Parsed answer:", {
+      type: answer.type,
+      sdpLength: answer.sdp?.length,
+      sdpPreview: answer.sdp?.substring(0, 100) + '...'
+    });
 
     if (!answer || !answer.sdp || !answer.type) {
+      console.error("Invalid answer format:", answer);
       throw new Error("Invalid answer format received from server");
     }
 
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    console.log("Remote description set successfully", {
+      connectionState: pc.connectionState,
+      signalingState: pc.signalingState,
+      iceGatheringState: pc.iceGatheringState,
+      iceConnectionState: pc.iceConnectionState
+    });
+
     isConnectionEstablished = true;
 
     if (pendingIceCandidates.length > 0) {
@@ -186,7 +233,13 @@ async function sendOffer(offer) {
       pendingIceCandidates = [];
     }
   } catch (e) {
-    console.error("Error in sendOffer:", e);
+    console.error("Error in sendOffer:", {
+      error: e,
+      connectionState: pc?.connectionState,
+      signalingState: pc?.signalingState,
+      iceGatheringState: pc?.iceGatheringState,
+      iceConnectionState: pc?.iceConnectionState
+    });
     throw e;
   }
 }
@@ -238,16 +291,24 @@ async function stopSynthesis() {
     const response = await fetch('/stop', {
       method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'X-Session-ID': sessionID
       }
     });
-    if (response.ok) {
-      console.log("All backend processes have been stopped.");
-    } else {
-      console.log("Failed to stop backend processes.");
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to stop synthesis: ${response.status} ${errorText}`);
     }
+
+    const result = await response.text();
+    console.log("Backend processes stopped:", result);
+    isConnectionEstablished = false;
+    pendingIceCandidates = [];
+    
   } catch (error) {
     console.error("Error stopping the backend processes:", error);
+    throw error; // Re-throw to be handled by caller
   }
 }
 

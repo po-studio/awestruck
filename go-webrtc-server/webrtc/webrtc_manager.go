@@ -1,8 +1,10 @@
 package webrtc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -32,13 +34,31 @@ type ICECandidateRequest struct {
 
 // HandleOffer handles the incoming WebRTC offer
 func HandleOffer(w http.ResponseWriter, r *http.Request) {
-	log.Println("Received offer")
+	sessionID := r.Header.Get("X-Session-ID")
+	log.Printf("[OFFER] Received offer request from session: %s", sessionID)
+	log.Printf("[OFFER] Request headers: %+v", r.Header)
+
+	// Read and log the raw request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[OFFER][ERROR] Failed to read request body: %v", err)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	log.Printf("[OFFER] Raw request body: %s", string(body))
+
+	// Restore the body for further processing
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
+
 	offer, iceServers, err := processOffer(r)
 	if err != nil {
-		log.Printf("Error processing offer: %v", err)
+		log.Printf("[OFFER][ERROR] Error processing offer: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to process offer: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("[OFFER] Processed offer details: Type=%s, ICEServers=%d", offer.Type, len(iceServers))
+	log.Printf("[OFFER] SDP Preview: %.100s...", offer.SDP)
 
 	log.Println("Creating peer connection")
 	peerConnection, err := createPeerConnection(iceServers)
@@ -182,17 +202,25 @@ func startSynthEngine(appSession *session.AppSession) error {
 func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServer, error) {
 	var browserOffer BrowserOffer
 
-	log.Println("Decoding offer")
+	log.Println("[OFFER] Decoding offer JSON")
 	err := json.NewDecoder(r.Body).Decode(&browserOffer)
 	if err != nil {
-		return nil, nil, err
+		log.Printf("[OFFER][ERROR] JSON decode failed: %v", err)
+		return nil, nil, fmt.Errorf("failed to decode JSON: %v", err)
 	}
+
+	log.Printf("[OFFER] Decoded offer: Type=%s, SDPLength=%d",
+		browserOffer.Type,
+		len(browserOffer.SDP))
 
 	offer := webrtc.SessionDescription{}
 	signal.Decode(browserOffer.SDP, &offer)
-	log.Printf("Received offer: %v", offer.SDP)
 
-	log.Printf("Offer SDP: %s", offer.SDP)
+	log.Printf("[OFFER] Decoded SDP details:")
+	log.Printf("[OFFER] - Type: %s", offer.Type)
+	log.Printf("[OFFER] - SDP Length: %d", len(offer.SDP))
+	log.Printf("[OFFER] - SDP Preview: %.100s...", offer.SDP)
+	log.Printf("[OFFER] - ICE Servers count: %d", len(browserOffer.ICEServers))
 
 	return &offer, browserOffer.ICEServers, nil
 }
@@ -283,20 +311,39 @@ func setRemoteDescription(pc *webrtc.PeerConnection, offer webrtc.SessionDescrip
 
 // createAnswer generates an SDP answer after setting the remote description
 func createAnswer(pc *webrtc.PeerConnection) (webrtc.SessionDescription, error) {
-	log.Println("Creating answer")
-	return pc.CreateAnswer(nil)
+	log.Println("[ANSWER] Creating answer")
+	log.Printf("[ANSWER] Current connection state: %s", pc.ConnectionState().String())
+	log.Printf("[ANSWER] Current signaling state: %s", pc.SignalingState().String())
+
+	answer, err := pc.CreateAnswer(nil)
+	if err != nil {
+		log.Printf("[ANSWER][ERROR] Failed to create answer: %v", err)
+		return webrtc.SessionDescription{}, err
+	}
+
+	log.Printf("[ANSWER] Created answer: Type=%s, SDPLength=%d",
+		answer.Type,
+		len(answer.SDP))
+	log.Printf("[ANSWER] SDP Preview: %.100s...", answer.SDP)
+
+	return answer, nil
 }
 
 // sendAnswer sends the generated answer as a response to the client
 func sendAnswer(w http.ResponseWriter, answer *webrtc.SessionDescription) {
+	log.Println("[ANSWER] Preparing to send answer")
+
 	answerJSON, err := json.Marshal(answer)
 	if err != nil {
+		log.Printf("[ANSWER][ERROR] Failed to encode answer: %v", err)
 		http.Error(w, "Failed to encode answer", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("Sending answer: %v", string(answerJSON))
+
+	log.Printf("[ANSWER] Sending JSON response: %s", string(answerJSON))
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(answerJSON)
+	log.Println("[ANSWER] Answer sent successfully")
 }
 
 // HandleStop processes the stop request for a WebRTC session
