@@ -187,25 +187,26 @@ async function stopSynthesis() {
 async function fetchTurnCredentials(retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      alert(`Session ID: ${sessionID}`);
       const response = await fetch('/turn-credentials', {
         headers: {
           'Content-Type': 'application/json',
           'X-Session-ID': sessionID
         }
       });
+      
       if (!response.ok) {
         throw new Error(`Failed to fetch TURN credentials: ${response.statusText}`);
       }
+      
       const credentials = await response.json();
       return [{
-        urls: [
+        urls: credentials.URLs || [
           "stun:turn.awestruck.io:3478",
           "turn:turn.awestruck.io:3478",
           "turns:turn.awestruck.io:5349"
         ],
-        username: credentials.username,
-        credential: credentials.password
+        username: credentials.Username,
+        credential: credentials.Password
       }];
     } catch (error) {
       console.error(`Attempt ${i + 1}/${retries} failed:`, error);
