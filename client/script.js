@@ -110,6 +110,14 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         await sendOffer(pc.localDescription);
       } catch (err) {
         console.error("Error during negotiation:", err);
+        // Reset connection state
+        if (pc) {
+          pc.close();
+          pc = null;
+        }
+        document.getElementById('toggleConnection').textContent = 'Connection Failed - Retry?';
+        document.getElementById('toggleConnection').disabled = false;
+        document.getElementById('toggleConnection').classList.remove('button-disconnect');
       }
     };
 
@@ -133,54 +141,54 @@ document.getElementById('toggleConnection').addEventListener('click', async func
   }
 });
 
-async function sendOffer(sdp) {
+async function sendOffer(offer) {
+  if (!pc.connectionState || pc.connectionState === "closed") {
+    console.error("Connection not established");
+    return;
+  }
+
   try {
-    // Create the full session description object
-    const sessionDesc = {
-      type: sdp.type,
-      sdp: sdp.sdp
+    const browserOffer = {
+      sdp: offer.sdp,
+      type: offer.type,
+      iceServers: [] // Server will handle ICE servers
     };
 
-    // Encode the entire session description as JSON, then base64
-    const jsonStr = JSON.stringify(sessionDesc);
-    const encodedSDP = btoa(jsonStr);
-
-    const response = await fetch('/offer', {
-      method: 'POST',
+    const response = await fetch("/webrtc", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': sessionID
+        "Content-Type": "application/json",
+        "X-Session-ID": sessionID
       },
-      body: JSON.stringify({
-        sdp: encodedSDP,
-        type: sdp.type
-      })
+      body: JSON.stringify(browserOffer)
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Server responded with status ${response.status}: ${errorText}`);
-      alert(`Failed to send the offer to the server. Status: ${response.status}, Error: ${errorText}`);
-      return;
+      throw new Error(`Server returned ${response.status}: ${errorText}`);
     }
 
     const answer = await response.json();
     console.log("Received answer:", answer);
 
-    // Decode the base64 JSON string
-    const decodedAnswer = JSON.parse(atob(answer.sdp));
-    await pc.setRemoteDescription(new RTCSessionDescription(decodedAnswer));
-    console.log("Remote description set successfully.");
-    
-    isConnectionEstablished = true;
-    console.log(`Sending ${pendingIceCandidates.length} pending ICE candidates`);
-    for (const candidate of pendingIceCandidates) {
-      await sendIceCandidate(candidate);
+    if (!answer || !answer.sdp || !answer.type) {
+      throw new Error("Invalid answer format received from server");
     }
-    pendingIceCandidates = [];
-  } catch (err) {
-    console.error("Error in sendOffer:", err);
-    alert(`Failed to send the offer to the server: ${err.message}`);
+
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    isConnectionEstablished = true;
+
+    // Process any pending ICE candidates
+    if (pendingIceCandidates.length > 0) {
+      console.log(`Processing ${pendingIceCandidates.length} pending ICE candidates`);
+      for (const candidate of pendingIceCandidates) {
+        await sendIceCandidate(candidate);
+      }
+      pendingIceCandidates = [];
+    }
+  } catch (e) {
+    console.error("Error in sendOffer:", e);
+    throw e; // Let the caller handle the error
   }
 }
 
