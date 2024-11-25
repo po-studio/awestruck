@@ -135,6 +135,16 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
 async function sendOffer(sdp) {
   try {
+    // Create the full session description object
+    const sessionDesc = {
+      type: sdp.type,
+      sdp: sdp.sdp
+    };
+
+    // Encode the entire session description as JSON, then base64
+    const jsonStr = JSON.stringify(sessionDesc);
+    const encodedSDP = btoa(jsonStr);
+
     const response = await fetch('/offer', {
       method: 'POST',
       headers: {
@@ -142,7 +152,7 @@ async function sendOffer(sdp) {
         'X-Session-ID': sessionID
       },
       body: JSON.stringify({
-        sdp: btoa(sdp.sdp),
+        sdp: encodedSDP,
         type: sdp.type
       })
     });
@@ -157,11 +167,9 @@ async function sendOffer(sdp) {
     const answer = await response.json();
     console.log("Received answer:", answer);
 
-    if (answer.sdp) {
-      answer.sdp = atob(answer.sdp);
-    }
-
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    // Decode the base64 JSON string
+    const decodedAnswer = JSON.parse(atob(answer.sdp));
+    await pc.setRemoteDescription(new RTCSessionDescription(decodedAnswer));
     console.log("Remote description set successfully.");
     
     isConnectionEstablished = true;
