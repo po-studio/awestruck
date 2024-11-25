@@ -200,13 +200,13 @@ async function fetchTurnCredentials(retries = 3) {
       
       const credentials = await response.json();
       return [{
-        urls: credentials.URLs || [
+        urls: credentials.urls || [
           "stun:turn.awestruck.io:3478",
           "turn:turn.awestruck.io:3478",
           "turns:turn.awestruck.io:5349"
         ],
-        username: credentials.Username,
-        credential: credentials.Password
+        username: credentials.username,
+        credential: credentials.password
       }];
     } catch (error) {
       console.error(`Attempt ${i + 1}/${retries} failed:`, error);
