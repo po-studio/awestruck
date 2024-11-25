@@ -90,24 +90,50 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     pc.onicecandidate = event => {
       if (event.candidate) {
-        console.log("New ICE candidate:", event.candidate);
+        console.log("New ICE candidate details:", {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+          usernameFragment: event.candidate.usernameFragment
+        });
+
+        const requestBody = {
+          candidate: {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            usernameFragment: event.candidate.usernameFragment
+          }
+        };
+
+        console.log("Sending ICE candidate to server:", requestBody);
+
         fetch('/ice-candidate', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Session-ID': sessionID
           },
-          body: JSON.stringify({
-            candidate: {
-              candidate: event.candidate.candidate,
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-              usernameFragment: event.candidate.usernameFragment
-            }
-          })
-        }).catch(err => console.error("Error sending ICE candidate:", err));
+          body: JSON.stringify(requestBody)
+        })
+        .then(response => {
+          if (!response.ok) {
+            return response.text().then(text => {
+              console.error(`ICE candidate request failed: ${response.status} ${response.statusText}`, text);
+              throw new Error(`Failed to send ICE candidate: ${response.status} ${text}`);
+            });
+          }
+          console.log("Successfully sent ICE candidate to server");
+        })
+        .catch(err => {
+          console.error("Error sending ICE candidate:", {
+            error: err.message,
+            sessionID: sessionID,
+            candidate: event.candidate
+          });
+        });
       } else {
-        console.log("End of candidates.");
+        console.log("End of ICE candidates gathering");
       }
     };
 

@@ -22,7 +22,12 @@ type BrowserOffer struct {
 }
 
 type ICECandidateRequest struct {
-	Candidate webrtc.ICECandidateInit `json:"candidate"`
+	Candidate struct {
+		Candidate        string `json:"candidate"`
+		SDPMid           string `json:"sdpMid"`
+		SDPMLineIndex    uint16 `json:"sdpMLineIndex"`
+		UsernameFragment string `json:"usernameFragment"`
+	} `json:"candidate"`
 }
 
 // HandleOffer handles the incoming WebRTC offer
@@ -346,8 +351,6 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to decode ICE candidate", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[ICE] Received candidate for session %s: %v",
-		sessionID, candidateReq.Candidate)
 
 	appSession, err := session.GetOrCreateSession(r, w)
 	if err != nil {
@@ -356,7 +359,6 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
-	log.Printf("[ICE] Successfully got/created session: %s", sessionID)
 
 	if appSession.PeerConnection == nil {
 		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
@@ -364,14 +366,20 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := appSession.PeerConnection.AddICECandidate(candidateReq.Candidate); err != nil {
+	candidate := webrtc.ICECandidateInit{
+		Candidate:        candidateReq.Candidate.Candidate,
+		SDPMid:           &candidateReq.Candidate.SDPMid,
+		SDPMLineIndex:    &candidateReq.Candidate.SDPMLineIndex,
+		UsernameFragment: &candidateReq.Candidate.UsernameFragment,
+	}
+
+	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
 		log.Printf("[ICE][ERROR] Failed to add candidate for session %s: %v",
 			sessionID, err)
 		http.Error(w, "Failed to add ICE candidate", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[ICE] Successfully added candidate for session: %s", sessionID)
 
+	log.Printf("[ICE] Successfully added candidate for session: %s", sessionID)
 	w.WriteHeader(http.StatusOK)
-	log.Printf("[ICE] Completed handling candidate for session: %s", sessionID)
 }
