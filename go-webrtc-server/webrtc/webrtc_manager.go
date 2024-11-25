@@ -235,9 +235,9 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 			{
 				URLs: []string{
 					"turn:global.relay.metered.ca:80",
-					"turn:global.relay.metered.ca:80?transport=tcp",
+					// "turn:global.relay.metered.ca:80?transport=tcp",
 					"turn:global.relay.metered.ca:443",
-					"turns:global.relay.metered.ca:443?transport=tcp",
+					// "turns:global.relay.metered.ca:443?transport=tcp",
 				},
 				Username:   "b6be1a94a4dbaa7c04a65bc9",
 				Credential: "FLXvDM76W65uQiLc",

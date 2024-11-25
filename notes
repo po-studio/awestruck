@@ -1,0 +1,17 @@
+Notes
+
+2024-10-6
+
+Definitely Use: https://github.com/coturn/coturn
+
+Use trickle ICE:
+Implement trickle ICE to start the connection process as soon as possible. This involves sending ICE candidates as they are gathered, rather than waiting for all candidates before sending the offer/answer.
+
+Adjust ICE candidate gathering timeout:
+Add a setting to limit the ICE candidate gathering time:
+
+settingEngine.SetICETimeouts(
+    5*time.Second,  // Disconnected timeout
+    10*time.Second, // Failed timeout
+    5*time.Second,  // Keepalive interval
+)

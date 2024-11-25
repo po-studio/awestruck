@@ -1,0 +1,15 @@
+{
+  "language": "typescript",
+  "app": "npx ts-node main.ts",
+  "projectId": "b65d3b64-65a2-42af-9b75-fd5fc7d4d76a",
+  "sendCrashReports": "false",
+  "terraformProviders": ["aws@~> 4.0"],
+  "terraformModules": [],
+  "context": {
+    "awsRegion": "us-east-1",
+    "awsAccountId": "",
+    "sslCertificateArn": "",
+    "taskDefinitionFamily": "go-webrtc-server-arm64"
+  },
+  "terraformVersion": "1.5.0"
+}
