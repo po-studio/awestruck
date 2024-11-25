@@ -146,39 +146,21 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 });
 
 async function sendOffer(offer) {
-  if (!pc.connectionState || pc.connectionState === "closed") {
-    console.error("Connection not established");
-    return;
-  }
-
   try {
     const browserOffer = {
-      sdp: offer.sdp,
-      type: offer.type,
-      iceServers: [] // Server will handle ICE servers
+      sdp: btoa(JSON.stringify(offer)),  // Encode the entire offer object
+      type: 'offer',
+      iceServers: []
     };
 
-    console.log("Sending WebRTC offer:", {
-      type: browserOffer.type,
-      sdpLength: browserOffer.sdp.length,
-      sdpPreview: browserOffer.sdp.substring(0, 100) + '...',
-      connectionState: pc.connectionState,
-      signalingState: pc.signalingState,
-      iceGatheringState: pc.iceGatheringState,
-      iceConnectionState: pc.iceConnectionState
-    });
-
-    const response = await fetch("/offer", {
-      method: "POST",
+    const response = await fetch('/offer', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "X-Session-ID": sessionID
+        'Content-Type': 'application/json',
+        'X-Session-ID': sessionID
       },
       body: JSON.stringify(browserOffer)
     });
-
-    console.log("Server response status:", response.status);
-    console.log("Server response headers:", Object.fromEntries(response.headers.entries()));
 
     if (!response.ok) {
       const errorText = await response.text();
