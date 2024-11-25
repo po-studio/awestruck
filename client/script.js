@@ -25,11 +25,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         TURN_CONFIG.development
     );
 
-    pc = new RTCPeerConnection(
-      isProduction 
-        ? { iceServers: await fetchTurnCredentials() }
-        : TURN_CONFIG.development
-    );
+    pc = new RTCPeerConnection(await validateTurnConfig());
 
     pc.onconnectionstatechange = function (event) {
       console.log(`Connection state change: ${pc.connectionState}`);
@@ -95,15 +91,25 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     pc.onicecandidate = event => {
       if (event.candidate) {
-        console.log("New ICE candidate details:", {
-          candidate: event.candidate.candidate,
-          sdpMid: event.candidate.sdpMid,
-          sdpMLineIndex: event.candidate.sdpMLineIndex,
-          usernameFragment: event.candidate.usernameFragment
+        console.log("New ICE candidate:", {
+          type: event.candidate.type,
+          protocol: event.candidate.protocol,
+          address: event.candidate.address,
+          port: event.candidate.port,
+          priority: event.candidate.priority,
+          foundation: event.candidate.foundation,
+          component: event.candidate.component,
+          relatedAddress: event.candidate.relatedAddress,
+          relatedPort: event.candidate.relatedPort
         });
-        sendIceCandidate(event.candidate);
-      } else {
-        console.log("End of ICE candidates gathering");
+        
+        // Only send candidates after connection is established
+        if (isConnectionEstablished) {
+          sendIceCandidate(event.candidate);
+        } else {
+          pendingIceCandidates.push(event.candidate);
+          console.log(`ICE candidate queued. Total pending: ${pendingIceCandidates.length}`);
+        }
       }
     };
 
@@ -145,15 +151,13 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state: ${pc.iceConnectionState}`);
-      if (pc.iceConnectionState === 'failed') {
-        console.log('ICE connection details:', {
-          localDescription: pc.localDescription?.sdp,
-          remoteDescription: pc.remoteDescription?.sdp,
-          iceGatheringState: pc.iceGatheringState,
-          signalingState: pc.signalingState
-        });
-      }
+      console.log(`ICE connection state changed to: ${pc.iceConnectionState}`);
+      console.log('Current connection details:', {
+        iceConnectionState: pc.iceConnectionState,
+        connectionState: pc.connectionState,
+        signalingState: pc.signalingState,
+        iceGatheringState: pc.iceGatheringState
+      });
     };
   } else {
 
@@ -381,3 +385,18 @@ const TURN_CONFIG = {
 };
 
 const isProduction = window.location.hostname !== 'localhost';
+
+async function validateTurnConfig() {
+  const config = isProduction ? 
+    await fetchTurnCredentials() : 
+    TURN_CONFIG.development;
+    
+  console.log('TURN Configuration:', {
+    iceServers: config.iceServers.map(server => ({
+      urls: server.urls,
+      hasCredentials: !!(server.username && server.credential)
+    }))
+  });
+  
+  return config;
+}
