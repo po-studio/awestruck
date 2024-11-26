@@ -91,16 +91,19 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     pc.onicecandidate = event => {
       if (event.candidate) {
-        console.log("New ICE candidate:", {
+        console.log("New ICE candidate details:", {
+          candidate: event.candidate.candidate,
           type: event.candidate.type,
           protocol: event.candidate.protocol,
           address: event.candidate.address,
           port: event.candidate.port,
+          relatedAddress: event.candidate.relatedAddress,
+          relatedPort: event.candidate.relatedPort,
+          tcpType: event.candidate.tcpType,
           priority: event.candidate.priority,
           foundation: event.candidate.foundation,
           component: event.candidate.component,
-          relatedAddress: event.candidate.relatedAddress,
-          relatedPort: event.candidate.relatedPort
+          usernameFragment: event.candidate.usernameFragment
         });
         
         // Only send candidates after connection is established

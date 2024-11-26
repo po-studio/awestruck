@@ -394,6 +394,11 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess"
     });
 
+    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
+      role: coturnRole.name,
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+    });
+
     const coturnInstanceProfile = new IamInstanceProfile(this, "coturn-instance-profile", {
       name: "awestruck-coturn-profile",
       role: coturnRole.name
@@ -511,6 +516,14 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "TURN server password for WebRTC connections"
     });
 
+    new CloudwatchLogGroup(this, "coturn-logs", {
+      name: "/coturn/turnserver",
+      retentionInDays: 14,
+      tags: {
+        Name: "coturn-logs"
+      }
+    });
+
     new SsmParameter(this, "cloudwatch-agent-config", {
       name: "/AmazonCloudWatch-Config",
       type: "String",
@@ -533,6 +546,33 @@ class AwestruckInfrastructure extends TerraformStack {
     new IamRolePolicyAttachment(this, "ecs-task-cloudwatch-policy", {
       role: ecsTaskExecutionRole.name,
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+    });
+
+    new SecurityGroupRule(this, "turn-udp-3478", {
+      type: "ingress",
+      fromPort: 3478,
+      toPort: 3478,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id
+    });
+
+    new SecurityGroupRule(this, "turn-tcp-3478", {
+      type: "ingress",
+      fromPort: 3478,
+      toPort: 3478,
+      protocol: "tcp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id
+    });
+
+    new SecurityGroupRule(this, "turn-relay-range", {
+      type: "ingress",
+      fromPort: 10000,
+      toPort: 10010,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id
     });
   }
 }

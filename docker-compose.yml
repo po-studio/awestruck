@@ -42,7 +42,7 @@ services:
       - "3478:3478/udp"
       - "5349:5349"
       - "5349:5349/udp"
-      - "49152-65535:49152-65535/udp"
+      - "10000-10010:10000-10010/udp"
     volumes:
       - ./coturn.conf:/etc/coturn/turnserver.conf
     restart: unless-stopped
