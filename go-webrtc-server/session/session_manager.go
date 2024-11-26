@@ -51,8 +51,8 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 	appSession.Id = id
 
 	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
-	// audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s ! audioconvert ! audioresample", id) // TODO! revert if necessary
-	audioSrcConfig := fmt.Sprintf("jackaudiosrc buffer-time=100000 ! audioconvert ! audioresample ! opusenc ! appsink name=%s", id)
+	// audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s ! audioconvert ! audioresample", id)
+	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s buffer-time=20000 ! audioconvert ! audioresample ! appsink name=%s sync=false", id, id)
 
 	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio src")
 	appSession.Synth = synth.NewSuperColliderSynth(id)
