@@ -45,6 +45,16 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     };
 
     pc.ontrack = function (event) {
+      const audioTrack = event.track;
+      
+      audioTrack.onunmute = () => {
+        console.log('Audio track unmuted!');
+      };
+      
+      audioTrack.onmute = () => {
+        console.log('Audio track muted!');
+      };
+      
       console.log('Track received:', event.track);
       console.log('Track kind:', event.track.kind);
       console.log('Track readyState:', event.track.readyState);
@@ -158,13 +168,8 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state changed to: ${pc.iceConnectionState}`);
-      console.log('Current connection details:', {
-        iceConnectionState: pc.iceConnectionState,
-        connectionState: pc.connectionState,
-        signalingState: pc.signalingState,
-        iceGatheringState: pc.iceGatheringState
-      });
+      console.log('ICE Connection State:', pc.iceConnectionState);
+      console.log('Current ICE Candidates:', pc.getStats());
     };
   } else {
 
@@ -425,8 +430,8 @@ const TURN_CONFIG = {
   production: {
     iceServers: [{
       urls: [
-        "turn:turn.awestruck.io:3478",
-        "turns:turn.awestruck.io:5349"
+        "turn:turn.awestruck.io:3478?transport=udp",
+        "turns:turn.awestruck.io:5349?transport=tcp"
       ],
       username: "test",
       credential: "password",
