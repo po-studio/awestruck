@@ -291,8 +291,19 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	s.SetICETimeouts(5*time.Second, 10*time.Second, 5*time.Second)
 	s.DetachDataChannels()
 
-	// Create an API object with our settings
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
+	// Create a MediaEngine
+	m := &webrtc.MediaEngine{}
+
+	// Register default codecs
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		return nil, fmt.Errorf("failed to register default codecs: %v", err)
+	}
+
+	// Create an API object with our settings and media engine
+	api := webrtc.NewAPI(
+		webrtc.WithSettingEngine(s),
+		webrtc.WithMediaEngine(m),
+	)
 
 	config := webrtc.Configuration{
 		ICEServers:           iceServers,
@@ -309,6 +320,13 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create peer connection: %v", err)
+	}
+
+	// Add a transceiver for audio
+	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendonly,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to add audio transceiver: %v", err)
 	}
 
 	// Add handlers to log ICE candidate gathering
