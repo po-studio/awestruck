@@ -300,7 +300,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 
 	config := webrtc.Configuration{
 		ICEServers:         iceServers,
-		ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
 	}
 
 	return api.NewPeerConnection(config)
