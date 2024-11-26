@@ -369,7 +369,8 @@ const TURN_CONFIG = {
     iceServers: [{
       urls: [
         "stun:localhost:3478",
-        "turn:localhost:3478"
+        "turn:localhost:3478",
+        "turns:localhost:5349"
       ],
       username: "test",
       credential: "test123"

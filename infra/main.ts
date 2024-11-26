@@ -32,17 +32,96 @@ class AwestruckInfrastructure extends TerraformStack {
   constructor(scope: Construct, id: string) {
     super(scope, id);
 
-    const awsAccountId = process.env.AWS_ACCOUNT_ID || this.node.tryGetContext('awsAccountId');
-    const sslCertificateArn = process.env.SSL_CERTIFICATE_ARN || this.node.tryGetContext('sslCertificateArn');
-    const turnPassword = process.env.TURN_PASSWORD || this.node.tryGetContext('turnPassword');
-    
-    const letsEncryptEmail = process.env.LETS_ENCRYPT_EMAIL || this.node.tryGetContext('letsEncryptEmail');
-    if (!awsAccountId || !sslCertificateArn || !turnPassword || !letsEncryptEmail) {
-      throw new Error('AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, TURN_PASSWORD, and LETS_ENCRYPT_EMAIL must be set in environment variables or cdktf.json context');
+    const awsAccountId = process.env.AWS_ACCOUNT_ID || this.node.tryGetContext("awsAccountId");
+    const sslCertificateArn = process.env.SSL_CERTIFICATE_ARN || this.node.tryGetContext("sslCertificateArn");
+    const turnPassword = process.env.TURN_PASSWORD || this.node.tryGetContext("turnPassword");
+    const awsRegion = this.node.tryGetContext("awsRegion") || "us-east-1";
+
+    if (!awsAccountId || !sslCertificateArn || !turnPassword) {
+      throw new Error("AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set in environment variables or cdktf.json context");
     }
 
+    const userData = `#!/bin/bash
+    # Enable logging to CloudWatch
+    exec 1> >(logger -s -t $(basename $0)) 2>&1
+    
+    log() {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    }
+    error_exit() {
+        log "ERROR: $1"
+        exit 1
+    }
+    
+    log "Starting TURN server setup..."
+    
+    # Install required packages
+    dnf update -y || error_exit "Failed to update system"
+    dnf install -y docker amazon-cloudwatch-agent jq aws-cli || error_exit "Failed to install packages"
+    
+    # Start services
+    systemctl enable docker amazon-cloudwatch-agent
+    systemctl start docker amazon-cloudwatch-agent
+    
+    # Create required directories
+    mkdir -p /etc/coturn /var/log/coturn /etc/ssl
+    chmod 755 /var/log/coturn
+    
+    # Get certificate from ACM
+    log "Fetching certificate from ACM..."
+    CERT_ARN="${sslCertificateArn}"
+    aws acm get-certificate --certificate-arn $CERT_ARN --region ${awsRegion} > /tmp/cert.json
+    
+    jq -r '.Certificate' /tmp/cert.json > /etc/ssl/turn.awestruck.io.crt
+    jq -r '.PrivateKey' /tmp/cert.json > /etc/ssl/turn.awestruck.io.key
+    chmod 600 /etc/ssl/turn.awestruck.io.key
+    
+    # Configure TURN server
+    log "Creating TURN server configuration..."
+    cat > /etc/coturn/turnserver.conf << 'EOL'
+    realm=turn.awestruck.io
+    listening-port=3478
+    tls-listening-port=5349
+    total-quota=1000
+    user-quota=100
+    no-multicast-peers
+    relay-threads=8
+    min-port=10000
+    max-port=10010
+    stale-nonce=600
+    user=awestruck:${turnPassword}
+    allow-loopback-peers
+    mobility
+    no-cli
+    cert=/etc/ssl/turn.awestruck.io.crt
+    pkey=/etc/ssl/turn.awestruck.io.key
+    log-file=/var/log/coturn/turnserver.log
+    verbose
+    debug
+    log-binding
+    log-allocations
+    log-session-lifetime
+    EOL
+    
+    # Start TURN server
+    log "Starting TURN server..."
+    docker run -d --name coturn \
+      --restart unless-stopped \
+      --network host \
+      -v /etc/coturn:/etc/coturn \
+      -v /etc/ssl:/etc/ssl \
+      -v /var/log/coturn:/var/log/coturn \
+      --log-driver=awslogs \
+      --log-opt awslogs-group=/coturn/turnserver \
+      --log-opt awslogs-region=${awsRegion} \
+      --log-opt awslogs-stream=coturn-$(hostname) \
+      coturn/coturn -c /etc/coturn/turnserver.conf
+    
+    log "COTURN server setup completed successfully"
+    `;
+
     new AwsProvider(this, "AWS", {
-      region: this.node.tryGetContext("awsRegion") || "us-east-1",
+      region: awsRegion,
     });
 
     const vpc = new Vpc(this, "awestruck-vpc", {
@@ -167,9 +246,9 @@ class AwestruckInfrastructure extends TerraformStack {
       name: "awestruck.io",
       type: "A",
       allowOverwrite: true, // used for initial deployment
-      lifecycle: {
-        preventDestroy: true
-      },
+      // lifecycle: {
+      //   preventDestroy: true
+      // },
       alias: {
         name: alb.dnsName,
         zoneId: alb.zoneId,
@@ -248,7 +327,7 @@ class AwestruckInfrastructure extends TerraformStack {
       containerDefinitions: JSON.stringify([
         {
           name: "go-webrtc-server-arm64",
-          image: `${awsAccountId}.dkr.ecr.${this.node.tryGetContext("awsRegion")}.amazonaws.com/po-studio/awestruck:latest`,
+          image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
           portMappings: [
             { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
             ...Array.from({ length: 11 }, (_, i) => ({
@@ -271,7 +350,7 @@ class AwestruckInfrastructure extends TerraformStack {
             logDriver: "awslogs",
             options: {
               "awslogs-group": logGroup.name,
-              "awslogs-region": this.node.tryGetContext("awsRegion"),
+              "awslogs-region": awsRegion,
               "awslogs-stream-prefix": "ecs"
             }
           }
@@ -364,46 +443,56 @@ class AwestruckInfrastructure extends TerraformStack {
       securityGroupId: coturnSecurityGroup.id,
     });
 
-    const coturnRole = new IamRole(this, "coturn-role", {
-      name: "awestruck-coturn-role",
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Action: "sts:AssumeRole",
-            Principal: {
-              Service: "ec2.amazonaws.com"
-            },
-            Effect: "Allow"
-          }
-        ]
-      }),
+    new SecurityGroupRule(this, "coturn-https-inbound", {
+      type: "ingress",
+      fromPort: 443,
+      toPort: 443,
+      protocol: "tcp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id
     });
 
-    new IamRolePolicyAttachment(this, "coturn-acm-policy", {
-      role: coturnRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly"
+    new SecurityGroupRule(this, "coturn-http-inbound", {
+      type: "ingress",
+      fromPort: 80,
+      toPort: 80,
+      protocol: "tcp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id
+    });
+
+    const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
+      name: "coturn-instance-role",
+      assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Action: "sts:AssumeRole",
+          Effect: "Allow",
+          Principal: {
+            Service: "ec2.amazonaws.com"
+          }
+        }]
+      })
     });
 
     new IamRolePolicyAttachment(this, "coturn-ssm-policy", {
-      role: coturnRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess"
+      role: coturnInstanceRole.name,
+      policyArn: "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
     });
 
-    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
-      role: coturnRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+    new IamRolePolicyAttachment(this, "coturn-acm-policy", {
+      role: coturnInstanceRole.name,
+      policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly"
     });
 
     const coturnInstanceProfile = new IamInstanceProfile(this, "coturn-instance-profile", {
-      name: "awestruck-coturn-profile",
-      role: coturnRole.name
+      name: "coturn-instance-profile",
+      role: coturnInstanceRole.name
     });
 
-    // Create COTURN EC2 instance
     const coturnInstance = new Instance(this, "coturn-server", {
-      ami: "ami-0ed83e7a78a23014e",  // Amazon Linux 2023 AMI 2023.6.20241121.0 arm64
-      instanceType: "t4g.small",     // Using ARM instance for cost efficiency
+      ami: "ami-0ed83e7a78a23014e",
+      instanceType: "t4g.small",
       subnetId: subnet1.id,
       vpcSecurityGroupIds: [coturnSecurityGroup.id],
       associatePublicIpAddress: true,
@@ -414,95 +503,7 @@ class AwestruckInfrastructure extends TerraformStack {
       lifecycle: {
         createBeforeDestroy: true
       },
-      userData: `#!/bin/bash
-        yum update -y
-        yum install -y coturn certbot
-
-        mkdir -p /var/log/coturn
-        chown turnserver:turnserver /var/log/coturn
-        chmod 755 /var/log/coturn
-        
-        echo "COTURN server started $(date)" >> /var/log/coturn/turnserver.log
-        
-        # Get SSL certificate using certbot
-        certbot certonly --standalone -d turn.awestruck.io --agree-tos --non-interactive --email ${letsEncryptEmail}
-
-        # Link certificates for TURN server
-        ln -s /etc/letsencrypt/live/turn.awestruck.io/fullchain.pem /etc/ssl/turn_server_cert.pem
-        ln -s /etc/letsencrypt/live/turn.awestruck.io/privkey.pem /etc/ssl/turn_server_pkey.pem
-        
-        cat > /etc/turnserver.conf << EOL
-        realm=turn.awestruck.io
-        listening-port=3478
-        tls-listening-port=5349
-        total-quota=1000
-        user-quota=100
-        no-multicast-peers
-        relay-threads=8
-        min-port=10000
-        max-port=10010
-        stale-nonce=600
-        # Static auth credentials
-        user=awestruck:${turnPassword}
-        # Enable trickle ICE support
-        allow-loopback-peers
-        mobility
-        no-cli
-        cert=/etc/ssl/turn_server_cert.pem
-        pkey=/etc/ssl/turn_server_pkey.pem
-        cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384"
-        log-file=/var/log/coturn/turnserver.log
-        verbose
-        debug
-        # New logging options
-        log-binding
-        log-allocations
-        log-session-lifetime
-        EOL
-
-        # Configure log rotation
-        cat > /etc/logrotate.d/coturn << EOL
-        /var/log/coturn/turnserver.log {
-            daily
-            rotate 7
-            compress
-            delaycompress
-            missingok
-            notifempty
-            create 644 turnserver turnserver
-        }
-        EOL
-
-        systemctl enable coturn
-        systemctl start coturn
-        
-        # Tail logs to CloudWatch
-        yum install -y amazon-cloudwatch-agent
-        mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
-        cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOL'
-        {
-          "logs": {
-            "logs_collected": {
-              "files": {
-                "collect_list": [
-                  {
-                    "file_path": "/var/log/coturn/turnserver.log",
-                    "log_group_name": "/coturn/turnserver",
-                    "log_stream_name": "{instance_id}",
-                    "timezone": "UTC"
-                  }
-                ]
-              }
-            }
-          }
-        }
-        EOL
-
-        # Start CloudWatch agent
-        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-        systemctl enable amazon-cloudwatch-agent
-        systemctl start amazon-cloudwatch-agent
-      `,
+      userData: userData,
     });
 
     new Route53Record(this, "turn-dns", {
@@ -510,8 +511,8 @@ class AwestruckInfrastructure extends TerraformStack {
       name: "turn.awestruck.io",
       type: "A",
       ttl: 300,
-      allowOverwrite: true, // used for initial deployment
       records: [coturnInstance.publicIp],
+      allowOverwrite: true,
       lifecycle: {
         createBeforeDestroy: true
       },
@@ -568,6 +569,11 @@ class AwestruckInfrastructure extends TerraformStack {
     new IamRolePolicyAttachment(this, "ecs-task-cloudwatch-policy", {
       role: ecsTaskExecutionRole.name,
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+    });
+
+    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
+      role: coturnInstanceRole.name,
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
     });
   }
 }
