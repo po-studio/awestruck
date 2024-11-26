@@ -27,21 +27,30 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     pc = new RTCPeerConnection(await validateTurnConfig());
 
-    pc.onconnectionstatechange = function (event) {
-      console.log(`Connection state change: ${pc.connectionState}`);
-      if (pc.connectionState === 'connected') {
-        document.getElementById('toggleConnection').textContent = 'Disconnect';
-        document.getElementById('toggleConnection').classList.add('button-disconnect');
-        document.getElementById('toggleConnection').disabled = false;
-      } else if (pc.connectionState === 'failed') {
-        document.getElementById('toggleConnection').classList.remove('button-disconnect');
-        document.getElementById('toggleConnection').textContent = 'Failed to Connect - Retry?';
-        document.getElementById('toggleConnection').disabled = false;
-      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-        document.getElementById('toggleConnection').classList.remove('button-disconnect');
-        document.getElementById('toggleConnection').textContent = 'Stream Synth';
-        document.getElementById('toggleConnection').disabled = false;
-      }
+    // pc.onconnectionstatechange = function (event) {
+    //   console.log(`Connection state change: ${pc.connectionState}`);
+    //   if (pc.connectionState === 'connected') {
+    //     document.getElementById('toggleConnection').textContent = 'Disconnect';
+    //     document.getElementById('toggleConnection').classList.add('button-disconnect');
+    //     document.getElementById('toggleConnection').disabled = false;
+    //   } else if (pc.connectionState === 'failed') {
+    //     document.getElementById('toggleConnection').classList.remove('button-disconnect');
+    //     document.getElementById('toggleConnection').textContent = 'Failed to Connect - Retry?';
+    //     document.getElementById('toggleConnection').disabled = false;
+    //   } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+    //     document.getElementById('toggleConnection').classList.remove('button-disconnect');
+    //     document.getElementById('toggleConnection').textContent = 'Stream Synth';
+    //     document.getElementById('toggleConnection').disabled = false;
+    //   }
+    // };
+
+    pc.onconnectionstatechange = function() {
+      console.log('Connection state change:', {
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+        iceGatheringState: pc.iceGatheringState,
+        signalingState: pc.signalingState
+      });
     };
 
     pc.ontrack = function (event) {
@@ -167,9 +176,18 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       }
     };
 
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE Connection State:', pc.iceConnectionState);
-      console.log('Current ICE Candidates:', pc.getStats());
+    pc.oniceconnectionstatechange = function() {
+      console.log('ICE Connection state:', pc.iceConnectionState);
+      
+      if (pc.iceConnectionState === 'connected') {
+        pc.getStats().then(stats => {
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              console.log('Active ICE candidate pair:', report);
+            }
+          });
+        });
+      }
     };
   } else {
 
