@@ -1,6 +1,9 @@
 package webrtc
 
 import (
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,15 +14,21 @@ import (
 	"github.com/po-studio/go-webrtc-server/types"
 )
 
-// just dummy "password" for now
 func generateTURNCredentials(secret string) types.TURNCredentials {
-	username := fmt.Sprintf("awestruck-%d", time.Now().Unix())
-	log.Printf("[TURN] Generating credentials with username: %s (password length: %d)",
-		username, len(secret))
+	timestamp := time.Now().Unix()
+	username := fmt.Sprintf("%d:awestruck", timestamp)
+
+	// Generate HMAC-SHA1 credential
+	mac := hmac.New(sha1.New, []byte(secret))
+	mac.Write([]byte(username))
+	credential := hex.EncodeToString(mac.Sum(nil))
+
+	log.Printf("[TURN] Generating credentials with username: %s", username)
 
 	return types.TURNCredentials{
 		Username: username,
-		Password: secret,
+		Password: credential,
+		TTL:      86400, // 24 hours validity
 		URLs: []string{
 			"turn:turn.awestruck.io:3478",
 			"turns:turn.awestruck.io:5349",

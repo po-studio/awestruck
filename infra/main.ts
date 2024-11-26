@@ -93,7 +93,6 @@ class AwestruckInfrastructure extends TerraformStack {
     tls-listening-port=5349
     min-port=10000
     max-port=10010
-    fingerprint
     use-auth-secret
     static-auth-secret=${turnPassword}
     verbose
