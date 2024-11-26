@@ -385,6 +385,30 @@ async function fetchTurnCredentials(retries = 3) {
   }
 }
 
+// const TURN_CONFIG = {
+//   development: {
+//     iceServers: [{
+//       urls: [
+//         "stun:localhost:3478",
+//         "turn:localhost:3478",
+//         "turns:localhost:5349"
+//       ],
+//       username: "test",
+//       credential: "test123"
+//     }],
+//     iceTransportPolicy: 'relay'
+//   },
+//   production: {
+//     fetchCredentials: true,
+//     urls: [
+//       "stun:turn.awestruck.io:3478",
+//       "turn:turn.awestruck.io:3478",
+//       "turns:turn.awestruck.io:5349"
+//     ],
+//     iceTransportPolicy: 'relay'
+//   }
+// };
+
 const TURN_CONFIG = {
   development: {
     iceServers: [{
@@ -399,27 +423,46 @@ const TURN_CONFIG = {
     iceTransportPolicy: 'relay'
   },
   production: {
-    fetchCredentials: true,
-    urls: [
-      "stun:turn.awestruck.io:3478",
-      "turn:turn.awestruck.io:3478",
-      "turns:turn.awestruck.io:5349"
-    ],
+    iceServers: [{
+      urls: [
+        "turn:turn.awestruck.io:3478",
+        "turns:turn.awestruck.io:5349"
+      ],
+      username: "test",
+      credential: "password",
+      credentialType: 'password'
+    }],
     iceTransportPolicy: 'relay'
   }
 };
 
 const isProduction = window.location.hostname !== 'localhost';
 
+// async function validateTurnConfig() {
+//   const config = isProduction ? 
+//     { 
+//       iceServers: await fetchTurnCredentials(),
+//       iceTransportPolicy: 'relay',
+//       iceCandidatePoolSize: 0,
+//       bundlePolicy: 'balanced',
+//       rtcpMuxPolicy: 'require'
+//     } : 
+//     TURN_CONFIG.development;
+    
+//   console.log('TURN Configuration:', {
+//     iceServers: config.iceServers.map(server => ({
+//       urls: server.urls,
+//       hasCredentials: !!(server.username && server.credential)
+//     })),
+//     iceTransportPolicy: config.iceTransportPolicy
+//   });
+  
+//   return config;
+// }
+
 async function validateTurnConfig() {
   const config = isProduction ? 
-    { 
-      iceServers: await fetchTurnCredentials(),
-      iceTransportPolicy: 'relay',
-      iceCandidatePoolSize: 0,
-      bundlePolicy: 'balanced',
-      rtcpMuxPolicy: 'require'
-    } : 
+    TURN_CONFIG.production : 
     TURN_CONFIG.development;
     
   console.log('TURN Configuration:', {
