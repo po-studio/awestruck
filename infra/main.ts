@@ -101,6 +101,13 @@ class AwestruckInfrastructure extends TerraformStack {
     log-binding
     log-allocations
     log-session-lifetime
+    lt-cred-mech
+    fingerprint
+    use-auth-secret
+    static-auth-secret=${turnPassword}
+    cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
+    no-udp-relay
+    no-tcp-relay
     EOL
     
     # Start TURN server
@@ -108,13 +115,13 @@ class AwestruckInfrastructure extends TerraformStack {
     docker run -d --name coturn \
       --restart unless-stopped \
       --network host \
-      -v /etc/coturn:/etc/coturn \
-      -v /etc/ssl:/etc/ssl \
-      -v /var/log/coturn:/var/log/coturn \
       --log-driver=awslogs \
       --log-opt awslogs-group=/coturn/turnserver \
       --log-opt awslogs-region=${awsRegion} \
       --log-opt awslogs-stream=coturn-$(hostname) \
+      -v /etc/coturn:/etc/coturn \
+      -v /etc/ssl:/etc/ssl \
+      -v /var/log/coturn:/var/log/coturn \
       coturn/coturn -c /etc/coturn/turnserver.conf
     
     log "COTURN server setup completed successfully"
@@ -459,6 +466,24 @@ class AwestruckInfrastructure extends TerraformStack {
       protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id
+    });
+
+    new SecurityGroupRule(this, "coturn-udp-range", {
+      type: "ingress",
+      fromPort: 10000,
+      toPort: 10010,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id,
+    });
+
+    new SecurityGroupRule(this, "coturn-stun-udp", {
+      type: "ingress",
+      fromPort: 3478,
+      toPort: 3478,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id,
     });
 
     const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
