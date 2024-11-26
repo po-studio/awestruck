@@ -22,7 +22,7 @@ import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
 import { Instance } from "@cdktf/provider-aws/lib/instance";
 import { SecurityGroupRule } from "@cdktf/provider-aws/lib/security-group-rule";
 import { TerraformOutput } from "cdktf";
-import * as dotenv from 'dotenv';
+import * as dotenv from "dotenv";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
 import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile";
 
@@ -32,13 +32,19 @@ class AwestruckInfrastructure extends TerraformStack {
   constructor(scope: Construct, id: string) {
     super(scope, id);
 
-    const awsAccountId = process.env.AWS_ACCOUNT_ID || this.node.tryGetContext("awsAccountId");
-    const sslCertificateArn = process.env.SSL_CERTIFICATE_ARN || this.node.tryGetContext("sslCertificateArn");
-    const turnPassword = process.env.TURN_PASSWORD || this.node.tryGetContext("turnPassword");
+    const awsAccountId =
+      process.env.AWS_ACCOUNT_ID || this.node.tryGetContext("awsAccountId");
+    const sslCertificateArn =
+      process.env.SSL_CERTIFICATE_ARN ||
+      this.node.tryGetContext("sslCertificateArn");
+    const turnPassword =
+      process.env.TURN_PASSWORD || this.node.tryGetContext("turnPassword");
     const awsRegion = this.node.tryGetContext("awsRegion") || "us-east-1";
 
     if (!awsAccountId || !sslCertificateArn || !turnPassword) {
-      throw new Error("AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set in environment variables or cdktf.json context");
+      throw new Error(
+        "AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set in environment variables or cdktf.json context"
+      );
     }
 
     const userData = `#!/bin/bash
@@ -128,16 +134,16 @@ class AwestruckInfrastructure extends TerraformStack {
         fi
         
         docker run -d --name coturn \\
-            --restart unless-stopped \\
-            --network host \\
-            --log-driver=awslogs \\
-            --log-opt awslogs-group=/coturn/turnserver \\
-            --log-opt awslogs-region=${awsRegion} \\
-            --log-opt awslogs-stream=coturn-$(hostname) \\
-            -v /etc/coturn:/etc/coturn \\
-            -v /etc/ssl:/etc/ssl \\
-            -v /var/log/coturn:/var/log/coturn \\
-            coturn/coturn -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
+          --restart unless-stopped \\
+          --network host \\
+          --log-driver=awslogs \\
+          --log-opt awslogs-group=/coturn/turnserver \\
+          --log-opt awslogs-region=${awsRegion} \\
+          --log-opt awslogs-stream=coturn-$(hostname) \\
+          -v /etc/coturn:/etc/coturn \\
+          -v /etc/ssl:/etc/ssl \\
+          -v /var/log/coturn:/var/log/coturn \\
+          coturn/coturn -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
             
         # Verify container is running
         sleep 5
@@ -310,7 +316,8 @@ class AwestruckInfrastructure extends TerraformStack {
 
     new IamRolePolicyAttachment(this, "ecs-task-execution-role-policy", {
       role: ecsTaskExecutionRole.name,
-      policyArn: "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+      policyArn:
+        "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
     });
 
     new IamRolePolicyAttachment(this, "cloudwatch-logs-full-access-policy", {
@@ -344,51 +351,55 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess",
     });
 
-    const taskDefinition = new EcsTaskDefinition(this, "awestruck-task-definition", {
-      family: "go-webrtc-server-arm64",
-      cpu: "256",
-      memory: "512",
-      networkMode: "awsvpc",
-      requiresCompatibilities: ["FARGATE"],
-      executionRoleArn: ecsTaskExecutionRole.arn,
-      taskRoleArn: ecsTaskRole.arn,
-      runtimePlatform: {
-        cpuArchitecture: "ARM64",
-        operatingSystemFamily: "LINUX",
-      },
-      containerDefinitions: JSON.stringify([
-        {
-          name: "go-webrtc-server-arm64",
-          image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
-          portMappings: [
-            { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-            ...Array.from({ length: 11 }, (_, i) => ({
-              containerPort: 10000 + i,
-              hostPort: 10000 + i,
-              protocol: "udp"
-            }))
-          ],
-          environment: [
-            { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
-            { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-            { name: "JACK_OPTIONS", value: "-R -d dummy" },
-            { name: "JACK_SAMPLE_RATE", value: "48000" }
-          ],
-          ulimits: [
-            { name: "memlock", softLimit: -1, hardLimit: -1 },
-            { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
-          ],
-          logConfiguration: {
-            logDriver: "awslogs",
-            options: {
-              "awslogs-group": logGroup.name,
-              "awslogs-region": awsRegion,
-              "awslogs-stream-prefix": "ecs"
-            }
-          }
-        }
-      ])
-    });
+    const taskDefinition = new EcsTaskDefinition(
+      this,
+      "awestruck-task-definition",
+      {
+        family: "go-webrtc-server-arm64",
+        cpu: "256",
+        memory: "512",
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        executionRoleArn: ecsTaskExecutionRole.arn,
+        taskRoleArn: ecsTaskRole.arn,
+        runtimePlatform: {
+          cpuArchitecture: "ARM64",
+          operatingSystemFamily: "LINUX",
+        },
+        containerDefinitions: JSON.stringify([
+          {
+            name: "go-webrtc-server-arm64",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
+            portMappings: [
+              { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
+              ...Array.from({ length: 11 }, (_, i) => ({
+                containerPort: 10000 + i,
+                hostPort: 10000 + i,
+                protocol: "udp",
+              })),
+            ],
+            environment: [
+              { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
+              { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
+              { name: "JACK_OPTIONS", value: "-R -d dummy" },
+              { name: "JACK_SAMPLE_RATE", value: "48000" },
+            ],
+            ulimits: [
+              { name: "memlock", softLimit: -1, hardLimit: -1 },
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
+            ],
+            logConfiguration: {
+              logDriver: "awslogs",
+              options: {
+                "awslogs-group": logGroup.name,
+                "awslogs-region": awsRegion,
+                "awslogs-stream-prefix": "ecs",
+              },
+            },
+          },
+        ]),
+      }
+    );
 
     const listener = new LbListener(this, "awestruck-https-listener", {
       loadBalancerArn: alb.arn,
@@ -426,14 +437,18 @@ class AwestruckInfrastructure extends TerraformStack {
       dependsOn: [listener],
     });
 
-    const coturnSecurityGroup = new SecurityGroup(this, "coturn-security-group", {
-      name: "coturn-security-group",
-      vpcId: vpc.id,
-      description: "Security group for COTURN server",
-      tags: {
-        Name: "coturn-security-group",
-      },
-    });
+    const coturnSecurityGroup = new SecurityGroup(
+      this,
+      "coturn-security-group",
+      {
+        name: "coturn-security-group",
+        vpcId: vpc.id,
+        description: "Security group for COTURN server",
+        tags: {
+          Name: "coturn-security-group",
+        },
+      }
+    );
 
     // STUN/TURN ports
     const stunTurnPorts = [
@@ -481,7 +496,7 @@ class AwestruckInfrastructure extends TerraformStack {
       toPort: 443,
       protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id
+      securityGroupId: coturnSecurityGroup.id,
     });
 
     new SecurityGroupRule(this, "coturn-http-inbound", {
@@ -490,37 +505,43 @@ class AwestruckInfrastructure extends TerraformStack {
       toPort: 80,
       protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id
+      securityGroupId: coturnSecurityGroup.id,
     });
 
     const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
       name: "coturn-instance-role",
       assumeRolePolicy: JSON.stringify({
         Version: "2012-10-17",
-        Statement: [{
-          Action: "sts:AssumeRole",
-          Effect: "Allow",
-          Principal: {
-            Service: "ec2.amazonaws.com"
-          }
-        }]
-      })
+        Statement: [
+          {
+            Action: "sts:AssumeRole",
+            Effect: "Allow",
+            Principal: {
+              Service: "ec2.amazonaws.com",
+            },
+          },
+        ],
+      }),
     });
 
     new IamRolePolicyAttachment(this, "coturn-ssm-policy", {
       role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      policyArn: "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     });
 
     new IamRolePolicyAttachment(this, "coturn-acm-policy", {
       role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly"
+      policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly",
     });
 
-    const coturnInstanceProfile = new IamInstanceProfile(this, "coturn-instance-profile", {
-      name: "coturn-instance-profile",
-      role: coturnInstanceRole.name
-    });
+    const coturnInstanceProfile = new IamInstanceProfile(
+      this,
+      "coturn-instance-profile",
+      {
+        name: "coturn-instance-profile",
+        role: coturnInstanceRole.name,
+      }
+    );
 
     const coturnInstance = new Instance(this, "coturn-server", {
       ami: "ami-0ed83e7a78a23014e",
@@ -533,7 +554,7 @@ class AwestruckInfrastructure extends TerraformStack {
         Name: "coturn-server",
       },
       lifecycle: {
-        createBeforeDestroy: true
+        createBeforeDestroy: true,
       },
       userData: userData,
     });
@@ -546,9 +567,9 @@ class AwestruckInfrastructure extends TerraformStack {
       records: [coturnInstance.publicIp],
       allowOverwrite: true,
       lifecycle: {
-        createBeforeDestroy: true
+        createBeforeDestroy: true,
       },
-      dependsOn: [coturnInstance]
+      dependsOn: [coturnInstance],
     });
 
     // Add outputs for the TURN server details
@@ -559,24 +580,24 @@ class AwestruckInfrastructure extends TerraformStack {
         ports: {
           stun: 3478,
           turn: 3478,
-          turns: 5349
-        }
-      }
+          turns: 5349,
+        },
+      },
     });
 
     new SsmParameter(this, "turn-password", {
       name: "/awestruck/turn_password",
       type: "SecureString",
       value: turnPassword,
-      description: "TURN server password for WebRTC connections"
+      description: "TURN server password for WebRTC connections",
     });
 
     new CloudwatchLogGroup(this, "coturn-logs", {
       name: "/coturn/turnserver",
       retentionInDays: 14,
       tags: {
-        Name: "coturn-logs"
-      }
+        Name: "coturn-logs",
+      },
     });
 
     new SsmParameter(this, "cloudwatch-agent-config", {
@@ -586,16 +607,18 @@ class AwestruckInfrastructure extends TerraformStack {
         logs: {
           logs_collected: {
             files: {
-              collect_list: [{
-                file_path: "/var/log/coturn/turnserver.log",
-                log_group_name: "/coturn/turnserver",
-                log_stream_name: "{instance_id}",
-                timezone: "UTC"
-              }]
-            }
-          }
-        }
-      })
+              collect_list: [
+                {
+                  file_path: "/var/log/coturn/turnserver.log",
+                  log_group_name: "/coturn/turnserver",
+                  log_stream_name: "{instance_id}",
+                  timezone: "UTC",
+                },
+              ],
+            },
+          },
+        },
+      }),
     });
 
     new IamRolePolicyAttachment(this, "ecs-task-cloudwatch-policy", {
@@ -605,7 +628,7 @@ class AwestruckInfrastructure extends TerraformStack {
 
     new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
       role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
     });
   }
 }
