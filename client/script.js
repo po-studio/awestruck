@@ -94,6 +94,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         console.log("New ICE candidate details:", {
           candidate: event.candidate.candidate,
           type: event.candidate.type,
+          candidateType: event.candidate.candidate.split(' ')[7],  // 'typ host/srflx/relay'
           protocol: event.candidate.protocol,
           address: event.candidate.address,
           port: event.candidate.port,
@@ -103,7 +104,8 @@ document.getElementById('toggleConnection').addEventListener('click', async func
           priority: event.candidate.priority,
           foundation: event.candidate.foundation,
           component: event.candidate.component,
-          usernameFragment: event.candidate.usernameFragment
+          usernameFragment: event.candidate.usernameFragment,
+          raw: event.candidate.candidate
         });
         
         // Only send candidates after connection is established

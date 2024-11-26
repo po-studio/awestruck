@@ -40,10 +40,6 @@ class AwestruckInfrastructure extends TerraformStack {
     if (!awsAccountId || !sslCertificateArn || !turnPassword || !letsEncryptEmail) {
       throw new Error('AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, TURN_PASSWORD, and LETS_ENCRYPT_EMAIL must be set in environment variables or cdktf.json context');
     }
-    
-    if (!awsAccountId || !sslCertificateArn || !turnPassword) {
-      throw new Error('AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set in environment variables or cdktf.json context');
-    }
 
     new AwsProvider(this, "AWS", {
       region: this.node.tryGetContext("awsRegion") || "us-east-1",
@@ -421,6 +417,12 @@ class AwestruckInfrastructure extends TerraformStack {
       userData: `#!/bin/bash
         yum update -y
         yum install -y coturn certbot
+
+        mkdir -p /var/log/coturn
+        chown turnserver:turnserver /var/log/coturn
+        chmod 755 /var/log/coturn
+        
+        echo "COTURN server started $(date)" >> /var/log/coturn/turnserver.log
         
         # Get SSL certificate using certbot
         certbot certonly --standalone -d turn.awestruck.io --agree-tos --non-interactive --email ${letsEncryptEmail}
@@ -428,10 +430,6 @@ class AwestruckInfrastructure extends TerraformStack {
         # Link certificates for TURN server
         ln -s /etc/letsencrypt/live/turn.awestruck.io/fullchain.pem /etc/ssl/turn_server_cert.pem
         ln -s /etc/letsencrypt/live/turn.awestruck.io/privkey.pem /etc/ssl/turn_server_pkey.pem
-
-        # Configure logging
-        mkdir -p /var/log/coturn
-        chown turnserver:turnserver /var/log/coturn
         
         cat > /etc/turnserver.conf << EOL
         realm=turn.awestruck.io
@@ -480,7 +478,30 @@ class AwestruckInfrastructure extends TerraformStack {
         
         # Tail logs to CloudWatch
         yum install -y amazon-cloudwatch-agent
-        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c ssm:/AmazonCloudWatch-Config
+        mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+        cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOL'
+        {
+          "logs": {
+            "logs_collected": {
+              "files": {
+                "collect_list": [
+                  {
+                    "file_path": "/var/log/coturn/turnserver.log",
+                    "log_group_name": "/coturn/turnserver",
+                    "log_stream_name": "{instance_id}",
+                    "timezone": "UTC"
+                  }
+                ]
+              }
+            }
+          }
+        }
+        EOL
+
+        # Start CloudWatch agent
+        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+        systemctl enable amazon-cloudwatch-agent
+        systemctl start amazon-cloudwatch-agent
       `,
     });
 
@@ -489,6 +510,7 @@ class AwestruckInfrastructure extends TerraformStack {
       name: "turn.awestruck.io",
       type: "A",
       ttl: 300,
+      allowOverwrite: true, // used for initial deployment
       records: [coturnInstance.publicIp],
       lifecycle: {
         createBeforeDestroy: true
@@ -546,33 +568,6 @@ class AwestruckInfrastructure extends TerraformStack {
     new IamRolePolicyAttachment(this, "ecs-task-cloudwatch-policy", {
       role: ecsTaskExecutionRole.name,
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
-    });
-
-    new SecurityGroupRule(this, "turn-udp-3478", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id
-    });
-
-    new SecurityGroupRule(this, "turn-tcp-3478", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id
-    });
-
-    new SecurityGroupRule(this, "turn-relay-range", {
-      type: "ingress",
-      fromPort: 10000,
-      toPort: 10010,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id
     });
   }
 }
