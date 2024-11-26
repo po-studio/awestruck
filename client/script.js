@@ -410,3 +410,38 @@ async function validateTurnConfig() {
   
   return config;
 }
+
+async function testTurnServer() {
+  const config = await validateTurnConfig();
+  const pc = new RTCPeerConnection(config);
+  
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      const candidateType = e.candidate.candidate.split(' ')[7];
+      console.log(`Test ICE Candidate: ${candidateType}`, {
+        protocol: e.candidate.protocol,
+        address: e.candidate.address,
+        raw: e.candidate.candidate
+      });
+    }
+  };
+  
+  // Create a data channel to trigger ICE gathering
+  pc.createDataChannel("test");
+  
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    
+    // Wait for ICE gathering to complete
+    await new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') resolve();
+      else pc.onicegatheringstatechange = () => {
+        if (pc.iceGatheringState === 'complete') resolve();
+      };
+    });
+    
+  } finally {
+    pc.close();
+  }
+}
