@@ -96,6 +96,8 @@ class AwestruckInfrastructure extends TerraformStack {
     use-auth-secret
     static-auth-secret=${turnPassword}
     verbose
+    debug
+    log-file=stdout
     no-multicast-peers
     cert=/etc/ssl/turn.awestruck.io.crt
     pkey=/etc/ssl/turn.awestruck.io.key
@@ -109,17 +111,16 @@ class AwestruckInfrastructure extends TerraformStack {
             docker rm -f coturn
         fi
         
-        docker run -d --name coturn \\
-          --restart unless-stopped \\
-          --network host \\
-          --log-driver=awslogs \\
-          --log-opt awslogs-group=/coturn/turnserver \\
-          --log-opt awslogs-region=${awsRegion} \\
-          --log-opt awslogs-stream=coturn-$(hostname) \\
-          -v /etc/coturn:/etc/coturn \\
-          -v /etc/ssl:/etc/ssl \\
-          -v /var/log/coturn:/var/log/coturn \\
-          coturn/coturn -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
+        docker run -d --name coturn \
+          --restart unless-stopped \
+          --network host \
+          --log-driver=awslogs \
+          --log-opt awslogs-group=/coturn/turnserver \
+          --log-opt awslogs-region=${awsRegion} \
+          --log-opt awslogs-stream=coturn-$(hostname) \
+          -v /etc/coturn:/etc/coturn \
+          -v /etc/ssl:/etc/ssl \
+          coturn/coturn:latest turnserver -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
             
         # Verify container is running
         sleep 5
@@ -130,6 +131,15 @@ class AwestruckInfrastructure extends TerraformStack {
 
     # Enable log streaming to CloudWatch
     docker logs -f coturn >> /var/log/coturn/turnserver.log 2>&1 &
+
+    log "Verifying TURN server ports..."
+    sleep 5
+    if ! netstat -tuln | grep -q ':3478 '; then
+        error_exit "TURN server not listening on port 3478"
+    fi
+    if ! netstat -tuln | grep -q ':5349 '; then
+        error_exit "TURN server not listening on port 5349"
+    fi
 
     log "COTURN server setup completed successfully"
     `;
