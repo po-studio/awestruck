@@ -347,11 +347,7 @@ async function fetchTurnCredentials(retries = 3) {
       
       const credentials = await response.json();
       return [{
-        urls: credentials.urls || [
-          "stun:turn.awestruck.io:3478",
-          "turn:turn.awestruck.io:3478",
-          "turns:turn.awestruck.io:5349"
-        ],
+        urls: credentials.urls,
         username: credentials.username,
         credential: credentials.password
       }];
@@ -388,7 +384,7 @@ const isProduction = window.location.hostname !== 'localhost';
 
 async function validateTurnConfig() {
   const config = isProduction ? 
-    await fetchTurnCredentials() : 
+    { iceServers: await fetchTurnCredentials() } : 
     TURN_CONFIG.development;
     
   console.log('TURN Configuration:', {
