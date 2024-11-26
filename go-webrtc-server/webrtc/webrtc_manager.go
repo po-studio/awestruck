@@ -61,6 +61,12 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[OFFER] Processed offer details: Type=%s, ICEServers=%d", offer.Type, len(iceServers))
 	log.Printf("[OFFER] SDP Preview: %.100s...", offer.SDP)
 
+	if err := verifyICEConfiguration(offer.ICEServers); err != nil {
+		log.Printf("[ERROR] Invalid ICE configuration: %v", err)
+		http.Error(w, fmt.Sprintf("Invalid ICE configuration: %v", err), http.StatusBadRequest)
+		return
+	}
+
 	log.Println("Creating peer connection")
 	peerConnection, err := createPeerConnection(iceServers)
 	if err != nil {
@@ -103,7 +109,7 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Answer SDP: %s", answer.SDP)
 
 	log.Println("Finalizing connection setup")
-	if err := finalizeConnectionSetup(appSession, audioTrack, answer); err != nil {
+	if err := finalizeConnectionSetup(appSession, audioTrack, *answer); err != nil {
 		log.Printf("Error finalizing connection setup: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to finalize connection setup: %v", err), http.StatusInternalServerError)
 		return
@@ -283,7 +289,6 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	// Create a SettingEngine and enable detailed logging
 	s := webrtc.SettingEngine{}
 	s.SetICETimeouts(5*time.Second, 10*time.Second, 5*time.Second)
-	s.SetTrickle(true)
 	s.DetachDataChannels()
 
 	// Create an API object with our settings
