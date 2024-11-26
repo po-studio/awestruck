@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -279,31 +280,45 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 
 // createPeerConnection initializes a new WebRTC peer connection
 func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
-	mediaEngine := &webrtc.MediaEngine{}
-	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
-		return nil, err
-	}
+	// Create a SettingEngine and enable detailed logging
+	s := webrtc.SettingEngine{}
+	s.SetICETimeouts(5*time.Second, 10*time.Second, 5*time.Second)
+	s.SetTrickle(true)
+	s.DetachDataChannels()
 
-	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetICETimeouts(
-		5*time.Second,  // Disconnected timeout
-		10*time.Second, // Failed timeout
-		5*time.Second,  // Keepalive interval
-	)
-	settingEngine.SetEphemeralUDPPortRange(10000, 10010)
-	settingEngine.SetLite(true)
-
-	api := webrtc.NewAPI(
-		webrtc.WithMediaEngine(mediaEngine),
-		webrtc.WithSettingEngine(settingEngine),
-	)
+	// Create an API object with our settings
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
 
 	config := webrtc.Configuration{
-		ICEServers:         iceServers,
-		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		ICEServers:           iceServers,
+		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
+		BundlePolicy:         webrtc.BundlePolicyBalanced,
+		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
+		ICECandidatePoolSize: 0,
 	}
 
-	return api.NewPeerConnection(config)
+	// Log the configuration we're using
+	log.Printf("[DEBUG] Creating peer connection with config: %+v", config)
+
+	// Create the peer connection using our custom API
+	pc, err := api.NewPeerConnection(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create peer connection: %v", err)
+	}
+
+	// Add handlers to log ICE candidate gathering
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil {
+			return
+		}
+		log.Printf("[ICE] New candidate: %s", c.String())
+	})
+
+	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
+		log.Printf("[ICE] Gathering state changed to: %s", state.String())
+	})
+
+	return pc, nil
 }
 
 // setRemoteDescription sets the offer as the remote description for the peer connection
@@ -314,23 +329,19 @@ func setRemoteDescription(pc *webrtc.PeerConnection, offer webrtc.SessionDescrip
 }
 
 // createAnswer generates an SDP answer after setting the remote description
-func createAnswer(pc *webrtc.PeerConnection) (webrtc.SessionDescription, error) {
-	log.Println("[ANSWER] Creating answer")
+func createAnswer(pc *webrtc.PeerConnection) (*webrtc.SessionDescription, error) {
+	log.Printf("[ANSWER] Creating answer")
 	log.Printf("[ANSWER] Current connection state: %s", pc.ConnectionState().String())
 	log.Printf("[ANSWER] Current signaling state: %s", pc.SignalingState().String())
 
 	answer, err := pc.CreateAnswer(nil)
 	if err != nil {
 		log.Printf("[ANSWER][ERROR] Failed to create answer: %v", err)
-		return webrtc.SessionDescription{}, err
+		return nil, err
 	}
 
-	log.Printf("[ANSWER] Created answer: Type=%s, SDPLength=%d",
-		answer.Type,
-		len(answer.SDP))
-	log.Printf("[ANSWER] SDP Preview: %.100s...", answer.SDP)
-
-	return answer, nil
+	log.Printf("[ANSWER] Created answer successfully")
+	return &answer, nil
 }
 
 // sendAnswer sends the generated answer as a response to the client
@@ -433,4 +444,32 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[ICE] Successfully added candidate for session: %s", sessionID)
 	w.WriteHeader(http.StatusOK)
+}
+
+func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
+	if len(iceServers) == 0 {
+		return fmt.Errorf("no ICE servers provided")
+	}
+
+	for i, server := range iceServers {
+		log.Printf("[ICE] Server %d configuration:", i)
+		log.Printf("  - URLs: %v", server.URLs)
+		log.Printf("  - Username length: %d", len(server.Username))
+		log.Printf("  - Credential length: %d", len(server.Credential.(string)))
+
+		// Verify TURN URLs are present when in relay-only mode
+		hasTURN := false
+		for _, url := range server.URLs {
+			if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
+				hasTURN = true
+				break
+			}
+		}
+
+		if !hasTURN {
+			return fmt.Errorf("no TURN URLs found in ICE server configuration")
+		}
+	}
+
+	return nil
 }

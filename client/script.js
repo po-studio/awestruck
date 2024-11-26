@@ -189,12 +189,22 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
 async function sendOffer(offer) {
   try {
+    const iceServers = isProduction ? 
+      await fetchTurnCredentials() : 
+      TURN_CONFIG.development.iceServers;
+    
+    console.log('Sending offer with ICE servers:', {
+      count: iceServers.length,
+      servers: iceServers.map(server => ({
+        urls: server.urls,
+        hasCredentials: !!(server.username && server.credential)
+      }))
+    });
+
     const browserOffer = {
       sdp: btoa(JSON.stringify(offer)),
       type: 'offer',
-      iceServers: isProduction ? 
-        (await fetchTurnCredentials()) : 
-        TURN_CONFIG.development.iceServers
+      iceServers: iceServers
     };
 
     const response = await fetch('/offer', {
@@ -353,13 +363,21 @@ async function fetchTurnCredentials(retries = 3) {
       }
       
       const credentials = await response.json();
+      console.log('TURN credentials received:', {
+        username: credentials.username,
+        timestamp: parseInt(credentials.username),
+        hasCredential: !!credentials.password,
+        urls: credentials.urls
+      });
+      
       return [{
         urls: credentials.urls,
         username: credentials.username,
-        credential: credentials.password
+        credential: credentials.password,
+        credentialType: 'password'
       }];
     } catch (error) {
-      console.error(`Attempt ${i + 1}/${retries} failed:`, error);
+      console.error(`TURN credential fetch attempt ${i + 1}/${retries} failed:`, error);
       if (i === retries - 1) throw error;
       await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
     }
@@ -396,7 +414,10 @@ async function validateTurnConfig() {
   const config = isProduction ? 
     { 
       iceServers: await fetchTurnCredentials(),
-      iceTransportPolicy: 'relay'
+      iceTransportPolicy: 'relay',
+      iceCandidatePoolSize: 0,
+      bundlePolicy: 'balanced',
+      rtcpMuxPolicy: 'require'
     } : 
     TURN_CONFIG.development;
     

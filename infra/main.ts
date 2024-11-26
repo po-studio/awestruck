@@ -59,15 +59,18 @@ class AwestruckInfrastructure extends TerraformStack {
     dnf update -y || error_exit "Failed to update system"
     dnf install -y docker amazon-cloudwatch-agent jq aws-cli || error_exit "Failed to install packages"
     
-    # Start services
-    systemctl enable docker amazon-cloudwatch-agent
-    systemctl start docker amazon-cloudwatch-agent
+    # Start and enable Docker
+    systemctl start docker || error_exit "Failed to start Docker"
+    systemctl enable docker || error_exit "Failed to enable Docker"
     
-    # Create required directories
-    mkdir -p /etc/coturn /var/log/coturn /etc/ssl
+    # Pull the coturn image before trying to run it
+    docker pull coturn/coturn || error_exit "Failed to pull coturn image"
+    
+    # Create required directories with proper permissions
+    mkdir -p /etc/coturn /var/log/coturn /etc/ssl || error_exit "Failed to create directories"
     chmod 755 /var/log/coturn
     
-    # Get certificate from ACM
+    # Get certificate from ACM (keeping your existing cert logic)
     log "Fetching certificate from ACM..."
     CERT_ARN="${sslCertificateArn}"
     aws acm get-certificate --certificate-arn $CERT_ARN --region ${awsRegion} > /tmp/cert.json
@@ -89,7 +92,6 @@ class AwestruckInfrastructure extends TerraformStack {
     min-port=10000
     max-port=10010
     stale-nonce=600
-    user=awestruck:${turnPassword}
     allow-loopback-peers
     mobility
     no-cli
@@ -105,25 +107,48 @@ class AwestruckInfrastructure extends TerraformStack {
     fingerprint
     use-auth-secret
     static-auth-secret=${turnPassword}
+    # Add timestamp-based credential settings
+    stale-nonce=600
+    max-allocate-lifetime=3600
+    channel-lifetime=3600
+    permission-lifetime=3600
+    nonce-lifetime=3600
+    # Keep existing security settings
     cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
     no-udp-relay
     no-tcp-relay
     EOL
     
-    # Start TURN server
+    # Start TURN server with error handling
     log "Starting TURN server..."
-    docker run -d --name coturn \
-      --restart unless-stopped \
-      --network host \
-      --log-driver=awslogs \
-      --log-opt awslogs-group=/coturn/turnserver \
-      --log-opt awslogs-region=${awsRegion} \
-      --log-opt awslogs-stream=coturn-$(hostname) \
-      -v /etc/coturn:/etc/coturn \
-      -v /etc/ssl:/etc/ssl \
-      -v /var/log/coturn:/var/log/coturn \
-      coturn/coturn -c /etc/coturn/turnserver.conf
-    
+    if ! docker ps | grep -q coturn; then
+        if docker ps -a | grep -q coturn; then
+            log "Removing existing coturn container..."
+            docker rm -f coturn
+        fi
+        
+        docker run -d --name coturn \\
+            --restart unless-stopped \\
+            --network host \\
+            --log-driver=awslogs \\
+            --log-opt awslogs-group=/coturn/turnserver \\
+            --log-opt awslogs-region=${awsRegion} \\
+            --log-opt awslogs-stream=coturn-$(hostname) \\
+            -v /etc/coturn:/etc/coturn \\
+            -v /etc/ssl:/etc/ssl \\
+            -v /var/log/coturn:/var/log/coturn \\
+            coturn/coturn -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
+            
+        # Verify container is running
+        sleep 5
+        if ! docker ps | grep -q coturn; then
+            error_exit "Coturn container failed to start. Logs: $(docker logs coturn 2>&1)"
+        fi
+    fi
+
+    # Enable log streaming to CloudWatch
+    docker logs -f coturn >> /var/log/coturn/turnserver.log 2>&1 &
+
     log "COTURN server setup completed successfully"
     `;
 
@@ -466,24 +491,6 @@ class AwestruckInfrastructure extends TerraformStack {
       protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id
-    });
-
-    new SecurityGroupRule(this, "coturn-udp-range", {
-      type: "ingress",
-      fromPort: 10000,
-      toPort: 10010,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "coturn-stun-udp", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
     });
 
     const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
