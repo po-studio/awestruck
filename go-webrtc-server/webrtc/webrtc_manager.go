@@ -61,7 +61,7 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[OFFER] Processed offer details: Type=%s, ICEServers=%d", offer.Type, len(iceServers))
 	log.Printf("[OFFER] SDP Preview: %.100s...", offer.SDP)
 
-	if err := verifyICEConfiguration(offer.ICEServers); err != nil {
+	if err := verifyICEConfiguration(iceServers); err != nil {
 		log.Printf("[ERROR] Invalid ICE configuration: %v", err)
 		http.Error(w, fmt.Sprintf("Invalid ICE configuration: %v", err), http.StatusBadRequest)
 		return
