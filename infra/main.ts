@@ -91,38 +91,15 @@ class AwestruckInfrastructure extends TerraformStack {
     realm=turn.awestruck.io
     listening-port=3478
     tls-listening-port=5349
-    total-quota=1000
-    user-quota=100
-    no-multicast-peers
-    relay-threads=8
     min-port=10000
     max-port=10010
-    stale-nonce=600
-    allow-loopback-peers
-    mobility
-    no-cli
-    cert=/etc/ssl/turn.awestruck.io.crt
-    pkey=/etc/ssl/turn.awestruck.io.key
-    log-file=/var/log/coturn/turnserver.log
-    verbose
-    debug
-    log-binding
-    log-allocations
-    log-session-lifetime
-    lt-cred-mech
     fingerprint
     use-auth-secret
     static-auth-secret=${turnPassword}
-    # Add timestamp-based credential settings
-    stale-nonce=600
-    max-allocate-lifetime=3600
-    channel-lifetime=3600
-    permission-lifetime=3600
-    nonce-lifetime=3600
-    # Keep existing security settings
-    cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
-    no-udp-relay
-    no-tcp-relay
+    verbose
+    no-multicast-peers
+    cert=/etc/ssl/turn.awestruck.io.crt
+    pkey=/etc/ssl/turn.awestruck.io.key
     EOL
     
     # Start TURN server with error handling

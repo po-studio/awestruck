@@ -61,6 +61,8 @@ document.getElementById('toggleConnection').addEventListener('click', async func
           audioElement = document.createElement('audio');
           audioElement.autoplay = true;
           audioElement.controls = true;
+          audioElement.volume = 0.75;
+          audioElement.muted = false;
           container.appendChild(audioElement);
           console.log('New audio element added to the document.');
         } else {
@@ -363,16 +365,15 @@ async function fetchTurnCredentials(retries = 3) {
       }
       
       const credentials = await response.json();
-      console.log('TURN credentials received:', {
-        username: credentials.username,
-        timestamp: parseInt(credentials.username),
-        hasCredential: !!credentials.password,
-        urls: credentials.urls
-      });
+      console.log('TURN credentials received:', credentials);
       
+      // Use the server-provided credentials
       return [{
-        urls: credentials.urls,
-        username: credentials.username,
+        urls: [
+          "turn:turn.awestruck.io:3478",
+          "turns:turn.awestruck.io:5349"
+        ],
+        username: credentials.username,  // Use server-provided username
         credential: credentials.password,
         credentialType: 'password'
       }];
