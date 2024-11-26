@@ -190,9 +190,11 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 async function sendOffer(offer) {
   try {
     const browserOffer = {
-      sdp: btoa(JSON.stringify(offer)),  // Encode the entire offer object
+      sdp: btoa(JSON.stringify(offer)),
       type: 'offer',
-      iceServers: []
+      iceServers: isProduction ? 
+        (await fetchTurnCredentials()) : 
+        TURN_CONFIG.development.iceServers
     };
 
     const response = await fetch('/offer', {
@@ -374,7 +376,8 @@ const TURN_CONFIG = {
       ],
       username: "test",
       credential: "test123"
-    }]
+    }],
+    iceTransportPolicy: 'relay'
   },
   production: {
     fetchCredentials: true,
@@ -382,7 +385,8 @@ const TURN_CONFIG = {
       "stun:turn.awestruck.io:3478",
       "turn:turn.awestruck.io:3478",
       "turns:turn.awestruck.io:5349"
-    ]
+    ],
+    iceTransportPolicy: 'relay'
   }
 };
 
@@ -390,14 +394,18 @@ const isProduction = window.location.hostname !== 'localhost';
 
 async function validateTurnConfig() {
   const config = isProduction ? 
-    { iceServers: await fetchTurnCredentials() } : 
+    { 
+      iceServers: await fetchTurnCredentials(),
+      iceTransportPolicy: 'relay'
+    } : 
     TURN_CONFIG.development;
     
   console.log('TURN Configuration:', {
     iceServers: config.iceServers.map(server => ({
       urls: server.urls,
       hasCredentials: !!(server.username && server.credential)
-    }))
+    })),
+    iceTransportPolicy: config.iceTransportPolicy
   });
   
   return config;

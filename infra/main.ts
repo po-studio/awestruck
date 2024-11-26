@@ -78,7 +78,7 @@ class AwestruckInfrastructure extends TerraformStack {
     
     # Configure TURN server
     log "Creating TURN server configuration..."
-    cat > /etc/coturn/turnserver.conf << 'EOL'
+    cat > /etc/coturn/turnserver.conf << EOL
     realm=turn.awestruck.io
     listening-port=3478
     tls-listening-port=5349
