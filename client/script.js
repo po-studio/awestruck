@@ -45,12 +45,20 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     // };
 
     pc.onconnectionstatechange = function() {
-      console.log('Connection state change:', {
+      const states = {
         connectionState: pc.connectionState,
         iceConnectionState: pc.iceConnectionState,
         iceGatheringState: pc.iceGatheringState,
         signalingState: pc.signalingState
-      });
+      };
+      console.log('Connection state change:', states);
+      
+      if (pc.connectionState === 'connected') {
+        console.log('Connection established, checking media tracks...');
+        pc.getReceivers().forEach(receiver => {
+          console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
+        });
+      }
     };
 
     pc.ontrack = function (event) {
@@ -391,10 +399,11 @@ async function fetchTurnCredentials(retries = 3) {
       // Use the server-provided credentials
       return [{
         urls: [
-          "turn:turn.awestruck.io:3478",
-          "turns:turn.awestruck.io:5349"
+          "turn:turn.awestruck.io:3478?transport=udp",
+          "turn:turn.awestruck.io:3478?transport=tcp",
+          "turns:turn.awestruck.io:5349?transport=tcp"
         ],
-        username: credentials.username,  // Use server-provided username
+        username: credentials.username,
         credential: credentials.password,
         credentialType: 'password'
       }];
@@ -420,7 +429,7 @@ async function validateTurnConfig() {
         username: "test",
         credential: "test123"
       }],
-      iceTransportPolicy: 'relay'
+      iceTransportPolicy: 'all'
     };
   }
   

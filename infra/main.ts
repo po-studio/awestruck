@@ -96,11 +96,11 @@ class AwestruckInfrastructure extends TerraformStack {
     use-auth-secret
     static-auth-secret=${turnPassword}
     verbose
-    debug
     log-file=stdout
     no-multicast-peers
     cert=/etc/ssl/turn.awestruck.io.crt
     pkey=/etc/ssl/turn.awestruck.io.key
+    debug
     EOL
     
     # Start TURN server with error handling
@@ -549,11 +549,12 @@ class AwestruckInfrastructure extends TerraformStack {
       zoneId: hostedZone.zoneId,
       name: "turn.awestruck.io",
       type: "A",
-      ttl: 300,
+      ttl: 60,
       records: [coturnInstance.publicIp],
       allowOverwrite: true,
       lifecycle: {
         createBeforeDestroy: true,
+        ignoreChanges: ["records"]
       },
       dependsOn: [coturnInstance],
     });

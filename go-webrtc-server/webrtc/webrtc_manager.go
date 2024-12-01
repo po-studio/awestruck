@@ -269,37 +269,55 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 }
 
 func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample, error) {
-	audioTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "pion1")
+	// Create the audio track
+	audioTrack, err := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+		"audio",
+		"pion1",
+	)
 	if err != nil {
 		log.Printf("Failed to create audio track: %v\n", err)
 		return nil, err
 	}
 
+	// Add track and get sender
 	_, err = appSession.PeerConnection.AddTrack(audioTrack)
 	if err != nil {
-		log.Printf("Failed to add audio track to the peer connection: %v\n", err)
+		log.Printf("Failed to add audio track: %v\n", err)
 		return nil, err
 	}
 
+	// Set direction to sendonly using AddTransceiverFromKind
+	if _, err := appSession.PeerConnection.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendonly,
+		},
+	); err != nil {
+		log.Printf("Failed to set transceiver direction: %v\n", err)
+		return nil, err
+	}
+
+	log.Printf("Added audio track with ID: %v\n", audioTrack.ID())
 	return audioTrack, nil
 }
 
 // createPeerConnection initializes a new WebRTC peer connection
 func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
-	// Create a SettingEngine and enable detailed logging
+	// Create a SettingEngine and configure timeouts
 	s := webrtc.SettingEngine{}
-	s.SetICETimeouts(5*time.Second, 10*time.Second, 5*time.Second)
-	s.DetachDataChannels()
+	s.SetICETimeouts(
+		5*time.Second,  // disconnectedTimeout
+		10*time.Second, // failedTimeout
+		5*time.Second,  // keepAliveInterval
+	)
 
-	// Create a MediaEngine
+	// Create MediaEngine
 	m := &webrtc.MediaEngine{}
-
-	// Register default codecs
 	if err := m.RegisterDefaultCodecs(); err != nil {
-		return nil, fmt.Errorf("failed to register default codecs: %v", err)
+		return nil, fmt.Errorf("failed to register codecs: %v", err)
 	}
 
-	// Create an API object with our settings and media engine
+	// Create API with our settings
 	api := webrtc.NewAPI(
 		webrtc.WithSettingEngine(s),
 		webrtc.WithMediaEngine(m),
@@ -307,38 +325,29 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 
 	config := webrtc.Configuration{
 		ICEServers:           iceServers,
-		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
-		BundlePolicy:         webrtc.BundlePolicyBalanced,
-		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		ICECandidatePoolSize: 0,
+		ICETransportPolicy:   webrtc.ICETransportPolicyRelay, // Force TURN relay
+		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
+		ICECandidatePoolSize: 1,
 	}
 
-	// Log the configuration we're using
-	log.Printf("[DEBUG] Creating peer connection with config: %+v", config)
-
-	// Create the peer connection using our custom API
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create peer connection: %v", err)
+		return nil, err
 	}
 
-	// Add a transceiver for audio
-	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionSendonly,
-	}); err != nil {
-		return nil, fmt.Errorf("failed to add audio transceiver: %v", err)
-	}
-
-	// Add handlers to log ICE candidate gathering
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c == nil {
-			return
+	// Add logging for ICE connection states
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("[ICE] Connection state changed: %s", state.String())
+		if state == webrtc.ICEConnectionStateConnected {
+			log.Printf("[ICE] Connection established successfully")
+			// Log active candidate pair
+			stats := pc.GetStats()
+			for _, s := range stats {
+				if candidatePair, ok := s.(*webrtc.ICECandidatePairStats); ok && candidatePair.State == "succeeded" {
+					log.Printf("[ICE] Active candidate pair: %+v", candidatePair)
+				}
+			}
 		}
-		log.Printf("[ICE] New candidate: %s", c.String())
-	})
-
-	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
-		log.Printf("[ICE] Gathering state changed to: %s", state.String())
 	})
 
 	return pc, nil
@@ -426,14 +435,12 @@ func closePeerConnection(pc *webrtc.PeerConnection) error {
 
 func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
-	log.Printf("[ICE] Handling candidate for session: %s from IP: %s",
-		sessionID, r.RemoteAddr)
+	log.Printf("[ICE] Received candidate for session: %s", sessionID)
 
-	var candidateReq ICECandidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&candidateReq); err != nil {
-		log.Printf("[ICE][ERROR] Failed to decode candidate for session %s: %v",
-			sessionID, err)
-		http.Error(w, "Failed to decode ICE candidate", http.StatusBadRequest)
+	var candidateRequest ICECandidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&candidateRequest); err != nil {
+		log.Printf("[ICE][ERROR] Failed to decode candidate: %v", err)
+		http.Error(w, "Invalid ICE candidate", http.StatusBadRequest)
 		return
 	}
 
@@ -445,27 +452,20 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if appSession.PeerConnection == nil {
-		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
-		http.Error(w, "No peer connection established", http.StatusBadRequest)
-		return
-	}
-
 	candidate := webrtc.ICECandidateInit{
-		Candidate:        candidateReq.Candidate.Candidate,
-		SDPMid:           &candidateReq.Candidate.SDPMid,
-		SDPMLineIndex:    &candidateReq.Candidate.SDPMLineIndex,
-		UsernameFragment: &candidateReq.Candidate.UsernameFragment,
+		Candidate:        candidateRequest.Candidate.Candidate,
+		SDPMid:           &candidateRequest.Candidate.SDPMid,
+		SDPMLineIndex:    &candidateRequest.Candidate.SDPMLineIndex,
+		UsernameFragment: &candidateRequest.Candidate.UsernameFragment,
 	}
 
+	log.Printf("[ICE] Adding candidate for session %s: %+v", sessionID, candidate)
 	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
-		log.Printf("[ICE][ERROR] Failed to add candidate for session %s: %v",
-			sessionID, err)
+		log.Printf("[ICE][ERROR] Failed to add ICE candidate: %v", err)
 		http.Error(w, "Failed to add ICE candidate", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[ICE] Successfully added candidate for session: %s", sessionID)
 	w.WriteHeader(http.StatusOK)
 }
 
