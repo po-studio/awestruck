@@ -68,12 +68,16 @@ document.getElementById('toggleConnection').addEventListener('click', async func
                   console.log('Connection Quality:', {
                     currentRoundTripTime: report.currentRoundTripTime,
                     availableOutgoingBitrate: report.availableOutgoingBitrate,
-                    bytesReceived: report.bytesReceived
+                    bytesReceived: report.bytesReceived,
+                    protocol: report.protocol,
+                    relayProtocol: report.relayProtocol,
+                    localCandidateType: report.localCandidateType,
+                    remoteCandidateType: report.remoteCandidateType
                   });
                 }
               });
             });
-          }, 5000);
+          }, 1000);
           
           // Update UI
           document.getElementById('toggleConnection').textContent = 'Disconnect';
@@ -477,9 +481,14 @@ async function validateTurnConfig() {
     };
   }
   
+  const turnServers = await fetchTurnCredentials();
   return {
-    iceServers: await fetchTurnCredentials(),
-    iceTransportPolicy: 'relay'
+    iceServers: turnServers.map(server => ({
+      ...server,
+      preferUdp: true
+    })),
+    iceTransportPolicy: 'relay',
+    iceCandidatePoolSize: 1
   };
 }
 
