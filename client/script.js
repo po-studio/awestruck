@@ -186,26 +186,21 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         const parts = candidateStr.split(' ');
         const type = parts[7];
         
-        if (isProduction && type !== 'relay') {
-          console.warn('Non-relay candidate received in production:', {
-            type,
-            full: candidateStr
-          });
-          return; // Don't send non-relay candidates in production
-        }
-        
-        console.log("New ICE candidate:", {
+        console.log("ICE candidate details:", {
           type,
           protocol: parts[2],
-          ip: parts[4],
-          port: parts[5]
+          ip: parts[4], 
+          port: parts[5],
+          isFiltered: isProduction && type !== 'relay',
+          fullCandidate: candidateStr
         });
         
-        sendIceCandidate(event.candidate).catch(err => {
-          console.error("Failed to send ICE candidate:", err);
-        });
-      } else {
-        console.log("ICE gathering complete");
+        if (isProduction && type !== 'relay') {
+          console.warn('Filtered non-relay candidate');
+          return;
+        }
+        
+        sendIceCandidate(event.candidate);
       }
     };
 
@@ -474,8 +469,8 @@ async function validateTurnConfig() {
           "turn:localhost:3478",
           "turns:localhost:5349"
         ],
-        username: "test",
-        credential: "test123"
+        username: "awestruck",
+        credential: "password"
       }],
       iceTransportPolicy: 'all'
     };

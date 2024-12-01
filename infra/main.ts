@@ -79,15 +79,28 @@ class AwestruckInfrastructure extends TerraformStack {
     # Add to your userData script, before the docker run command
     cat > /etc/coturn/cert-setup.sh << EOL
     #!/bin/bash
-    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} > /tmp/cert.json
-    jq -r '.Certificate' /tmp/cert.json > /etc/coturn/turn.awestruck.io.crt
-    jq -r '.PrivateKey' /tmp/cert.json > /etc/coturn/turn.awestruck.io.key
-    chmod 600 /etc/coturn/turn.awestruck.io.key
-    chmod 644 /etc/coturn/turn.awestruck.io.crt
+    set -e
+
+    # Create a temporary directory with proper permissions
+    TEMP_DIR=$(mktemp -d)
+    chmod 700 $TEMP_DIR
+
+    # Fetch and process certificate in temp directory
+    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} > $TEMP_DIR/cert.json
+
+    # Use sudo to write files with proper permissions
+    sudo bash -c "jq -r '.Certificate' $TEMP_DIR/cert.json > /etc/coturn/turn.awestruck.io.crt"
+    sudo bash -c "jq -r '.PrivateKey' $TEMP_DIR/cert.json > /etc/coturn/turn.awestruck.io.key"
+    sudo chmod 600 /etc/coturn/turn.awestruck.io.key
+    sudo chmod 644 /etc/coturn/turn.awestruck.io.crt
+    sudo chown root:root /etc/coturn/turn.awestruck.io.*
+
+    # Clean up
+    rm -rf $TEMP_DIR
     EOL
     
     chmod +x /etc/coturn/cert-setup.sh
-    /etc/coturn/cert-setup.sh
+    sudo /etc/coturn/cert-setup.sh
     
     # Configure TURN server
     cat > /etc/coturn/turnserver.conf << EOL
@@ -224,12 +237,6 @@ class AwestruckInfrastructure extends TerraformStack {
           fromPort: 443,
           toPort: 443,
           protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          fromPort: 10000,
-          toPort: 10010,
-          protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
       ],

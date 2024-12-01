@@ -1,14 +1,9 @@
 package webrtc
 
 import (
-	"crypto/hmac"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	sessionManager "github.com/po-studio/go-webrtc-server/session"
 	"github.com/po-studio/go-webrtc-server/types"
@@ -37,16 +32,16 @@ import (
 // }
 
 func generateTURNCredentials(secret string) types.TURNCredentials {
-    return types.TURNCredentials{
-        Username: "awestruck",  // Static username
-        Password: "password",   // Static password for development
-        TTL:      86400,
-        URLs: []string{
-            "turn:turn.awestruck.io:3478?transport=udp",
-            "turn:turn.awestruck.io:3478?transport=tcp",
-            "turns:turn.awestruck.io:5349?transport=tcp"
-        },
-    }
+	return types.TURNCredentials{
+		Username: "awestruck", // Static username
+		Password: "password",  // Static password for development
+		TTL:      86400,
+		URLs: []string{
+			"turn:turn.awestruck.io:3478?transport=udp",
+			"turn:turn.awestruck.io:3478?transport=tcp",
+			"turns:turn.awestruck.io:5349?transport=tcp",
+		},
+	}
 }
 
 func HandleTURNCredentials(w http.ResponseWriter, r *http.Request) {

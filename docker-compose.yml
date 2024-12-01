@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  coturn:
+    image: coturn/coturn:latest
+    container_name: coturn
+    network_mode: host  # To match EC2 host networking
+    volumes:
+      - ./certs:/etc/coturn/certs
+      - ./config/turnserver.dev.conf:/etc/coturn/turnserver.dev.conf:ro
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "10000-10010:10000-10010/udp"
+    environment:
+      - TURN_USERNAME=awestruck
+      - TURN_PASSWORD=password  # Use same password as in AWS
+    restart: unless-stopped
+
+  webrtc-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-webrtc-server-arm64
+    network_mode: host  # To match Fargate networking behavior
+    environment:
+      - JACK_NO_AUDIO_RESERVATION=1
+      - JACK_OPTIONS=-R -d dummy
+      - JACK_SAMPLE_RATE=48000
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack:
+        soft: 67108864
+        hard: 67108864
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    depends_on:
+      - coturn
