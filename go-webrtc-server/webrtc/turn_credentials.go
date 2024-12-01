@@ -14,26 +14,39 @@ import (
 	"github.com/po-studio/go-webrtc-server/types"
 )
 
+// func generateTURNCredentials(secret string) types.TURNCredentials {
+// 	timestamp := time.Now().Unix()
+// 	username := fmt.Sprintf("%d:awestruck", timestamp)
+
+// 	// Generate HMAC-SHA1 credential
+// 	mac := hmac.New(sha1.New, []byte(secret))
+// 	mac.Write([]byte(username))
+// 	credential := hex.EncodeToString(mac.Sum(nil))
+
+// 	log.Printf("[TURN] Generating credentials with username: %s", username)
+
+// 	return types.TURNCredentials{
+// 		Username: username,
+// 		Password: credential,
+// 		TTL:      86400, // 24 hours validity
+// 		URLs: []string{
+// 			"turn:turn.awestruck.io:3478",
+// 			"turns:turn.awestruck.io:5349",
+// 		},
+// 	}
+// }
+
 func generateTURNCredentials(secret string) types.TURNCredentials {
-	timestamp := time.Now().Unix()
-	username := fmt.Sprintf("%d:awestruck", timestamp)
-
-	// Generate HMAC-SHA1 credential
-	mac := hmac.New(sha1.New, []byte(secret))
-	mac.Write([]byte(username))
-	credential := hex.EncodeToString(mac.Sum(nil))
-
-	log.Printf("[TURN] Generating credentials with username: %s", username)
-
-	return types.TURNCredentials{
-		Username: username,
-		Password: credential,
-		TTL:      86400, // 24 hours validity
-		URLs: []string{
-			"turn:turn.awestruck.io:3478",
-			"turns:turn.awestruck.io:5349",
-		},
-	}
+    return types.TURNCredentials{
+        Username: "awestruck",  // Static username
+        Password: "password",   // Static password for development
+        TTL:      86400,
+        URLs: []string{
+            "turn:turn.awestruck.io:3478?transport=udp",
+            "turn:turn.awestruck.io:3478?transport=tcp",
+            "turns:turn.awestruck.io:5349?transport=tcp"
+        },
+    }
 }
 
 func HandleTURNCredentials(w http.ResponseWriter, r *http.Request) {

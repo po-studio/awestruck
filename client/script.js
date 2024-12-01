@@ -53,11 +53,63 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       };
       console.log('Connection state change:', states);
       
-      if (pc.connectionState === 'connected') {
-        console.log('Connection established, checking media tracks...');
-        pc.getReceivers().forEach(receiver => {
-          console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
-        });
+      switch (pc.connectionState) {
+        case 'connected':
+          console.log('Connection established, checking media tracks...');
+          pc.getReceivers().forEach(receiver => {
+            console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
+          });
+          
+          // Start connection quality monitoring
+          setInterval(() => {
+            pc.getStats().then(stats => {
+              stats.forEach(report => {
+                if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                  console.log('Connection Quality:', {
+                    currentRoundTripTime: report.currentRoundTripTime,
+                    availableOutgoingBitrate: report.availableOutgoingBitrate,
+                    bytesReceived: report.bytesReceived
+                  });
+                }
+              });
+            });
+          }, 5000);
+          
+          // Update UI
+          document.getElementById('toggleConnection').textContent = 'Disconnect';
+          document.getElementById('toggleConnection').classList.add('button-disconnect');
+          document.getElementById('toggleConnection').disabled = false;
+          break;
+          
+        case 'disconnected':
+          console.log('Connection disconnected. Last known state:', states);
+          pc.getStats().then(stats => {
+            stats.forEach(report => {
+              if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                console.log('Last known good connection:', {
+                  localCandidate: report.localCandidateId,
+                  remoteCandidate: report.remoteCandidateId,
+                  lastPacketReceived: report.lastPacketReceivedTimestamp,
+                  bytesReceived: report.bytesReceived
+                });
+              }
+            });
+          });
+          break;
+          
+        case 'failed':
+          console.error('Connection failed:', states);
+          document.getElementById('toggleConnection').classList.remove('button-disconnect');
+          document.getElementById('toggleConnection').textContent = 'Failed to Connect - Retry?';
+          document.getElementById('toggleConnection').disabled = false;
+          break;
+          
+        case 'closed':
+          console.log('Connection closed cleanly');
+          document.getElementById('toggleConnection').classList.remove('button-disconnect');
+          document.getElementById('toggleConnection').textContent = 'Stream New Synth';
+          document.getElementById('toggleConnection').disabled = false;
+          break;
       }
     };
 
@@ -107,7 +159,13 @@ document.getElementById('toggleConnection').addEventListener('click', async func
         };
 
         audioElement.onerror = function(e) {
-          console.error('Audio playback error:', e);
+          console.error('Audio error:', e);
+          // Try recreating the audio element
+          const newAudioElement = document.createElement('audio');
+          newAudioElement.srcObject = audioElement.srcObject;
+          newAudioElement.autoplay = true;
+          newAudioElement.controls = true;
+          audioElement.parentNode.replaceChild(newAudioElement, audioElement);
         };
 
         // Optional: Add a visual indicator
@@ -120,30 +178,30 @@ document.getElementById('toggleConnection').addEventListener('click', async func
 
     pc.onicecandidate = event => {
       if (event.candidate) {
-        console.log("New ICE candidate details:", {
-          candidate: event.candidate.candidate,
-          type: event.candidate.type,
-          candidateType: event.candidate.candidate.split(' ')[7],  // 'typ host/srflx/relay'
-          protocol: event.candidate.protocol,
-          address: event.candidate.address,
-          port: event.candidate.port,
-          relatedAddress: event.candidate.relatedAddress,
-          relatedPort: event.candidate.relatedPort,
-          tcpType: event.candidate.tcpType,
-          priority: event.candidate.priority,
-          foundation: event.candidate.foundation,
-          component: event.candidate.component,
-          usernameFragment: event.candidate.usernameFragment,
-          raw: event.candidate.candidate
+        const candidateStr = event.candidate.candidate;
+        const parts = candidateStr.split(' ');
+        const type = parts[7];
+        
+        if (isProduction && type !== 'relay') {
+          console.warn('Non-relay candidate received in production:', {
+            type,
+            full: candidateStr
+          });
+          return; // Don't send non-relay candidates in production
+        }
+        
+        console.log("New ICE candidate:", {
+          type,
+          protocol: parts[2],
+          ip: parts[4],
+          port: parts[5]
         });
         
-        // Only send candidates after connection is established
-        if (isConnectionEstablished) {
-          sendIceCandidate(event.candidate);
-        } else {
-          pendingIceCandidates.push(event.candidate);
-          console.log(`ICE candidate queued. Total pending: ${pendingIceCandidates.length}`);
-        }
+        sendIceCandidate(event.candidate).catch(err => {
+          console.error("Failed to send ICE candidate:", err);
+        });
+      } else {
+        console.log("ICE gathering complete");
       }
     };
 
@@ -184,17 +242,21 @@ document.getElementById('toggleConnection').addEventListener('click', async func
       }
     };
 
-    pc.oniceconnectionstatechange = function() {
-      console.log('ICE Connection state:', pc.iceConnectionState);
-      
-      if (pc.iceConnectionState === 'connected') {
-        pc.getStats().then(stats => {
-          stats.forEach(report => {
-            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-              console.log('Active ICE candidate pair:', report);
-            }
+    pc.onconnectionstatechange = function() {
+      if (pc.connectionState === 'connected') {
+        setInterval(() => {
+          pc.getStats().then(stats => {
+            stats.forEach(report => {
+              if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                console.log('Connection Quality:', {
+                  currentRoundTripTime: report.currentRoundTripTime,
+                  availableOutgoingBitrate: report.availableOutgoingBitrate,
+                  bytesReceived: report.bytesReceived
+                });
+              }
+            });
           });
-        });
+        }, 5000);
       }
     };
   } else {
@@ -312,12 +374,6 @@ async function sendOffer(offer) {
 }
 
 async function sendIceCandidate(candidate) {
-  if (!isConnectionEstablished) {
-    console.log("Connection not established yet, queuing ICE candidate");
-    pendingIceCandidates.push(candidate);
-    return;
-  }
-
   const requestBody = {
     candidate: {
       candidate: candidate.candidate,
@@ -327,29 +383,17 @@ async function sendIceCandidate(candidate) {
     }
   };
 
-  console.log("Sending ICE candidate to server:", requestBody);
+  const response = await fetch('/ice-candidate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-ID': sessionID
+    },
+    body: JSON.stringify(requestBody)
+  });
 
-  try {
-    const response = await fetch('/ice-candidate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': sessionID
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Failed to send ICE candidate: ${response.status} ${text}`);
-    }
-    console.log("Successfully sent ICE candidate to server");
-  } catch (err) {
-    console.error("Error sending ICE candidate:", {
-      error: err.message,
-      sessionID: sessionID,
-      candidate: candidate
-    });
+  if (!response.ok) {
+    throw new Error(`Failed to send ICE candidate: ${response.status}`);
   }
 }
 

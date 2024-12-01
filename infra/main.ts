@@ -76,31 +76,35 @@ class AwestruckInfrastructure extends TerraformStack {
     mkdir -p /etc/coturn /var/log/coturn /etc/ssl || error_exit "Failed to create directories"
     chmod 755 /var/log/coturn
     
-    # Get certificate from ACM (keeping your existing cert logic)
-    log "Fetching certificate from ACM..."
-    CERT_ARN="${sslCertificateArn}"
-    aws acm get-certificate --certificate-arn $CERT_ARN --region ${awsRegion} > /tmp/cert.json
+    # Add to your userData script, before the docker run command
+    cat > /etc/coturn/cert-setup.sh << EOL
+    #!/bin/bash
+    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} > /tmp/cert.json
+    jq -r '.Certificate' /tmp/cert.json > /etc/coturn/turn.awestruck.io.crt
+    jq -r '.PrivateKey' /tmp/cert.json > /etc/coturn/turn.awestruck.io.key
+    chmod 600 /etc/coturn/turn.awestruck.io.key
+    chmod 644 /etc/coturn/turn.awestruck.io.crt
+    EOL
     
-    jq -r '.Certificate' /tmp/cert.json > /etc/ssl/turn.awestruck.io.crt
-    jq -r '.PrivateKey' /tmp/cert.json > /etc/ssl/turn.awestruck.io.key
-    chmod 600 /etc/ssl/turn.awestruck.io.key
+    chmod +x /etc/coturn/cert-setup.sh
+    /etc/coturn/cert-setup.sh
     
     # Configure TURN server
-    log "Creating TURN server configuration..."
     cat > /etc/coturn/turnserver.conf << EOL
+    user=awestruck:password
     realm=turn.awestruck.io
     listening-port=3478
     tls-listening-port=5349
     min-port=10000
     max-port=10010
-    use-auth-secret
-    static-auth-secret=${turnPassword}
+    lt-cred-mech
+    listening-ip=0.0.0.0
+    server-name=turn.awestruck.io
+    cert=/etc/coturn/turn.awestruck.io.crt
+    pkey=/etc/coturn/turn.awestruck.io.key
     verbose
     log-file=stdout
     no-multicast-peers
-    cert=/etc/ssl/turn.awestruck.io.crt
-    pkey=/etc/ssl/turn.awestruck.io.key
-    debug
     EOL
     
     # Start TURN server with error handling
@@ -119,7 +123,6 @@ class AwestruckInfrastructure extends TerraformStack {
           --log-opt awslogs-region=${awsRegion} \
           --log-opt awslogs-stream=coturn-$(hostname) \
           -v /etc/coturn:/etc/coturn \
-          -v /etc/ssl:/etc/ssl \
           coturn/coturn:latest turnserver -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
             
         # Verify container is running
