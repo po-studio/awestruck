@@ -2,33 +2,54 @@ version: '3.8'
 
 services:
   coturn:
+    platform: linux/arm64
     image: coturn/coturn:latest
     container_name: coturn
-    network_mode: host  # To match EC2 host networking
     volumes:
+      - ./config/turnserver.dev.conf:/etc/coturn/turnserver.conf:ro
       - ./certs:/etc/coturn/certs
-      - ./config/turnserver.dev.conf:/etc/coturn/turnserver.dev.conf:ro
-    ports:
-      - "3478:3478"
-      - "3478:3478/udp"
-      - "5349:5349"
-      - "5349:5349/udp"
-      - "10000-10010:10000-10010/udp"
-    environment:
-      - TURN_USERNAME=awestruck
-      - TURN_PASSWORD=password  # Use same password as in AWS
+    network_mode: host
+    command: [
+      "-n",
+      "--log-file=stdout",
+      "--listening-port=3478",
+      "--min-port=49152",
+      "--max-port=49252",
+      "--user=awestruck:password",
+      "--realm=localhost",
+      "--cli-password=password",
+      "--allowed-peer-ip=0.0.0.0-255.255.255.255",
+      "--allowed-peer-ip=::",
+      "--verbose",
+      "--no-tls",
+      "--no-dtls",
+      "--allow-loopback-peers",
+      "--relay-threads=0",
+      "--mobility",  # Enable ICE mobility for better trickle ICE support
+      "--no-multicast-peers"  # Disable multicast to reduce candidate gathering time
+    ]
     restart: unless-stopped
+    ports:
+      - "3478:3478/udp"   # STUN/TURN UDP
+      - "3478:3478/tcp"   # STUN/TURN TCP
+      - "49152-65535:49152-65535/udp"  # TURN relay ports range
+    # networks:
+    #   - webrtc-net
 
   webrtc-server:
+    platform: linux/arm64
     build:
       context: .
       dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
     container_name: go-webrtc-server-arm64
-    network_mode: host  # To match Fargate networking behavior
-    environment:
-      - JACK_NO_AUDIO_RESERVATION=1
-      - JACK_OPTIONS=-R -d dummy
-      - JACK_SAMPLE_RATE=48000
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    network_mode: host
+    shm_size: 1g
+    security_opt:
+      - seccomp:unconfined
     ulimits:
       memlock:
         soft: -1
@@ -36,7 +57,34 @@ services:
       stack:
         soft: 67108864
         hard: 67108864
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
+      rtprio: 99
+    environment:
+      - JACK_NO_AUDIO_RESERVATION=1
+      - JACK_OPTIONS=-R -d dummy
+      - JACK_SAMPLE_RATE=48000
+      - GST_DEBUG=4
+      - XDG_RUNTIME_DIR=/tmp/runtime-appuser
+      - JACK_PERIOD_SIZE="1024"
+      - JACK_BUFFER_SIZE="4096"
+      - JACK_PERIODS="3"
+      - JACK_PRIORITY="95"
+      - JACK_NO_START_SERVER="1"
     depends_on:
       - coturn
+    cap_add:
+      - SYS_NICE
+    # sysctls:
+    #   - net.core.rmem_max=2097152
+    #   - net.core.wmem_max=2097152
+    extra_hosts:
+      - "localhost:127.0.0.1"
+    ports:
+      - "8080:8080"       # Web server
+      - "10000-10100:10000-10100/udp"  # WebRTC media ports
+      - "30000-60000:30000-60000/udp" # SuperCollider port (dynamic, based on your logs)
+    # networks:
+    #   - webrtc-net
+
+# networks:
+#   webrtc-net:
+#     driver: bridge

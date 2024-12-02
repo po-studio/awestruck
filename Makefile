@@ -10,15 +10,21 @@ AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output t
 ECR_REPO = po-studio/awestruck
 ECR_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 
-# TURN Server Configuration
-TURN_CONTAINER = coturn
-TURN_NETWORK = awestruck_network
+.PHONY: build network up-turn down-turn up down rshell shell aws-login aws-push deploy-all
 
-.PHONY: build network up-turn down-turn up down rshell shell aws-login aws-push
+# ---------------------------------------
+# local dev only
+# ---------------------------------------
+down:
+	docker-compose down --remove-orphans
 
-network:
-	docker network create --driver bridge $(TURN_NETWORK) || true
+up:
+	docker-compose up --build
+# ---------------------------------------
 
+# ---------------------------------------
+# deployment build, push, and deploy
+# ---------------------------------------
 build: network
 	@if ! docker buildx inspect mybuilder > /dev/null 2>&1; then \
 		docker buildx create --use --name mybuilder; \
@@ -35,45 +41,6 @@ build: network
 	# Move the new cache to replace the old cache
 	rm -rf /tmp/.buildx-cache
 	mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
-up-turn: network
-	docker run -d --rm --name $(TURN_CONTAINER) \
-		--network $(TURN_NETWORK) \
-		-v $(PWD)/coturn.conf:/etc/coturn/turnserver.conf \
-		-p 3478:3478 \
-		-p 3478:3478/udp \
-		-p 5349:5349 \
-		-p 5349:5349/udp \
-		-p 49152-65535:49152-65535/udp \
-		coturn/coturn
-
-down-turn:
-	docker stop $(TURN_CONTAINER) || true
-	docker rm $(TURN_CONTAINER) || true
-
-up: network
-	docker run --rm --name $(CONTAINER_NAME) \
-		--platform $(PLATFORM) \
-		-p $(BROWSER_PORT):$(BROWSER_PORT) \
-		-p 10000-10010:10000-10010/udp \
-		--network $(TURN_NETWORK) \
-		--shm-size=1g \
-		--ulimit memlock=-1 \
-		--ulimit stack=67108864 \
-		-e JACK_NO_AUDIO_RESERVATION=1 \
-		-e JACK_OPTIONS="-R -d dummy" \
-		-e JACK_SAMPLE_RATE=48000 \
-		$(IMAGE_NAME)
-
-down:
-	docker stop $(CONTAINER_NAME) || true
-	docker rm $(CONTAINER_NAME) || true
-
-rshell:
-	docker run --rm -it $(IMAGE_NAME) /bin/sh
-
-shell:
-	docker exec -it $(CONTAINER_NAME) /bin/sh
 
 aws-login:
 	aws ecr get-login-password --region $(AWS_REGION) | \
@@ -99,8 +66,6 @@ aws-push: aws-login
 	# Move the new cache
 	rm -rf /tmp/.buildx-cache
 	mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
-.PHONY: deploy-all
 
 deploy-all: build aws-login
 	# Tag image for ECR

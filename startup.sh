@@ -2,7 +2,7 @@
 set -e
 
 echo "Starting JACK..."
-jackd -r -d dummy -r $JACK_SAMPLE_RATE &
+jackd $JACK_OPTIONS -r $JACK_SAMPLE_RATE &
 JACK_PID=$!
 
 sleep 2

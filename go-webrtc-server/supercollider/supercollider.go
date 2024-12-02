@@ -58,6 +58,10 @@ func (s *SuperColliderSynth) Start() error {
 	}
 	log.Println("scsynth command started with dynamically assigned port:", s.Port)
 
+	if err := s.monitorJackPorts(); err != nil {
+		log.Printf("Warning: Failed to monitor JACK ports: %v", err)
+	}
+
 	return nil
 }
 
@@ -137,4 +141,35 @@ func (s *SuperColliderSynth) SendPlayMessage() {
 	} else {
 		log.Println("OSC message sent successfully.")
 	}
+}
+
+// New function to monitor JACK ports
+func (s *SuperColliderSynth) monitorJackPorts() error {
+	// First list all connections
+	cmd := exec.Command("jack_lsp", "-c")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to list JACK connections: %v", err)
+	}
+	log.Printf("JACK Connections:\n%s", string(output))
+
+	// Check if SuperCollider ports exist and need connecting
+	if strings.Contains(string(output), "SuperCollider:out_1") {
+		// Connect SuperCollider outputs to our GStreamer inputs
+		connectCmd1 := exec.Command("jack_connect",
+			"SuperCollider:out_1",
+			fmt.Sprintf("%s:in_jackaudiosrc0_1", s.Id))
+		connectCmd2 := exec.Command("jack_connect",
+			"SuperCollider:out_2",
+			fmt.Sprintf("%s:in_jackaudiosrc0_2", s.Id))
+
+		if err := connectCmd1.Run(); err != nil {
+			log.Printf("Warning: Failed to connect SuperCollider out_1: %v", err)
+		}
+		if err := connectCmd2.Run(); err != nil {
+			log.Printf("Warning: Failed to connect SuperCollider out_2: %v", err)
+		}
+	}
+
+	return nil
 }

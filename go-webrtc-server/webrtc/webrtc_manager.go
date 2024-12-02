@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -115,7 +116,7 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appSession.Synth.SendPlayMessage()
+	// appSession.Synth.SendPlayMessage()
 
 	log.Println("Sending answer to client")
 	sendAnswer(w, peerConnection.LocalDescription())
@@ -171,6 +172,7 @@ func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.Track
 
 	go func() {
 		log.Println("Creating pipeline...")
+		log.Printf("Using pipeline config: %s", *appSession.AudioSrc)
 		appSession.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, *appSession.AudioSrc)
 		appSession.GStreamerPipeline.Start()
 		log.Println("Pipeline created and started")
@@ -182,6 +184,7 @@ func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.Track
 }
 
 func startSynthEngine(appSession *session.AppSession) error {
+	MonitorAudioPipeline(appSession)
 	var wg sync.WaitGroup
 	errChan := make(chan error, 1)
 
@@ -206,6 +209,46 @@ func startSynthEngine(appSession *session.AppSession) error {
 	return nil
 }
 
+func MonitorAudioPipeline(appSession *session.AppSession) {
+	// Monitor JACK connections
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			cmd := exec.Command("jack_lsp", "-c")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("[%s] Error monitoring JACK: %v", appSession.Id, err)
+				continue
+			}
+			log.Printf("[%s] JACK Connections:\n%s", appSession.Id, string(output))
+		}
+	}()
+
+	// Monitor WebRTC stats
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			if appSession.PeerConnection != nil {
+				stats := appSession.PeerConnection.GetStats()
+				for _, stat := range stats {
+					switch s := stat.(type) {
+					case *webrtc.OutboundRTPStreamStats:
+						log.Printf("[%s] Outbound RTP: packets=%d bytes=%d",
+							appSession.Id, s.PacketsSent, s.BytesSent)
+					case *webrtc.InboundRTPStreamStats:
+						log.Printf("[%s] Inbound RTP: packets=%d bytes=%d jitter=%v",
+							appSession.Id, s.PacketsReceived, s.BytesReceived, s.Jitter)
+					}
+				}
+			}
+		}
+	}()
+}
+
 func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServer, error) {
 	var browserOffer BrowserOffer
 
@@ -216,13 +259,18 @@ func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServ
 		return nil, nil, fmt.Errorf("failed to decode JSON: %v", err)
 	}
 
-	log.Printf("[OFFER] Decoded offer: Type=%s, SDPLength=%d",
-		browserOffer.Type,
-		len(browserOffer.SDP))
-
 	offer := webrtc.SessionDescription{}
 	signal.Decode(browserOffer.SDP, &offer)
 
+	// Create a MediaEngine and populate it from the SDP
+	mediaEngine := webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		return nil, nil, fmt.Errorf("failed to register default codecs: %v", err)
+	}
+
+	log.Printf("[OFFER] Media direction in offer: %v", offer.SDP)
+
+	// Log detailed SDP analysis
 	log.Printf("[OFFER] Decoded SDP details:")
 	log.Printf("[OFFER] - Type: %s", offer.Type)
 	log.Printf("[OFFER] - SDP Length: %d", len(offer.SDP))
@@ -240,22 +288,28 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 	appSession.PeerConnection = peerConnection
 	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("ICE Connection State has changed: %s\n", state.String())
-		log.Printf("Signaling State: %s\n", appSession.PeerConnection.SignalingState().String())
-		log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
+
+		if appSession.PeerConnection != nil {
+			log.Printf("Signaling State: %s\n", appSession.PeerConnection.SignalingState().String())
+			log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
+		}
 
 		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
 			log.Printf("[ICE][ERROR] Connection %s for session %s, initiating cleanup...",
 				state.String(), appSession.Id)
-			stats := appSession.PeerConnection.GetStats()
-			log.Printf("[ICE] Last known ICE stats for session %s: %+v",
-				appSession.Id, stats)
+
+			if appSession.PeerConnection != nil {
+				stats := appSession.PeerConnection.GetStats()
+				log.Printf("[ICE] Last known ICE stats for session %s: %+v",
+					appSession.Id, stats)
+			}
 			cleanUpSession(appSession)
 		}
 	})
 
 	appSession.PeerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
-			log.Printf("[ICE] New candidate for session %s: type=%s protocol=%s address=%s port=%d priority=%d",
+			log.Printf("[ICE] New candidate for session %s: type=%d protocol=%s address=%s port=%d priority=%d",
 				appSession.Id,
 				candidate.Component,
 				candidate.Protocol,
