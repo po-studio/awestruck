@@ -44,21 +44,40 @@ func (s *SuperColliderSynth) Start() error {
 	}
 	s.Port = port
 
-	// Wait for GStreamer JACK ports to be available
-	var gstJackPorts []string
-	for retries := 0; retries < 5; retries++ {
-		gstJackPorts, err = jack.GetGStreamerJackPorts(s.Id)
-		if err == nil && len(gstJackPorts) > 0 {
-			break
+	// First ensure GStreamer pipeline is ready
+	gstPortsChan := make(chan []string)
+	gstErrChan := make(chan error)
+	timeout := time.After(10 * time.Second)
+
+	go func() {
+		for {
+			ports, err := jack.GetGStreamerJackPorts(s.Id)
+			if err != nil {
+				gstErrChan <- err
+				return
+			}
+			if len(ports) > 0 {
+				gstPortsChan <- ports
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		log.Printf("Waiting for GStreamer JACK ports (attempt %d/5)...", retries+1)
-		time.Sleep(time.Second)
-	}
-	if err != nil {
+	}()
+
+	// Wait for GStreamer ports
+	var gstJackPorts []string
+	select {
+	case ports := <-gstPortsChan:
+		gstJackPorts = ports
+	case err := <-gstErrChan:
 		return fmt.Errorf("error finding GStreamer-JACK ports: %v", err)
+	case <-timeout:
+		return fmt.Errorf("timeout waiting for GStreamer-JACK ports")
 	}
+
 	s.GStreamerPorts = strings.Join(gstJackPorts, ",")
 
+	// Now start SuperCollider
 	if err := s.setupCmd(); err != nil {
 		return err
 	}
@@ -68,11 +87,14 @@ func (s *SuperColliderSynth) Start() error {
 	}
 	log.Printf("scsynth started on port %d", s.Port)
 
-	// Wait for SuperCollider to initialize
-	time.Sleep(2 * time.Second)
+	// Wait for SuperCollider to be ready
+	if err := s.waitForSuperColliderReady(); err != nil {
+		return fmt.Errorf("SuperCollider failed to initialize: %v", err)
+	}
 
-	if err := s.monitorJackPorts(); err != nil {
-		log.Printf("Warning: Failed to monitor JACK ports: %v", err)
+	// Finally connect the ports
+	if err := s.waitForJackPorts(); err != nil {
+		return fmt.Errorf("failed to setup JACK connections: %v", err)
 	}
 
 	return nil
@@ -194,5 +216,86 @@ func (s *SuperColliderSynth) monitorJackPorts() error {
 		}
 	}
 
+	return nil
+}
+
+func (s *SuperColliderSynth) waitForSuperColliderReady() error {
+	client := osc.NewClient("127.0.0.1", s.Port)
+	timeout := time.After(10 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for SuperCollider to initialize")
+		case <-ticker.C:
+			// Send /status message to check if server is ready
+			msg := osc.NewMessage("/status")
+			if err := client.Send(msg); err == nil {
+				return nil
+			}
+		}
+	}
+}
+
+func (s *SuperColliderSynth) waitForJackPorts() error {
+	portsChan := make(chan []string)
+	errChan := make(chan error)
+	timeout := time.After(10 * time.Second)
+
+	go func() {
+		for {
+			cmd := exec.Command("jack_lsp")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				errChan <- fmt.Errorf("error checking JACK ports: %v", err)
+				return
+			}
+
+			if strings.Contains(string(output), "SuperCollider:out_1") {
+				portsChan <- []string{"SuperCollider:out_1", "SuperCollider:out_2"}
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case ports := <-portsChan:
+		return s.connectJackPorts(ports)
+	case err := <-errChan:
+		return err
+	case <-timeout:
+		return fmt.Errorf("timeout waiting for JACK ports")
+	}
+}
+
+func (s *SuperColliderSynth) connectJackPorts(scPorts []string) error {
+	// First get current connections
+	cmd := exec.Command("jack_lsp", "-c")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to list JACK connections: %v", err)
+	}
+	connections := string(output)
+
+	for i, scPort := range scPorts {
+		gstPort := fmt.Sprintf("webrtc-server:in_%s_%d", s.Id, i+1)
+
+		// Check if connection already exists
+		connectionString := fmt.Sprintf("%s\n   %s", scPort, gstPort)
+		if strings.Contains(connections, connectionString) {
+			log.Printf("Ports already connected: %s -> %s", scPort, gstPort)
+			continue
+		}
+
+		// Try to connect the ports
+		connectCmd := exec.Command("jack_connect", scPort, gstPort)
+		if err := connectCmd.Run(); err != nil {
+			return fmt.Errorf("failed to connect %s to %s: %v", scPort, gstPort, err)
+		}
+		log.Printf("Successfully connected %s to %s", scPort, gstPort)
+	}
 	return nil
 }
