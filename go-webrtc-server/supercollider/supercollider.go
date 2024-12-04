@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hypebeast/go-osc/osc"
 	"github.com/po-studio/go-webrtc-server/jack"
@@ -43,7 +44,16 @@ func (s *SuperColliderSynth) Start() error {
 	}
 	s.Port = port
 
-	gstJackPorts, err := jack.GetGStreamerJackPorts(s.Id)
+	// Wait for GStreamer JACK ports to be available
+	var gstJackPorts []string
+	for retries := 0; retries < 5; retries++ {
+		gstJackPorts, err = jack.GetGStreamerJackPorts(s.Id)
+		if err == nil && len(gstJackPorts) > 0 {
+			break
+		}
+		log.Printf("Waiting for GStreamer JACK ports (attempt %d/5)...", retries+1)
+		time.Sleep(time.Second)
+	}
 	if err != nil {
 		return fmt.Errorf("error finding GStreamer-JACK ports: %v", err)
 	}
@@ -56,7 +66,10 @@ func (s *SuperColliderSynth) Start() error {
 	if err := s.Cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start scsynth: %v", err)
 	}
-	log.Println("scsynth command started with dynamically assigned port:", s.Port)
+	log.Printf("scsynth started on port %d", s.Port)
+
+	// Wait for SuperCollider to initialize
+	time.Sleep(2 * time.Second)
 
 	if err := s.monitorJackPorts(); err != nil {
 		log.Printf("Warning: Failed to monitor JACK ports: %v", err)
@@ -153,21 +166,31 @@ func (s *SuperColliderSynth) monitorJackPorts() error {
 	}
 	log.Printf("JACK Connections:\n%s", string(output))
 
-	// Check if SuperCollider ports exist and need connecting
-	if strings.Contains(string(output), "SuperCollider:out_1") {
-		// Connect SuperCollider outputs to our GStreamer inputs
-		connectCmd1 := exec.Command("jack_connect",
-			"SuperCollider:out_1",
-			fmt.Sprintf("%s:in_jackaudiosrc0_1", s.Id))
-		connectCmd2 := exec.Command("jack_connect",
-			"SuperCollider:out_2",
-			fmt.Sprintf("%s:in_jackaudiosrc0_2", s.Id))
-
-		if err := connectCmd1.Run(); err != nil {
-			log.Printf("Warning: Failed to connect SuperCollider out_1: %v", err)
+	// Wait for SuperCollider ports to appear
+	var scPorts []string
+	for retries := 0; retries < 5; retries++ {
+		cmd := exec.Command("jack_lsp")
+		output, err := cmd.CombinedOutput()
+		if err == nil && strings.Contains(string(output), "SuperCollider:out_1") {
+			scPorts = []string{"SuperCollider:out_1", "SuperCollider:out_2"}
+			break
 		}
-		if err := connectCmd2.Run(); err != nil {
-			log.Printf("Warning: Failed to connect SuperCollider out_2: %v", err)
+		log.Printf("Waiting for SuperCollider ports (attempt %d/5)...", retries+1)
+		time.Sleep(time.Second)
+	}
+
+	if len(scPorts) == 0 {
+		return fmt.Errorf("SuperCollider ports not found")
+	}
+
+	// Connect SuperCollider outputs to GStreamer inputs
+	for i, scPort := range scPorts {
+		gstPort := fmt.Sprintf("%s:in_jackaudiosrc0_%d", s.Id, i+1)
+		connectCmd := exec.Command("jack_connect", scPort, gstPort)
+		if err := connectCmd.Run(); err != nil {
+			log.Printf("Warning: Failed to connect %s to %s: %v", scPort, gstPort, err)
+		} else {
+			log.Printf("Successfully connected %s to %s", scPort, gstPort)
 		}
 	}
 

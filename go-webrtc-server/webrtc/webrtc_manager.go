@@ -345,20 +345,10 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 		return nil, err
 	}
 
-	// Add track and get sender
+	// Add the audio track to the peer connection
 	_, err = appSession.PeerConnection.AddTrack(audioTrack)
 	if err != nil {
 		log.Printf("Failed to add audio track: %v\n", err)
-		return nil, err
-	}
-
-	// Set direction to sendonly using AddTransceiverFromKind
-	if _, err := appSession.PeerConnection.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio,
-		webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendonly,
-		},
-	); err != nil {
-		log.Printf("Failed to set transceiver direction: %v\n", err)
 		return nil, err
 	}
 
@@ -366,10 +356,44 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 	return audioTrack, nil
 }
 
+// func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample, error) {
+// 	// Create the audio track
+// 	audioTrack, err := webrtc.NewTrackLocalStaticSample(
+// 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+// 		"audio",
+// 		"pion1",
+// 	)
+// 	if err != nil {
+// 		log.Printf("Failed to create audio track: %v\n", err)
+// 		return nil, err
+// 	}
+
+// 	// Add track and get sender
+// 	_, err = appSession.PeerConnection.AddTrack(audioTrack)
+// 	if err != nil {
+// 		log.Printf("Failed to add audio track: %v\n", err)
+// 		return nil, err
+// 	}
+
+// 	// Set direction to sendonly using AddTransceiverFromKind
+// 	if _, err := appSession.PeerConnection.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio,
+// 		webrtc.RTPTransceiverInit{
+// 			Direction: webrtc.RTPTransceiverDirectionSendonly,
+// 		},
+// 	); err != nil {
+// 		log.Printf("Failed to set transceiver direction: %v\n", err)
+// 		return nil, err
+// 	}
+
+// 	log.Printf("Added audio track with ID: %v\n", audioTrack.ID())
+// 	return audioTrack, nil
+// }
+
 // createPeerConnection initializes a new WebRTC peer connection
 func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
 	// Create a SettingEngine and configure timeouts
 	s := webrtc.SettingEngine{}
+	s.SetEphemeralUDPPortRange(10000, 10100)
 	s.SetICETimeouts(
 		5*time.Second,  // disconnectedTimeout
 		10*time.Second, // failedTimeout
