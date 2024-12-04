@@ -239,6 +239,12 @@ class AwestruckInfrastructure extends TerraformStack {
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
         },
+        {
+          fromPort: 10000,
+          toPort: 10100,
+          protocol: "udp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
       ],
       egress: [
         {
@@ -368,7 +374,7 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              ...Array.from({ length: 11 }, (_, i) => ({
+              ...Array.from({ length: 100 }, (_, i) => ({
                 containerPort: 10000 + i,
                 hostPort: 10000 + i,
                 protocol: "udp",
@@ -458,7 +464,7 @@ class AwestruckInfrastructure extends TerraformStack {
     new SecurityGroupRule(this, "coturn-relay-range", {
       type: "ingress",
       fromPort: 10000,
-      toPort: 10010,
+      toPort: 10100,
       protocol: "udp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,

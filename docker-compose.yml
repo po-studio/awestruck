@@ -16,7 +16,7 @@ services:
       "--min-port=49152",
       "--max-port=49252",
       "--user=awestruck:password",
-      "--realm=localhost",
+      "--realm=127.0.0.1",
       "--cli-password=password",
       "--allowed-peer-ip=0.0.0.0-255.255.255.255",
       "--allowed-peer-ip=::",
@@ -62,7 +62,7 @@ services:
       - JACK_NO_AUDIO_RESERVATION=1
       - JACK_OPTIONS=-R -d dummy
       - JACK_SAMPLE_RATE=48000
-      - GST_DEBUG=4
+      - GST_DEBUG=3
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
       - JACK_PERIOD_SIZE="1024"
       - JACK_BUFFER_SIZE="4096"
@@ -80,8 +80,7 @@ services:
       - "localhost:127.0.0.1"
     ports:
       - "8080:8080"       # Web server
-      - "10000-10100:10000-10100/udp"  # WebRTC media ports
-      - "30000-60000:30000-60000/udp" # SuperCollider port (dynamic, based on your logs)
+      - "10000-65535:10000-65535/udp"  # WebRTC media ports
     # networks:
     #   - webrtc-net
 

@@ -148,6 +148,8 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 // }
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
+	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
+
 	log.Println("Setting local description")
 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
 		log.Println("Error setting local description:", err)
@@ -162,6 +164,15 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 	log.Println("Starting synth engine")
 	if err := startSynthEngine(appSession); err != nil {
 		return err
+	}
+
+	// Add timeout for ICE gathering
+	log.Println("Waiting for ICE gathering to complete (with timeout)")
+	select {
+	case <-gatherComplete:
+		log.Println("ICE gathering completed successfully")
+	case <-time.After(5 * time.Second):
+		log.Println("ICE gathering timed out after 5 seconds, proceeding with available candidates")
 	}
 
 	return nil
@@ -549,4 +560,12 @@ func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 	}
 
 	return nil
+}
+
+func verifyTURNConfig(iceServers []webrtc.ICEServer) {
+	for _, server := range iceServers {
+		log.Printf("TURN Server URLs: %v", server.URLs)
+		log.Printf("TURN Server Username length: %d", len(server.Username))
+		log.Printf("TURN Server Credential length: %d", len(server.Credential.(string)))
+	}
 }
