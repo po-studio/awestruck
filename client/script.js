@@ -33,6 +33,22 @@ const TURN_CONFIG = {
     iceTransportPolicy: 'relay',
     iceCandidatePoolSize: 1,
   },
+  production: {
+    iceServers: [
+      {
+        urls: [
+          "turn:turn.awestruck.io:3478?transport=udp",
+          "turn:turn.awestruck.io:3478?transport=tcp"
+        ],
+        username: "awestruck",
+        credential: "password",
+        credentialType: "password",
+        realm: "awestruck.io"
+      }
+    ],
+    iceTransportPolicy: 'relay',
+    iceCandidatePoolSize: 1,
+  }
 };
 
 const isProduction = window.location.hostname !== 'localhost';
@@ -42,13 +58,7 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     updateToggleButton({ text: 'Connecting...', disabled: true });
     console.log("Stream starting...");
     
-    const config = isProduction 
-      ? {
-          iceServers: (await fetchTurnCredentials()).map(server => ({ ...server, preferUdp: true })),
-          iceTransportPolicy: 'relay',
-          iceCandidatePoolSize: 1,
-        }
-      : TURN_CONFIG.development;
+    const config = isProduction ? TURN_CONFIG.production : TURN_CONFIG.development;
 
     await setupPeerConnection(config);
     // Further connection logic like offer creation/negotiation will happen on negotiationneeded
@@ -179,6 +189,10 @@ function onIceCandidate(event) {
       isFiltered: isProduction && type !== 'relay',
       fullCandidate: candidateStr,
     });
+    console.log("ICE server configuration:", pc.getConfiguration());
+    
+    navigator.mediaDevices.enumerateDevices()
+      .then(devices => console.log("Local network interfaces:", devices));
 
     if (isProduction && type !== 'relay') {
       console.warn('Filtered non-relay candidate');
@@ -431,7 +445,6 @@ async function fetchTurnCredentials(retries = 3) {
           urls: [
             `turn:${credentials.hostname}:3478?transport=udp`,
             `turn:${credentials.hostname}:3478?transport=tcp`,
-            `turns:${credentials.hostname}:5349?transport=tcp`
           ],
           username: credentials.username,
           credential: credentials.password,

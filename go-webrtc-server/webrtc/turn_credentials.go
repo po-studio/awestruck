@@ -39,7 +39,6 @@ func generateTURNCredentials(secret string) types.TURNCredentials {
 		URLs: []string{
 			"turn:turn.awestruck.io:3478?transport=udp",
 			"turn:turn.awestruck.io:3478?transport=tcp",
-			"turns:turn.awestruck.io:5349?transport=tcp",
 		},
 	}
 }

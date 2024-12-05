@@ -21,12 +21,8 @@ services:
       "--allowed-peer-ip=0.0.0.0-255.255.255.255",
       "--allowed-peer-ip=::",
       "--verbose",
-      "--no-tls",
-      "--no-dtls",
-      "--allow-loopback-peers",
-      "--relay-threads=0",
-      "--mobility",  # Enable ICE mobility for better trickle ICE support
-      "--no-multicast-peers"  # Disable multicast to reduce candidate gathering time
+      "--mobility",
+      "--no-multicast-peers"
     ]
     restart: unless-stopped
     ports:

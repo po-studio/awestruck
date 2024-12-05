@@ -25,6 +25,9 @@ import { TerraformOutput } from "cdktf";
 import * as dotenv from "dotenv";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
 import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile";
+import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
+import { Eip } from "@cdktf/provider-aws/lib/eip";
+import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
 
 dotenv.config();
 
@@ -46,38 +49,58 @@ class AwestruckInfrastructure extends TerraformStack {
         "AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set in environment variables or cdktf.json context"
       );
     }
+    const coturnElasticIp = new Eip(this, "coturn-eip", {
+      vpc: true,
+      tags: {
+        Name: "coturn-eip",
+      },
+    });
 
     const userData = `#!/bin/bash
     exec 1> >(logger -s -t $(basename $0)) 2>&1
 
-    # Install necessary packages
     yum update -y
-    amazon-linux-extras install epel -y
+    amazon-linux-extras enable epel
+    yum install -y epel-release
     yum install -y coturn amazon-cloudwatch-agent
 
     # Create required directories
-    mkdir -p /etc/coturn /var/log/coturn
-    chmod 755 /etc/coturn /var/log/coturn
+    mkdir -p /etc/coturn /var/log/coturn /run/coturn
+    chmod 755 /etc/coturn /var/log/coturn /run/coturn
+    chown turnserver:turnserver /run/coturn
+
+    # Create systemd override directory
+    mkdir -p /etc/systemd/system/coturn.service.d/
+
+    # Create override file
+    cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
+    [Service]
+    RuntimeDirectory=coturn
+    RuntimeDirectoryMode=0755
+    PIDFile=/run/coturn/turnserver.pid
+    EOF
+
+    # Reload systemd
+    systemctl daemon-reload
 
     # Get instance IPs
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+    ELASTIC_IP=${coturnElasticIp.publicIp}
 
     # Configure TURN server
     cat > /etc/coturn/turnserver.conf <<EOF
     # Network settings
     listening-port=3478
-    tls-listening-port=5349
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
-    external-ip=$PUBLIC_IP/$LOCAL_IP
+    external-ip=$ELASTIC_IP/$LOCAL_IP
     min-port=49152
     max-port=65535
 
     # Authentication
     lt-cred-mech
     user=awestruck:${turnPassword}
-    realm=turn.awestruck.io
+    realm=awestruck.io
 
     # Logging
     log-file=/var/log/coturn/turnserver.log
@@ -88,9 +111,27 @@ class AwestruckInfrastructure extends TerraformStack {
     no-cli
     mobility
     fingerprint
+
+    cli-password=password
+    total-quota=100
+    max-bps=0
+    no-auth-pings
+    no-tlsv1
+    no-tlsv1_1
+    stale-nonce=0
+    cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
+    syslog
+    log-binding
+    log-allocate
+    debug
+    extra-logging
+    trace
+    verbose
+    log-binding
+    log-allocate
     EOF
 
-    # Configure CloudWatch agent
+    # Configure and start CloudWatch agent
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
       "logs": {
@@ -102,6 +143,12 @@ class AwestruckInfrastructure extends TerraformStack {
                           "log_group_name": "/coturn/turnserver",
                           "log_stream_name": "{instance_id}",
                           "timezone": "UTC"
+                      },
+                      {
+                          "file_path": "/var/log/syslog",
+                          "log_group_name": "/coturn/system",
+                          "log_stream_name": "{instance_id}",
+                          "timezone": "UTC"
                       }
                   ]
               }
@@ -110,9 +157,10 @@ class AwestruckInfrastructure extends TerraformStack {
     }
     EOF
 
-    # Start services
     systemctl enable amazon-cloudwatch-agent
     systemctl start amazon-cloudwatch-agent
+
+    # Finally, start COTURN
     systemctl enable coturn
     systemctl start coturn
     `;
@@ -200,6 +248,18 @@ class AwestruckInfrastructure extends TerraformStack {
           fromPort: 10000,
           toPort: 65535,
           protocol: "udp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          fromPort: 3478,
+          toPort: 3478,
+          protocol: "udp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          fromPort: 3478,
+          toPort: 3478,
+          protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
         },
       ],
@@ -413,8 +473,6 @@ class AwestruckInfrastructure extends TerraformStack {
     const stunTurnPorts = [
       { port: 3478, protocol: "tcp" }, // STUN/TURN
       { port: 3478, protocol: "udp" }, // STUN/TURN
-      { port: 5349, protocol: "tcp" }, // STUN/TURN over TLS
-      { port: 5349, protocol: "udp" }, // STUN/TURN over DTLS
     ];
 
     // Allow TURN relay ports
@@ -507,8 +565,23 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
+    const amazonLinux2ArmAmi = new DataAwsAmi(this, "amazonLinux2ArmAmi", {
+      owners: ["amazon"],
+      mostRecent: true,
+      filter: [
+        {
+          name: "name",
+          values: ["amzn2-ami-hvm-*-gp2"],
+        },
+        {
+          name: "architecture",
+          values: ["arm64"],
+        },
+      ],
+    });
+
     const coturnInstance = new Instance(this, "coturn-server", {
-      ami: "ami-0ed83e7a78a23014e",
+      ami: amazonLinux2ArmAmi.id,
       instanceType: "t4g.small",
       subnetId: subnet1.id,
       vpcSecurityGroupIds: [coturnSecurityGroup.id],
@@ -523,29 +596,37 @@ class AwestruckInfrastructure extends TerraformStack {
       userData: userData,
     });
 
+    new EipAssociation(this, "coturn-eip-association", {
+      instanceId: coturnInstance.id,
+      allocationId: coturnElasticIp.id,
+    });
+
+    new TerraformOutput(this, "coturn-elastic-ip", {
+      value: coturnElasticIp.publicIp,
+    });
+
     new Route53Record(this, "turn-dns", {
       zoneId: hostedZone.zoneId,
       name: "turn.awestruck.io",
       type: "A",
       ttl: 60,
-      records: [coturnInstance.publicIp],
+      records: [coturnElasticIp.publicIp],
       allowOverwrite: true,
       lifecycle: {
         createBeforeDestroy: true,
-        ignoreChanges: ["records"]
       },
-      dependsOn: [coturnInstance],
+      dependsOn: [coturnInstance, coturnElasticIp],
     });
 
     // Add outputs for the TURN server details
     new TerraformOutput(this, "turn-server-details", {
       value: {
         domain: "turn.awestruck.io",
+        elastic_ip: coturnElasticIp.publicIp,
         username: "awestruck",
         ports: {
           stun: 3478,
           turn: 3478,
-          turns: 5349,
         },
       },
     });
@@ -579,6 +660,12 @@ class AwestruckInfrastructure extends TerraformStack {
                   log_stream_name: "{instance_id}",
                   timezone: "UTC",
                 },
+                {
+                  file_path: "/var/log/syslog",
+                  log_group_name: "/coturn/system",
+                  log_stream_name: "{instance_id}",
+                  timezone: "UTC"
+                }
               ],
             },
           },
@@ -635,14 +722,14 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     // Allow STUN/TURN egress
-    new SecurityGroupRule(this, "ecs-stun-turn-egress", {
-      type: "egress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "-1",  // Both TCP and UDP
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: securityGroup.id,
-    });
+    // new SecurityGroupRule(this, "ecs-stun-turn-egress", {
+    //   type: "egress",
+    //   fromPort: 3478,
+    //   toPort: 3478,
+    //   protocol: "-1",  // Both TCP and UDP
+    //   cidrBlocks: ["0.0.0.0/0"],
+    //   securityGroupId: securityGroup.id,
+    // });
   }
 }
 
