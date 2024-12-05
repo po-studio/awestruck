@@ -1,7 +1,7 @@
 package session
 
 import (
-	"fmt"
+	"log"
 
 	"github.com/pion/webrtc/v3"
 
@@ -22,29 +22,38 @@ type AppSession struct {
 }
 
 func (as *AppSession) StopAllProcesses() {
+	log.Printf("Starting cleanup for session %s", as.Id)
+
 	if as.Synth != nil {
+		log.Printf("[%s] Stopping synth engine", as.Id)
 		as.Synth.Stop()
 	}
 
 	if err := jack.DisconnectJackPorts(as.Id); err != nil {
-		fmt.Println("Error disconnecting JACK ports:", err)
+		log.Printf("[%s] Error disconnecting JACK ports: %v", as.Id, err)
 	} else {
-		fmt.Println("JACK ports disconnected successfully.")
+		log.Printf("[%s] JACK ports disconnected successfully", as.Id)
 	}
 
 	if as.PeerConnection != nil {
+		log.Printf("[%s] Closing WebRTC peer connection", as.Id)
 		if err := as.PeerConnection.Close(); err != nil {
-			fmt.Println("Error closing peer connection:", err)
+			log.Printf("[%s] Error closing peer connection: %v", as.Id, err)
 		} else {
-			fmt.Println("Peer connection closed successfully.")
+			log.Printf("[%s] Peer connection closed successfully", as.Id)
 		}
 		as.PeerConnection = nil
 	}
 
 	if as.GStreamerPipeline != nil {
+		log.Printf("[%s] Stopping GStreamer pipeline", as.Id)
 		as.GStreamerPipeline.Stop()
 		as.GStreamerPipeline = nil
 	}
 
-	fmt.Println("All processes have been stopped.")
+	log.Printf("[%s] Cleanup completed - Resources freed: Synth=%v, PeerConnection=%v, GStreamer=%v",
+		as.Id,
+		as.Synth == nil,
+		as.PeerConnection == nil,
+		as.GStreamerPipeline == nil)
 }

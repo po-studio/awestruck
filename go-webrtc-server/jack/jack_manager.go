@@ -7,20 +7,41 @@ import (
 )
 
 func DisconnectJackPorts(appSessionId string) error {
-	gstJackPorts, err := GetGStreamerJackPorts(appSessionId)
+	// Get all current connections
+	cmd := exec.Command("jack_lsp", "-c")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("error finding JACK ports: %w", err)
+		return fmt.Errorf("error getting JACK connections: %w", err)
 	}
 
+	// Look for connections to our session's webrtc ports
+	connections := strings.Split(string(output), "\n")
 	var disconnectErrors []string
-	for _, gstJackPort := range gstJackPorts {
-		// NOTE 1: this is hardcoded for SuperCollider, but move away from the
-		// coupling with SuperCollider so that we can configure for multiple synths
-		//
-		// NOTE 2: this is a bug – this is the auto-generated channel name for only
-		// the first SC connected output port
-		if err := disconnectPort("SuperCollider:out_1", gstJackPort); err != nil {
-			disconnectErrors = append(disconnectErrors, err.Error())
+
+	for i, line := range connections {
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		// If we find a webrtc port for our session
+		if strings.Contains(line, fmt.Sprintf("webrtc-server:in_%s", appSessionId)) ||
+			strings.Contains(line, fmt.Sprintf("webrtc-server-\\d+:in_%s", appSessionId)) {
+			// Look at the previous lines for connected ports
+			for j := i - 1; j >= 0; j-- {
+				if strings.HasPrefix(connections[j], "   ") {
+					// This is a connected port
+					connectedPort := strings.TrimSpace(connections[j])
+					webrtcPort := strings.TrimSpace(line)
+
+					if err := disconnectPort(connectedPort, webrtcPort); err != nil {
+						disconnectErrors = append(disconnectErrors, err.Error())
+					}
+				} else {
+					// We've reached the previous main port entry
+					break
+				}
+			}
 		}
 	}
 

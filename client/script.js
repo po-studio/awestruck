@@ -1,3 +1,5 @@
+// script.js
+
 const sessionID = getSessionID();
 
 function getSessionID() {
@@ -12,6 +14,11 @@ function getSessionID() {
 let pc;
 let pendingIceCandidates = [];
 let isConnectionEstablished = false;
+
+let qualityMonitorInterval;
+let audioStatsInterval;
+let audioLevelsInterval;
+let trackStatsInterval;
 
 const TURN_CONFIG = {
   development: {
@@ -30,48 +37,89 @@ const TURN_CONFIG = {
 
 const isProduction = window.location.hostname !== 'localhost';
 
-document.getElementById('toggleConnection').addEventListener('click', async function () {
+document.getElementById('toggleConnection').addEventListener('click', async function() {
   if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') {
-    this.textContent = 'Connecting...';
-    this.disabled = true;
+    updateToggleButton({ text: 'Connecting...', disabled: true });
     console.log("Stream starting...");
+    
+    const config = isProduction 
+      ? {
+          iceServers: (await fetchTurnCredentials()).map(server => ({ ...server, preferUdp: true })),
+          iceTransportPolicy: 'relay',
+          iceCandidatePoolSize: 1,
+        }
+      : TURN_CONFIG.development;
 
-    console.log(
-      'Using ICE servers:',
-      isProduction ? await fetchTurnCredentials() : TURN_CONFIG.development
-    );
-
-    pc = new RTCPeerConnection(await validateTurnConfig());
-
-    // Assign event handlers
-    pc.onconnectionstatechange = onConnectionStateChange;
-    pc.oniceconnectionstatechange = onIceConnectionStateChange;
-    pc.onicecandidate = onIceCandidate;
-    pc.onicegatheringstatechange = onIceGatheringStateChange;
-    pc.onnegotiationneeded = onNegotiationNeeded;
-    pc.ontrack = onTrack;
-
-    pc.addTransceiver('audio', { direction: 'recvonly' });
+    await setupPeerConnection(config);
+    // Further connection logic like offer creation/negotiation will happen on negotiationneeded
   } else {
-    this.textContent = 'Disconnecting...';
-    this.disabled = true;
+    updateToggleButton({ text: 'Disconnecting...', disabled: true });
     console.log("Stopping connection...");
     try {
       await stopSynthesis();
-      if (pc) {
-        document.getElementById('toggleConnection').classList.remove('button-disconnect');
-        pc.close();
-        pc = null;
-        this.textContent = 'Stream New Synth';
-        this.disabled = false;
-      }
+      handleDisconnect();
     } catch (error) {
       console.error("Failed to stop synthesis:", error);
-      this.textContent = 'Error - Try Again';
-      this.disabled = false;
+      updateToggleButton({ text: 'Error - Try Again', disabled: false });
     }
   }
 });
+
+function updateToggleButton({ text, disabled = false, disconnectStyle = false }) {
+  const toggleBtn = document.getElementById('toggleConnection');
+  toggleBtn.textContent = text;
+  toggleBtn.disabled = disabled;
+  if (disconnectStyle) {
+    toggleBtn.classList.add('button-disconnect');
+  } else {
+    toggleBtn.classList.remove('button-disconnect');
+  }
+}
+
+function handleDisconnect() {
+  const sessionInfo = {
+    sessionId: sessionID,
+    lastConnectionState: pc ? pc.connectionState : 'none',
+    lastIceState: pc ? pc.iceConnectionState : 'none',
+    timeStamp: new Date().toISOString()
+  };
+  
+  console.log('Cleaning up session:', sessionInfo);
+  
+  clearInterval(qualityMonitorInterval);
+  clearInterval(audioStatsInterval);
+  clearInterval(audioLevelsInterval);
+  clearInterval(trackStatsInterval);
+  
+  if (pc) {
+    logLastKnownGoodConnection();
+    pc.close();
+    pc = null;
+  }
+  
+  console.log('Session cleanup completed:', {
+    ...sessionInfo,
+    intervalsCleared: true,
+    peerConnectionClosed: true
+  });
+  
+  updateToggleButton({ text: 'Stream New Synth', disabled: false, disconnectStyle: false });
+  isConnectionEstablished = false;
+}
+
+async function setupPeerConnection(config) {
+  pc = new RTCPeerConnection(config);
+
+  pc.onconnectionstatechange = onConnectionStateChange;
+  pc.onicecandidate = onIceCandidate;
+  pc.oniceconnectionstatechange = onIceConnectionStateChange;
+  pc.onicegatheringstatechange = onIceGatheringStateChange;
+  pc.onnegotiationneeded = onNegotiationNeeded;
+  pc.ontrack = onTrack;
+
+  pc.addTransceiver('audio', { direction: 'recvonly' });
+  return pc;
+}
 
 function onConnectionStateChange() {
   const states = {
@@ -81,8 +129,6 @@ function onConnectionStateChange() {
     signalingState: pc.signalingState,
   };
   console.log('Connection state change:', states);
-
-  const toggleBtn = document.getElementById('toggleConnection');
 
   switch (pc.connectionState) {
     case 'connected':
@@ -94,28 +140,23 @@ function onConnectionStateChange() {
       startConnectionQualityMonitoring();
       startAudioStatsMonitoring();
 
-      toggleBtn.textContent = 'Disconnect';
-      toggleBtn.classList.add('button-disconnect');
-      toggleBtn.disabled = false;
+      updateToggleButton({ text: 'Disconnect', disconnectStyle: true, disabled: false });
       break;
 
     case 'disconnected':
       console.log('Connection disconnected. Last known state:', states);
       logLastKnownGoodConnection();
+      // Consider handling a reconnect or just leaving it disconnected
       break;
 
     case 'failed':
       console.error('Connection failed:', states);
-      toggleBtn.classList.remove('button-disconnect');
-      toggleBtn.textContent = 'Failed to Connect - Retry?';
-      toggleBtn.disabled = false;
+      updateToggleButton({ text: 'Failed to Connect - Retry?', disabled: false });
       break;
 
     case 'closed':
       console.log('Connection closed cleanly');
-      toggleBtn.classList.remove('button-disconnect');
-      toggleBtn.textContent = 'Stream New Synth';
-      toggleBtn.disabled = false;
+      updateToggleButton({ text: 'Stream New Synth', disabled: false });
       break;
   }
 }
@@ -163,71 +204,64 @@ async function onNegotiationNeeded() {
     await sendOffer(pc.localDescription);
   } catch (err) {
     console.error("Error during negotiation:", err);
-    // Reset connection state
     if (pc) {
       pc.close();
       pc = null;
     }
-    const toggleBtn = document.getElementById('toggleConnection');
-    toggleBtn.textContent = 'Connection Failed - Retry?';
-    toggleBtn.disabled = false;
-    toggleBtn.classList.remove('button-disconnect');
+    updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
   }
 }
 
 function onTrack(event) {
   if (event.track.kind === 'audio') {
-    console.log('Audio track received:', event.track);
-
-    // Create audio context with fallback
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const audioContext = new AudioContext({
-      latencyHint: 'interactive',
-      sampleRate: 48000,
-    });
-
-    // Create and configure audio element
-    const audioElement = document.createElement('audio');
-    audioElement.srcObject = new MediaStream([event.track]);
-    audioElement.autoplay = true;
-    audioElement.volume = 1.0; // Ensure volume is up
-
-    // Create audio graph
-    const source = audioContext.createMediaStreamSource(new MediaStream([event.track]));
-    const gainNode = audioContext.createGain();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 2048;
-
-    // Connect nodes
-    source.connect(gainNode);
-    gainNode.connect(analyser);
-    analyser.connect(audioContext.destination);
-
-    // Debug logging
-    console.log('Audio Context State:', audioContext.state);
-    console.log('Audio Element Ready State:', audioElement.readyState);
-    console.log('Track Settings:', event.track.getSettings());
-
-    // Error handling
-    audioElement.onerror = (e) => console.error('Audio element error:', e);
-    audioElement.onplay = () => {
-      console.log('Audio playback started');
-      audioContext.resume().catch((e) => console.error('Failed to resume audio context:', e));
-    };
-
-    // Monitor audio levels and track state
-    monitorAudioLevels(analyser, event.track, audioElement);
-
-    // Log audio track capabilities
-    const capabilities = event.track.getCapabilities();
-    console.log('Audio track capabilities:', capabilities);
-
-    // Monitor track stats
-    monitorTrackStats(event.track);
-
-    // Append to document
-    document.body.appendChild(audioElement);
+    setupAudioTrack(event.track);
   }
+}
+
+function setupAudioTrack(track) {
+  console.log('Audio track received:', track);
+
+  // Create audio context with fallback
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  const audioContext = new AudioContext({
+    latencyHint: 'interactive',
+    sampleRate: 48000,
+  });
+
+  // Create and configure audio element
+  const audioElement = document.createElement('audio');
+  audioElement.srcObject = new MediaStream([track]);
+  audioElement.autoplay = true;
+  audioElement.volume = 1.0;
+
+  // Create audio graph
+  const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+  const gainNode = audioContext.createGain();
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+
+  source.connect(gainNode);
+  gainNode.connect(analyser);
+  analyser.connect(audioContext.destination);
+
+  console.log('Audio Context State:', audioContext.state);
+  console.log('Audio Element Ready State:', audioElement.readyState);
+  console.log('Track Settings:', track.getSettings());
+
+  audioElement.onerror = (e) => console.error('Audio element error:', e);
+  audioElement.onplay = () => {
+    console.log('Audio playback started');
+    audioContext.resume().catch((e) => console.error('Failed to resume audio context:', e));
+  };
+
+  monitorAudioLevels(analyser, track, audioElement);
+
+  const capabilities = track.getCapabilities();
+  console.log('Audio track capabilities:', capabilities);
+
+  monitorTrackStats(track);
+
+  document.body.appendChild(audioElement);
 }
 
 async function sendOffer(offer) {
@@ -371,6 +405,11 @@ async function stopSynthesis() {
 }
 
 async function fetchTurnCredentials(retries = 3) {
+  if (!isProduction) {
+    // Not production, just return development creds
+    return TURN_CONFIG.development.iceServers;
+  }
+
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch('/turn-credentials', {
@@ -387,7 +426,6 @@ async function fetchTurnCredentials(retries = 3) {
       const credentials = await response.json();
       console.log('TURN credentials received:', credentials);
 
-      // Use the server-provided credentials
       return [
         {
           urls: [
@@ -408,25 +446,14 @@ async function fetchTurnCredentials(retries = 3) {
   }
 }
 
-async function validateTurnConfig() {
-  if (!isProduction) {
-    return TURN_CONFIG.development;
-  }
-
-  const turnServers = await fetchTurnCredentials();
-  return {
-    iceServers: turnServers.map((server) => ({
-      ...server,
-      preferUdp: true,
-    })),
-    iceTransportPolicy: 'relay',
-    iceCandidatePoolSize: 1,
-  };
-}
-
-// Helper functions for monitoring and logging
+// Monitoring and logging helpers
 function startConnectionQualityMonitoring() {
-  setInterval(() => {
+  clearInterval(qualityMonitorInterval);
+  qualityMonitorInterval = setInterval(() => {
+    if (!pc) {
+      clearInterval(qualityMonitorInterval);
+      return;
+    }
     pc.getStats().then((stats) => {
       stats.forEach((report) => {
         if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -446,7 +473,12 @@ function startConnectionQualityMonitoring() {
 }
 
 function startAudioStatsMonitoring() {
-  setInterval(() => {
+  clearInterval(audioStatsInterval);
+  audioStatsInterval = setInterval(() => {
+    if (!pc) {
+      clearInterval(audioStatsInterval);
+      return;
+    }
     pc.getStats().then((stats) => {
       stats.forEach((report) => {
         if (report.type === 'inbound-rtp' && report.kind === 'audio') {
@@ -478,8 +510,15 @@ function logLastKnownGoodConnection() {
 }
 
 function monitorAudioLevels(analyser, track, audioElement) {
+  clearInterval(audioLevelsInterval);
   const dataArray = new Float32Array(analyser.frequencyBinCount);
-  setInterval(() => {
+  
+  audioLevelsInterval = setInterval(() => {
+    if (!track || track.readyState === 'ended') {
+      clearInterval(audioLevelsInterval);
+      return;
+    }
+    
     analyser.getFloatTimeDomainData(dataArray);
     const rms = Math.sqrt(dataArray.reduce((acc, val) => acc + val * val, 0) / dataArray.length);
     console.log('Audio RMS level:', rms.toFixed(6));
@@ -498,7 +537,12 @@ function monitorAudioLevels(analyser, track, audioElement) {
 }
 
 function monitorTrackStats(track) {
-  setInterval(() => {
+  clearInterval(trackStatsInterval);
+  trackStatsInterval = setInterval(() => {
+    if (!pc || !track || track.readyState === 'ended') {
+      clearInterval(trackStatsInterval);
+      return;
+    }
     pc.getStats(track).then((stats) => {
       stats.forEach((report) => {
         if (report.type === 'inbound-rtp' && report.kind === 'audio') {
@@ -514,3 +558,4 @@ function monitorTrackStats(track) {
     });
   }, 1000);
 }
+

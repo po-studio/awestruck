@@ -134,7 +134,6 @@ func (s *SuperColliderSynth) setupCmd() error {
 	s.Cmd.Stderr = io.MultiWriter(logFile, pipeWriter)
 
 	s.Cmd.Env = append(os.Environ(),
-		// "SC_JACK_DEFAULT_OUTPUTS="+s.GStreamerPorts,
 		"SC_SYNTHDEF_PATH="+utils.SCSynthDefDirectory,
 	)
 
@@ -143,25 +142,34 @@ func (s *SuperColliderSynth) setupCmd() error {
 
 // Stop stops the SuperCollider server gracefully
 func (s *SuperColliderSynth) Stop() error {
-	if s.Cmd == nil || s.Cmd.Process == nil {
-		log.Println("SuperCollider is not running")
-		return nil
+	// First disconnect JACK ports
+	if err := jack.DisconnectJackPorts(s.Id); err != nil {
+		return fmt.Errorf("failed to disconnect JACK ports: %w", err)
 	}
 
+	// Send quit message to scsynth
 	client := osc.NewClient("127.0.0.1", s.Port)
-	msg := osc.NewMessage("/quit")
-	if err := client.Send(msg); err != nil {
-		log.Printf("Error sending OSC /quit message: %v\n", err)
-		return err
-	}
-	log.Println("OSC /quit message sent successfully.")
-
-	if err := s.Cmd.Wait(); err != nil {
-		log.Printf("Error waiting for SuperCollider to quit: %v\n", err)
-		return err
+	if err := client.Send(osc.NewMessage("/quit")); err != nil {
+		return fmt.Errorf("failed to send quit message to scsynth: %w", err)
 	}
 
-	log.Println("SuperCollider stopped gracefully.")
+	// Close the output reader
+	if s.outputReader != nil {
+		s.outputReader.Close()
+	}
+
+	// Close log file
+	if s.LogFile != nil {
+		s.LogFile.Close()
+	}
+
+	// Kill the scsynth process if it's still running
+	if s.Cmd != nil && s.Cmd.Process != nil {
+		if err := s.Cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("failed to kill scsynth process: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -187,47 +195,6 @@ func (s *SuperColliderSynth) SendPlayMessage() {
 	} else {
 		log.Println("OSC message sent successfully.")
 	}
-}
-
-// New function to monitor JACK ports
-func (s *SuperColliderSynth) monitorJackPorts() error {
-	// First list all connections
-	cmd := exec.Command("jack_lsp", "-c")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to list JACK connections: %v", err)
-	}
-	log.Printf("JACK Connections:\n%s", string(output))
-
-	// Wait for SuperCollider ports to appear
-	var scPorts []string
-	for retries := 0; retries < 5; retries++ {
-		cmd := exec.Command("jack_lsp")
-		output, err := cmd.CombinedOutput()
-		if err == nil && strings.Contains(string(output), "SuperCollider:out_1") {
-			scPorts = []string{"SuperCollider:out_1", "SuperCollider:out_2"}
-			break
-		}
-		log.Printf("Waiting for SuperCollider ports (attempt %d/5)...", retries+1)
-		time.Sleep(time.Second)
-	}
-
-	if len(scPorts) == 0 {
-		return fmt.Errorf("SuperCollider ports not found")
-	}
-
-	// Connect SuperCollider outputs to GStreamer inputs
-	for i, scPort := range scPorts {
-		gstPort := fmt.Sprintf("%s:in_jackaudiosrc0_%d", s.Id, i+1)
-		connectCmd := exec.Command("jack_connect", scPort, gstPort)
-		if err := connectCmd.Run(); err != nil {
-			log.Printf("Warning: Failed to connect %s to %s: %v", scPort, gstPort, err)
-		} else {
-			log.Printf("Successfully connected %s to %s", scPort, gstPort)
-		}
-	}
-
-	return nil
 }
 
 func (s *SuperColliderSynth) waitForSuperColliderReady() error {
