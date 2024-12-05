@@ -61,13 +61,27 @@ class AwestruckInfrastructure extends TerraformStack {
     
     log "Starting TURN server setup..."
     
-    # Install required packages
+    # Install required packages including systemd
     dnf update -y || error_exit "Failed to update system"
-    dnf install -y docker amazon-cloudwatch-agent jq aws-cli || error_exit "Failed to install packages"
+    dnf install -y docker systemd amazon-cloudwatch-agent jq aws-cli || error_exit "Failed to install packages"
     
-    # Start and enable Docker
+    # Start and enable Docker using systemctl
     systemctl start docker || error_exit "Failed to start Docker"
     systemctl enable docker || error_exit "Failed to enable Docker"
+    
+    # Verify Docker is running
+    timeout 30 bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done' || error_exit "Docker failed to start within 30 seconds"
+    log "Docker started successfully"
+
+    # Verify Docker permissions
+    if ! docker info >/dev/null 2>&1; then
+        error_exit "Current user cannot access Docker. Check Docker daemon and permissions"
+    fi
+
+    log "Docker service status:"
+    systemctl status docker || true
+    log "Docker info:"
+    docker info || true
     
     # Pull the coturn image before trying to run it
     docker pull coturn/coturn || error_exit "Failed to pull coturn image"
@@ -104,14 +118,16 @@ class AwestruckInfrastructure extends TerraformStack {
     
     # Configure TURN server
     cat > /etc/coturn/turnserver.conf << EOL
-    user=awestruck:password
+    user=awestruck:${turnPassword}
     realm=turn.awestruck.io
     listening-port=3478
     tls-listening-port=5349
     min-port=10000
-    max-port=65535
+    max-port=10100
     lt-cred-mech
-    listening-ip=0.0.0.0
+    listening-ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+    relay-ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+    external-ip=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
     server-name=turn.awestruck.io
     cert=/etc/coturn/turn.awestruck.io.crt
     pkey=/etc/coturn/turn.awestruck.io.key
@@ -119,6 +135,10 @@ class AwestruckInfrastructure extends TerraformStack {
     log-file=stdout
     no-multicast-peers
     EOL
+
+    log "TURN server IP configuration:"
+    log "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
+    log "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
     
     # Start TURN server with error handling
     log "Starting TURN server..."
@@ -241,7 +261,7 @@ class AwestruckInfrastructure extends TerraformStack {
         },
         {
           fromPort: 10000,
-          toPort: 10100,
+          toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -374,7 +394,7 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              ...Array.from({ length: 100 }, (_, i) => ({
+              ...Array.from({ length: 101 }, (_, i) => ({
                 containerPort: 10000 + i,
                 hostPort: 10000 + i,
                 protocol: "udp",
@@ -536,6 +556,11 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly",
     });
 
+    new IamRolePolicyAttachment(this, "coturn-ecr-policy", {
+      role: coturnInstanceRole.name,
+      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+    });
+
     const coturnInstanceProfile = new IamInstanceProfile(
       this,
       "coturn-instance-profile",
@@ -656,7 +681,7 @@ class AwestruckInfrastructure extends TerraformStack {
     new SecurityGroupRule(this, "webrtc-media-range", {
       type: "ingress",
       fromPort: 10000,
-      toPort: 65535,
+      toPort: 10100,
       protocol: "udp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: securityGroup.id,
