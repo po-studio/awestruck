@@ -48,136 +48,68 @@ class AwestruckInfrastructure extends TerraformStack {
     }
 
     const userData = `#!/bin/bash
-    # Enable logging to CloudWatch
     exec 1> >(logger -s -t $(basename $0)) 2>&1
-    
+
     log() {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
     }
+
     error_exit() {
         log "ERROR: $1"
         exit 1
     }
-    
-    log "Starting TURN server setup..."
-    
-    # Install required packages including systemd
-    dnf update -y || error_exit "Failed to update system"
-    dnf install -y docker systemd amazon-cloudwatch-agent jq aws-cli || error_exit "Failed to install packages"
-    
-    # Start and enable Docker using systemctl
-    systemctl start docker || error_exit "Failed to start Docker"
-    systemctl enable docker || error_exit "Failed to enable Docker"
-    
-    # Verify Docker is running
-    timeout 30 bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done' || error_exit "Docker failed to start within 30 seconds"
-    log "Docker started successfully"
 
-    # Verify Docker permissions
-    if ! docker info >/dev/null 2>&1; then
-        error_exit "Current user cannot access Docker. Check Docker daemon and permissions"
+    log "Setting up TURN server..."
+
+    # Fetch IPs dynamically
+    LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+
+    if [[ -z "$LOCAL_IP" || -z "$PUBLIC_IP" ]]; then
+        error_exit "Failed to fetch instance IPs from metadata"
     fi
 
-    log "Docker service status:"
-    systemctl status docker || true
-    log "Docker info:"
-    docker info || true
-    
-    # Pull the coturn image before trying to run it
-    docker pull coturn/coturn || error_exit "Failed to pull coturn image"
-    
-    # Create required directories with proper permissions
-    mkdir -p /etc/coturn /var/log/coturn /etc/ssl || error_exit "Failed to create directories"
-    chmod 755 /var/log/coturn
-    
-    # Add to your userData script, before the docker run command
-    cat > /etc/coturn/cert-setup.sh << EOL
-    #!/bin/bash
-    set -e
+    log "Local IP: $LOCAL_IP, Public IP: $PUBLIC_IP"
 
-    # Create a temporary directory with proper permissions
-    TEMP_DIR=$(mktemp -d)
-    chmod 700 $TEMP_DIR
+    # Install necessary packages
+    yum update -y
+    yum install -y docker jq amazon-cloudwatch-agent || error_exit "Failed to install required packages"
 
-    # Fetch and process certificate in temp directory
-    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} > $TEMP_DIR/cert.json
+    systemctl start docker || error_exit "Failed to start Docker"
+    systemctl enable docker
 
-    # Use sudo to write files with proper permissions
-    sudo bash -c "jq -r '.Certificate' $TEMP_DIR/cert.json > /etc/coturn/turn.awestruck.io.crt"
-    sudo bash -c "jq -r '.PrivateKey' $TEMP_DIR/cert.json > /etc/coturn/turn.awestruck.io.key"
-    sudo chmod 600 /etc/coturn/turn.awestruck.io.key
-    sudo chmod 644 /etc/coturn/turn.awestruck.io.crt
-    sudo chown root:root /etc/coturn/turn.awestruck.io.*
+    # Fetch and configure SSL certificate
+    mkdir -p /etc/coturn
+    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} | jq -r '.Certificate' > /etc/coturn/turn.crt
+    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} | jq -r '.PrivateKey' > /etc/coturn/turn.key
 
-    # Clean up
-    rm -rf $TEMP_DIR
-    EOL
-    
-    chmod +x /etc/coturn/cert-setup.sh
-    sudo /etc/coturn/cert-setup.sh
-    
-    # Configure TURN server
-    cat > /etc/coturn/turnserver.conf << EOL
+    chmod 600 /etc/coturn/turn.key
+    chmod 644 /etc/coturn/turn.crt
+
+    # Create TURN server configuration
+    cat > /etc/coturn/turnserver.conf <<EOF
     user=awestruck:${turnPassword}
     realm=turn.awestruck.io
     listening-port=3478
     tls-listening-port=5349
     min-port=10000
     max-port=10100
-    lt-cred-mech
-    listening-ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    relay-ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    external-ip=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-    server-name=turn.awestruck.io
-    cert=/etc/coturn/turn.awestruck.io.crt
-    pkey=/etc/coturn/turn.awestruck.io.key
+    cert=/etc/coturn/turn.crt
+    pkey=/etc/coturn/turn.key
+    external-ip=$PUBLIC_IP
+    listening-ip=$LOCAL_IP
+    relay-ip=$LOCAL_IP
+    log-file=/var/log/coturn/turnserver.log
     verbose
-    log-file=stdout
-    no-multicast-peers
-    EOL
+    cli-password=$(openssl rand -hex 16)
+    EOF
 
-    log "TURN server IP configuration:"
-    log "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
-    log "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+    # Start TURN server
+    docker pull coturn/coturn || error_exit "Failed to pull coturn image"
+    docker run -d --name coturn --restart unless-stopped --network host \
+      -v /etc/coturn:/etc/coturn coturn/coturn:latest turnserver -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
     
-    # Start TURN server with error handling
-    log "Starting TURN server..."
-    if ! docker ps | grep -q coturn; then
-        if docker ps -a | grep -q coturn; then
-            log "Removing existing coturn container..."
-            docker rm -f coturn
-        fi
-        
-        docker run -d --name coturn \
-          --restart unless-stopped \
-          --network host \
-          --log-driver=awslogs \
-          --log-opt awslogs-group=/coturn/turnserver \
-          --log-opt awslogs-region=${awsRegion} \
-          --log-opt awslogs-stream=coturn-$(hostname) \
-          -v /etc/coturn:/etc/coturn \
-          coturn/coturn:latest turnserver -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
-            
-        # Verify container is running
-        sleep 5
-        if ! docker ps | grep -q coturn; then
-            error_exit "Coturn container failed to start. Logs: $(docker logs coturn 2>&1)"
-        fi
-    fi
-
-    # Enable log streaming to CloudWatch
-    docker logs -f coturn >> /var/log/coturn/turnserver.log 2>&1 &
-
-    log "Verifying TURN server ports..."
-    sleep 5
-    if ! netstat -tuln | grep -q ':3478 '; then
-        error_exit "TURN server not listening on port 3478"
-    fi
-    if ! netstat -tuln | grep -q ':5349 '; then
-        error_exit "TURN server not listening on port 5349"
-    fi
-
-    log "COTURN server setup completed successfully"
+    log "TURN server setup completed successfully"
     `;
 
     new AwsProvider(this, "AWS", {
