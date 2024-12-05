@@ -47,7 +47,9 @@ class AwestruckInfrastructure extends TerraformStack {
       );
     }
 
-    const userData = `#!/bin/bash
+    const userData = `
+    #!/bin/bash
+
     exec 1> >(logger -s -t $(basename $0)) 2>&1
 
     log() {
@@ -61,6 +63,11 @@ class AwestruckInfrastructure extends TerraformStack {
 
     log "Setting up TURN server..."
 
+    # Create required directories with proper permissions
+    mkdir -p /etc/coturn /var/log/coturn
+    chmod 755 /etc/coturn
+    chmod 755 /var/log/coturn
+
     # Fetch IPs dynamically
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
     PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
@@ -73,42 +80,95 @@ class AwestruckInfrastructure extends TerraformStack {
 
     # Install necessary packages
     yum update -y
-    yum install -y docker jq amazon-cloudwatch-agent || error_exit "Failed to install required packages"
-
-    systemctl start docker || error_exit "Failed to start Docker"
-    systemctl enable docker
+    amazon-linux-extras install epel -y
+    yum install -y coturn jq amazon-cloudwatch-agent || error_exit "Failed to install required packages"
 
     # Fetch and configure SSL certificate
-    mkdir -p /etc/coturn
     aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} | jq -r '.Certificate' > /etc/coturn/turn.crt
     aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} | jq -r '.PrivateKey' > /etc/coturn/turn.key
 
     chmod 600 /etc/coturn/turn.key
     chmod 644 /etc/coturn/turn.crt
 
-    # Create TURN server configuration
     cat > /etc/coturn/turnserver.conf <<EOF
+    # User authentication
+    lt-cred-mech
     user=awestruck:${turnPassword}
     realm=turn.awestruck.io
+
+    # Listening ports
     listening-port=3478
     tls-listening-port=5349
     min-port=10000
     max-port=10100
+
+    # TLS certificates
     cert=/etc/coturn/turn.crt
     pkey=/etc/coturn/turn.key
-    external-ip=$PUBLIC_IP
+
+    # Network configuration
+    external-ip=$PUBLIC_IP/$LOCAL_IP
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
+
+    # Logging
     log-file=/var/log/coturn/turnserver.log
     verbose
-    cli-password=$(openssl rand -hex 16)
+    log-binding
+
+    # Security and WebRTC optimization
+    no-multicast-peers
+    no-cli
+    mobility
+    fingerprint
+    use-auth-secret
+    static-auth-secret=${turnPassword}
+    realm=turn.awestruck.io
+    server-name=turn.awestruck.io
+
+    # Performance tuning
+    total-quota=100
+    bps-capacity=0
+    stale-nonce=0
+    no-tcp-relay
     EOF
 
-    # Start TURN server
-    docker pull coturn/coturn || error_exit "Failed to pull coturn image"
-    docker run -d --name coturn --restart unless-stopped --network host \
-      -v /etc/coturn:/etc/coturn coturn/coturn:latest turnserver -c /etc/coturn/turnserver.conf || error_exit "Failed to start coturn container"
-    
+    # Configure CloudWatch agent
+    cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
+    {
+        "logs": {
+            "logs_collected": {
+                "files": {
+                    "collect_list": [
+                        {
+                            "file_path": "/var/log/coturn/turnserver.log",
+                            "log_group_name": "/coturn/turnserver",
+                            "log_stream_name": "{instance_id}",
+                            "timezone": "UTC"
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    EOF
+
+    # Start services
+    systemctl enable amazon-cloudwatch-agent
+    systemctl start amazon-cloudwatch-agent
+
+    systemctl enable coturn
+    systemctl start coturn
+
+    # Verify services are running
+    if ! systemctl is-active --quiet coturn; then
+        error_exit "Coturn service failed to start"
+    fi
+
+    if ! systemctl is-active --quiet amazon-cloudwatch-agent; then
+        error_exit "CloudWatch agent failed to start"
+    fi
+
     log "TURN server setup completed successfully"
     `;
 
