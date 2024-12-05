@@ -651,6 +651,16 @@ class AwestruckInfrastructure extends TerraformStack {
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: securityGroup.id,
     });
+
+    // Allow WebRTC media traffic
+    new SecurityGroupRule(this, "webrtc-media-range", {
+      type: "ingress",
+      fromPort: 10000,
+      toPort: 10100,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: securityGroup.id,
+    });
   }
 }
 
