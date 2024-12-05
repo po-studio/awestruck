@@ -55,9 +55,9 @@ GstFlowReturn gstreamer_send_new_sample_handler(GstElement *object, gpointer use
     if (buffer) {
       gst_buffer_extract_dup(buffer, 0, gst_buffer_get_size(buffer), &copy, &copy_size);
       
-      g_print("Audio buffer received: size=%zu duration=%lu\n", 
-              copy_size, 
-              GST_BUFFER_DURATION(buffer));
+      // g_print("Audio buffer received: size=%zu duration=%lu\n", 
+      //         copy_size, 
+      //         GST_BUFFER_DURATION(buffer));
       
       goHandlePipelineBuffer(copy, copy_size, GST_BUFFER_DURATION(buffer), s->pipelineId);
     }

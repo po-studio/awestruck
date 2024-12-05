@@ -51,8 +51,6 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 	appSession.Id = id
 
 	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
-	// audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s ! audioconvert ! audioresample", id)
-	// audioSrcConfig := fmt.Sprintf("audiotestsrc name=%s wave=sine freq=440 ! audioconvert ! audioresample", id) // THIS WORKS!
 	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s connect=0 ! audioconvert ! audioresample", id)
 
 	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio src")

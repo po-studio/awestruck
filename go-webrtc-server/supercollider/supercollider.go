@@ -1,10 +1,13 @@
 package synth
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +23,8 @@ type SuperColliderSynth struct {
 	Port           int
 	LogFile        *os.File
 	GStreamerPorts string
+	JackClientName string
+	outputReader   *io.PipeReader
 }
 
 const (
@@ -109,24 +114,30 @@ func (s *SuperColliderSynth) setupCmd() error {
 	}
 	s.LogFile = logFile
 
+	// Create a pipe for reading scsynth's output
+	pipeReader, pipeWriter := io.Pipe()
+	s.outputReader = pipeReader
+
 	s.Cmd = exec.Command(
 		"scsynth",
-		"-u", strconv.Itoa(s.Port), // UDP port for OSC communication (SuperCollider's Open Sound Control server)
-		"-a", "1024", // Maximum number of audio bus channels
-		"-i", "0", // Number of input bus channels (0 to disable audio input)
-		"-o", "2", // Number of output bus channels (e.g., 2 for stereo output)
-		"-b", "1026", // Number of audio buffer frames (used for sound synthesis)
-		"-R", "0", // Real-time memory lock (0 to disable, 1 to enable)
-		"-C", "0", // Hardware control bus channels (0 to disable control buses)
-		"-l", "1", // Maximum log level (1 for errors only, 3 for full logs)
+		"-u", strconv.Itoa(s.Port),
+		"-a", "1024",
+		"-i", "0",
+		"-o", "2",
+		"-b", "1026",
+		"-R", "0",
+		"-C", "0",
+		"-l", "1",
 	)
 
+	s.Cmd.Stdout = io.MultiWriter(logFile, pipeWriter)
+	s.Cmd.Stderr = io.MultiWriter(logFile, pipeWriter)
+
 	s.Cmd.Env = append(os.Environ(),
-		"SC_JACK_DEFAULT_OUTPUTS="+s.GStreamerPorts,
+		// "SC_JACK_DEFAULT_OUTPUTS="+s.GStreamerPorts,
 		"SC_SYNTHDEF_PATH="+utils.SCSynthDefDirectory,
 	)
-	s.Cmd.Stdout = s.LogFile
-	s.Cmd.Stderr = s.LogFile
+
 	return nil
 }
 
@@ -225,14 +236,34 @@ func (s *SuperColliderSynth) waitForSuperColliderReady() error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
+	// Read scsynth output to find JACK client name
+	scanner := bufio.NewScanner(s.outputReader)
+	clientNameChan := make(chan string, 1)
+
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, "JackDriver: client name is") {
+				parts := strings.Split(line, "'")
+				if len(parts) >= 2 {
+					clientName := parts[1]
+					clientNameChan <- clientName
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for both client name and server readiness
 	for {
 		select {
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for SuperCollider to initialize")
+		case clientName := <-clientNameChan:
+			s.JackClientName = clientName
 		case <-ticker.C:
-			// Send /status message to check if server is ready
 			msg := osc.NewMessage("/status")
-			if err := client.Send(msg); err == nil {
+			if err := client.Send(msg); err == nil && s.JackClientName != "" {
 				return nil
 			}
 		}
@@ -244,6 +275,9 @@ func (s *SuperColliderSynth) waitForJackPorts() error {
 	errChan := make(chan error)
 	timeout := time.After(10 * time.Second)
 
+	expectedPort1 := fmt.Sprintf("%s:out_1", s.JackClientName)
+	expectedPort2 := fmt.Sprintf("%s:out_2", s.JackClientName)
+
 	go func() {
 		for {
 			cmd := exec.Command("jack_lsp")
@@ -253,8 +287,8 @@ func (s *SuperColliderSynth) waitForJackPorts() error {
 				return
 			}
 
-			if strings.Contains(string(output), "SuperCollider:out_1") {
-				portsChan <- []string{"SuperCollider:out_1", "SuperCollider:out_2"}
+			if strings.Contains(string(output), expectedPort1) {
+				portsChan <- []string{expectedPort1, expectedPort2}
 				return
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -272,30 +306,30 @@ func (s *SuperColliderSynth) waitForJackPorts() error {
 }
 
 func (s *SuperColliderSynth) connectJackPorts(scPorts []string) error {
-	// First get current connections
 	cmd := exec.Command("jack_lsp", "-c")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to list JACK connections: %v", err)
 	}
-	connections := string(output)
+
+	// Match either "webrtc-server" or "webrtc-server-<number>"
+	re := regexp.MustCompile(`(webrtc-server(?:-\d+)?):in_` + regexp.QuoteMeta(s.Id))
+	matches := re.FindStringSubmatch(string(output))
+	if len(matches) < 2 {
+		log.Printf("Available JACK ports:\n%s", string(output))
+		return fmt.Errorf("could not find webrtc-server ports for session %s", s.Id)
+	}
+	webrtcClientName := matches[1]
+	log.Printf("Found WebRTC client name: %s", webrtcClientName)
 
 	for i, scPort := range scPorts {
-		gstPort := fmt.Sprintf("webrtc-server:in_%s_%d", s.Id, i+1)
-
-		// Check if connection already exists
-		connectionString := fmt.Sprintf("%s\n   %s", scPort, gstPort)
-		if strings.Contains(connections, connectionString) {
-			log.Printf("Ports already connected: %s -> %s", scPort, gstPort)
-			continue
-		}
-
-		// Try to connect the ports
-		connectCmd := exec.Command("jack_connect", scPort, gstPort)
-		if err := connectCmd.Run(); err != nil {
+		gstPort := fmt.Sprintf("%s:in_%s_%d", webrtcClientName, s.Id, i+1)
+		cmd = exec.Command("jack_connect", scPort, gstPort)
+		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to connect %s to %s: %v", scPort, gstPort, err)
 		}
 		log.Printf("Successfully connected %s to %s", scPort, gstPort)
 	}
+
 	return nil
 }
