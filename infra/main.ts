@@ -397,7 +397,7 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "ecs",
               },
-            },
+            }
           },
         ]),
       }
@@ -632,6 +632,24 @@ class AwestruckInfrastructure extends TerraformStack {
     new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
       role: coturnInstanceRole.name,
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+    });
+
+    new SecurityGroupRule(this, "ecs-stun-turn-ports", {
+      type: "ingress",
+      fromPort: 3478,
+      toPort: 3478,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: securityGroup.id,
+    });
+
+    new SecurityGroupRule(this, "ecs-turn-tls", {
+      type: "ingress",
+      fromPort: 5349,
+      toPort: 5349,
+      protocol: "tcp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: securityGroup.id,
     });
   }
 }

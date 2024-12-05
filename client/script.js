@@ -429,14 +429,14 @@ async function fetchTurnCredentials(retries = 3) {
       return [
         {
           urls: [
-            "turn:turn.awestruck.io:3478?transport=udp",
-            "turn:turn.awestruck.io:3478?transport=tcp",
-            "turns:turn.awestruck.io:5349?transport=tcp",
+            `turn:${credentials.hostname}:3478?transport=udp`,
+            `turn:${credentials.hostname}:3478?transport=tcp`,
+            `turns:${credentials.hostname}:5349?transport=tcp`
           ],
           username: credentials.username,
           credential: credentials.password,
-          credentialType: 'password',
-        },
+          credentialType: 'password'
+        }
       ];
     } catch (error) {
       console.error(`TURN credential fetch attempt ${i + 1}/${retries} failed:`, error);
