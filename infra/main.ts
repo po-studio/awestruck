@@ -383,7 +383,7 @@ class AwestruckInfrastructure extends TerraformStack {
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-R -d dummy" },
+              { name: "JACK_OPTIONS", value: "-r -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
             ],
             ulimits: [
