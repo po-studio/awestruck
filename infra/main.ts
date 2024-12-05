@@ -47,129 +47,74 @@ class AwestruckInfrastructure extends TerraformStack {
       );
     }
 
-    const userData = `
-    #!/bin/bash
-
+    const userData = `#!/bin/bash
     exec 1> >(logger -s -t $(basename $0)) 2>&1
-
-    log() {
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-    }
-
-    error_exit() {
-        log "ERROR: $1"
-        exit 1
-    }
-
-    log "Setting up TURN server..."
-
-    # Create required directories with proper permissions
-    mkdir -p /etc/coturn /var/log/coturn
-    chmod 755 /etc/coturn
-    chmod 755 /var/log/coturn
-
-    # Fetch IPs dynamically
-    LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-
-    if [[ -z "$LOCAL_IP" || -z "$PUBLIC_IP" ]]; then
-        error_exit "Failed to fetch instance IPs from metadata"
-    fi
-
-    log "Local IP: $LOCAL_IP, Public IP: $PUBLIC_IP"
 
     # Install necessary packages
     yum update -y
     amazon-linux-extras install epel -y
-    yum install -y coturn jq amazon-cloudwatch-agent || error_exit "Failed to install required packages"
+    yum install -y coturn amazon-cloudwatch-agent
 
-    # Fetch and configure SSL certificate
-    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} | jq -r '.Certificate' > /etc/coturn/turn.crt
-    aws acm get-certificate --certificate-arn "${sslCertificateArn}" --region ${awsRegion} | jq -r '.PrivateKey' > /etc/coturn/turn.key
+    # Create required directories
+    mkdir -p /etc/coturn /var/log/coturn
+    chmod 755 /etc/coturn /var/log/coturn
 
-    chmod 600 /etc/coturn/turn.key
-    chmod 644 /etc/coturn/turn.crt
+    # Get instance IPs
+    LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 
+    # Configure TURN server
     cat > /etc/coturn/turnserver.conf <<EOF
-    # User authentication
+    # Network settings
+    listening-port=3478
+    tls-listening-port=5349
+    listening-ip=$LOCAL_IP
+    relay-ip=$LOCAL_IP
+    external-ip=$PUBLIC_IP/$LOCAL_IP
+    min-port=49152
+    max-port=65535
+
+    # Authentication
     lt-cred-mech
     user=awestruck:${turnPassword}
     realm=turn.awestruck.io
 
-    # Listening ports
-    listening-port=3478
-    tls-listening-port=5349
-    min-port=10000
-    max-port=10100
-
-    # TLS certificates
-    cert=/etc/coturn/turn.crt
-    pkey=/etc/coturn/turn.key
-
-    # Network configuration
-    external-ip=$PUBLIC_IP/$LOCAL_IP
-    listening-ip=$LOCAL_IP
-    relay-ip=$LOCAL_IP
-
     # Logging
     log-file=/var/log/coturn/turnserver.log
     verbose
-    log-binding
 
-    # Security and WebRTC optimization
+    # Performance and security
     no-multicast-peers
     no-cli
     mobility
     fingerprint
-    use-auth-secret
-    static-auth-secret=${turnPassword}
-    realm=turn.awestruck.io
-    server-name=turn.awestruck.io
-
-    # Performance tuning
-    total-quota=100
-    bps-capacity=0
-    stale-nonce=0
-    no-tcp-relay
     EOF
 
     # Configure CloudWatch agent
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
-        "logs": {
-            "logs_collected": {
-                "files": {
-                    "collect_list": [
-                        {
-                            "file_path": "/var/log/coturn/turnserver.log",
-                            "log_group_name": "/coturn/turnserver",
-                            "log_stream_name": "{instance_id}",
-                            "timezone": "UTC"
-                        }
-                    ]
-                }
-            }
-        }
+      "logs": {
+          "logs_collected": {
+              "files": {
+                  "collect_list": [
+                      {
+                          "file_path": "/var/log/coturn/turnserver.log",
+                          "log_group_name": "/coturn/turnserver",
+                          "log_stream_name": "{instance_id}",
+                          "timezone": "UTC"
+                      }
+                  ]
+              }
+          }
+      }
     }
     EOF
 
     # Start services
     systemctl enable amazon-cloudwatch-agent
     systemctl start amazon-cloudwatch-agent
-
     systemctl enable coturn
     systemctl start coturn
-
-    # Verify services are running
-    if ! systemctl is-active --quiet coturn; then
-        error_exit "Coturn service failed to start"
-    fi
-
-    if ! systemctl is-active --quiet amazon-cloudwatch-agent; then
-        error_exit "CloudWatch agent failed to start"
-    fi
-
-    log "TURN server setup completed successfully"
     `;
 
     new AwsProvider(this, "AWS", {
@@ -475,8 +420,8 @@ class AwestruckInfrastructure extends TerraformStack {
     // Allow TURN relay ports
     new SecurityGroupRule(this, "coturn-relay-range", {
       type: "ingress",
-      fromPort: 10000,
-      toPort: 10100,
+      fromPort: 49152,
+      toPort: 65535,
       protocol: "udp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
@@ -672,8 +617,8 @@ class AwestruckInfrastructure extends TerraformStack {
     // Allow WebRTC media traffic
     new SecurityGroupRule(this, "webrtc-media-range", {
       type: "ingress",
-      fromPort: 10000,
-      toPort: 10100,
+      fromPort: 49152,
+      toPort: 65535,
       protocol: "udp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: securityGroup.id,
