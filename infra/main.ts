@@ -623,6 +623,26 @@ class AwestruckInfrastructure extends TerraformStack {
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: securityGroup.id,
     });
+
+    // Allow all outbound WebRTC traffic from ECS tasks
+    new SecurityGroupRule(this, "ecs-webrtc-egress", {
+      type: "egress",
+      fromPort: 49152,
+      toPort: 65535,
+      protocol: "udp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: securityGroup.id,
+    });
+
+    // Allow STUN/TURN egress
+    new SecurityGroupRule(this, "ecs-stun-turn-egress", {
+      type: "egress",
+      fromPort: 3478,
+      toPort: 3478,
+      protocol: "-1",  // Both TCP and UDP
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: securityGroup.id,
+    });
   }
 }
 
