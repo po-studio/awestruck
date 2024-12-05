@@ -109,7 +109,7 @@ class AwestruckInfrastructure extends TerraformStack {
     listening-port=3478
     tls-listening-port=5349
     min-port=10000
-    max-port=10010
+    max-port=65535
     lt-cred-mech
     listening-ip=0.0.0.0
     server-name=turn.awestruck.io
@@ -656,7 +656,7 @@ class AwestruckInfrastructure extends TerraformStack {
     new SecurityGroupRule(this, "webrtc-media-range", {
       type: "ingress",
       fromPort: 10000,
-      toPort: 10100,
+      toPort: 65535,
       protocol: "udp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: securityGroup.id,
