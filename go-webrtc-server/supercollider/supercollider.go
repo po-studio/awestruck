@@ -210,6 +210,9 @@ func (s *SuperColliderSynth) waitForSuperColliderReady() error {
 	go func() {
 		for scanner.Scan() {
 			line := scanner.Text()
+			// HACK: This is a hack to get the client name from the scsynth output
+			// TODO: Find a better way to do this, but scsynth doesn't offer a clean
+			// way to get this with JACK
 			if strings.Contains(line, "JackDriver: client name is") {
 				parts := strings.Split(line, "'")
 				if len(parts) >= 2 {
