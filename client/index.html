@@ -3,41 +3,70 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
     <title>Awestruck</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
     <style>
         :root {
-            --text-color: #00ff00;
-            --background-color: #000000;
-            --button-bg-color: transparent;
-            --button-text-color: #00ff00;
-            --button-hover-bg-color: #00ff00;
-            --button-hover-text-color: #000000;
-            --button-active-bg-color: #008800;
-            --button-disabled-bg-color: #003300;
-            --button-disconnect-bg-color: transparent;
-            --button-disconnect-hover-bg-color: #ff0000;
-            --button-disconnect-hover-text-color: #000000;
+            color-scheme: light dark;
+
+            /* System Colors */
+            --bg-color: #ffffff;
+            --text-color: #121212;
+            --accent-primary: #6366f1;    /* Indigo */
+            --accent-secondary: #ec4899;   /* Pink */
+            --accent-tertiary: #06b6d4;    /* Cyan */
+            --surface-color: rgba(0, 0, 0, 0.05);
+            --disconnect-color: #ef4444;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --text-color: #fafafa;
+                --surface-color: rgba(255, 255, 255, 0.05);
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
             color: var(--text-color);
-            background-color: var(--background-color);
+            background-color: var(--bg-color);
             font-family: 'JetBrains Mono', monospace;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
             line-height: 1.6;
+            padding: 20px;
         }
 
         h2 {
-            margin-bottom: 20px;
+            margin-bottom: 8px;
             text-align: center;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 2px;
+            font-size: clamp(1.5rem, 5vw, 2.5rem);
+            background: linear-gradient(45deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .description {
+            font-size: 0.9rem;
+            opacity: 0.7;
+            text-align: center;
+            margin-bottom: 24px;
         }
 
         .container {
@@ -45,50 +74,72 @@
             flex-direction: column;
             gap: 4vh;
             text-align: center;
-            padding: 20px;
-            border: 1px solid var(--text-color);
+            padding: clamp(20px, 5vw, 40px);
+            border: 1px solid var(--surface-color);
+            border-radius: 12px;
+            background-color: var(--surface-color);
+            width: min(90%, 600px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
         }
 
         button {
-            background-color: var(--button-bg-color);
-            color: var(--button-text-color);
-            border: 1px solid var(--button-text-color);
-            padding: 10px 20px;
+            background-color: transparent;
+            color: var(--accent-primary);
+            border: 2px solid var(--accent-primary);
+            padding: clamp(10px, 3vw, 20px);
             text-align: center;
             text-decoration: none;
             display: inline-block;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 16px;
+            font-size: clamp(14px, 4vw, 16px);
             margin: 4px 2px;
-            transition: all 0.3s ease;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             cursor: pointer;
             text-transform: uppercase;
             letter-spacing: 1px;
+            border-radius: 8px;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         button:hover {
-            background-color: var(--button-hover-bg-color);
-            color: var(--button-hover-text-color);
+            background-color: var(--accent-primary);
+            color: var(--bg-color);
+            transform: translateY(-2px);
         }
 
         button:active {
-            background-color: var(--button-active-bg-color);
+            transform: translateY(0);
         }
 
         button:disabled {
-            background-color: var(--button-disabled-bg-color);
-            border-color: var(--button-disabled-bg-color);
+            opacity: 0.5;
             cursor: not-allowed;
+            transform: none;
         }
 
         .button-disconnect {
-            border-color: #ff0000;
-            color: #ff0000;
+            border-color: var(--disconnect-color);
+            color: var(--disconnect-color);
         }
 
         .button-disconnect:hover {
-            background-color: var(--button-disconnect-hover-bg-color);
-            color: var(--button-disconnect-hover-text-color);
+            background-color: var(--disconnect-color);
+            color: var(--bg-color);
+        }
+
+        .button-text {
+            display: block;
+            font-weight: bold;
+        }
+
+        .button-description {
+            display: block;
+            font-size: 0.7em;
+            text-transform: none;
+            opacity: 0.8;
+            margin-top: 4px;
         }
 
         /* Add a blinking cursor effect */
@@ -100,13 +151,34 @@
         @keyframes blink {
             50% { opacity: 0; }
         }
+
+        /* Media Queries */
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+            
+            .container {
+                padding: 15px;
+                gap: 3vh;
+            }
+            
+            button {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 
 <body>
     <div id="container" class="container">
-        <h2>Awestruck</h2>
-        <button id="toggleConnection">Stream Synth</button>
+        <div>
+            <h2>Awestruck</h2>
+            <p class="description">Real-time algorithmic synthesis streamed directly to your browser</p>
+        </div>
+        <button id="toggleConnection">
+            <span class="button-text">Generate New Synth</span>
+        </button>
     </div>
     <script src="script.js"></script>
 </body>

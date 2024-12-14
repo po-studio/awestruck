@@ -43,6 +43,7 @@ func getSessionIDFromHeader(r *http.Request) (string, bool) {
 }
 
 func (sm *SessionManager) CreateSession(id string) *AppSession {
+	log.Printf("[SESSION] Creating new session: %s", id)
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
@@ -50,13 +51,16 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 	appSession.Id = id
 
 	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
-	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s ! audioconvert ! audioresample", id)
+	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s connect=0 ! audioconvert ! audioresample", id)
 
 	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio src")
 	appSession.Synth = synth.NewSuperColliderSynth(id)
 
+	log.Printf("[AUDIO] Configuring audio pipeline for session %s: %s", id, audioSrcConfig)
+
 	sm.Sessions[id] = appSession
 
+	log.Printf("[SESSION] Session %s created successfully with audio source and synth", id)
 	return appSession
 }
 
