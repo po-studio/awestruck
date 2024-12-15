@@ -245,7 +245,7 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          fromPort: 10000,
+          fromPort: 10000, // change to 49152? see min-port
           toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
@@ -400,7 +400,7 @@ class AwestruckInfrastructure extends TerraformStack {
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-r -d dummy" },
+              { name: "JACK_OPTIONS", value: "-R -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
             ],
             ulimits: [

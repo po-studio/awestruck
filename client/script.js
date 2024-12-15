@@ -24,13 +24,21 @@ const TURN_CONFIG = {
   development: {
     iceServers: [
       {
-        urls: ["turn:localhost:3478"],
+        urls: [
+          "turn:localhost:3478?transport=udp",
+          "turn:localhost:3478?transport=tcp"
+        ],
         username: "awestruck",
         credential: "password",
         credentialType: "password",
-      },
+        realm: "localhost"
+      }
     ],
-    iceTransportPolicy: 'relay',
+    // iceTransportPolicy: 'relay',
+    // NB: for local dev, do not use relay
+    // Docker networking can interfere with NAT traversal when forcing relay
+    // ideally local would mirror deployed environments more closely,
+    // but 
     iceCandidatePoolSize: 1,
   },
   production: {
@@ -59,6 +67,8 @@ document.getElementById('toggleConnection').addEventListener('click', async func
     console.log("Stream starting...");
     
     const config = isProduction ? TURN_CONFIG.production : TURN_CONFIG.development;
+
+    console.log("Using config:", config);
 
     await setupPeerConnection(config);
     // Further connection logic like offer creation/negotiation will happen on negotiationneeded
@@ -140,6 +150,25 @@ function onConnectionStateChange() {
   };
   console.log('Connection state change:', states);
 
+  // Add detailed state logging
+  if (pc.connectionState === 'connected') {
+    console.log('Connection established, checking media tracks...');
+    pc.getReceivers().forEach((receiver) => {
+      const track = receiver.track;
+      console.log('Track details:', {
+        kind: track.kind,
+        state: track.readyState,
+        enabled: track.enabled,
+        muted: track.muted,
+        id: track.id
+      });
+      
+      receiver.getStats().then(stats => {
+        console.log('Receiver stats:', stats);
+      });
+    });
+  }
+
   switch (pc.connectionState) {
     case 'connected':
       console.log('Connection established, checking media tracks...');
@@ -173,6 +202,42 @@ function onConnectionStateChange() {
 
 function onIceConnectionStateChange() {
   console.log('ICE Connection State:', pc.iceConnectionState);
+  
+  if (pc.iceConnectionState === 'checking') {
+    // Set a timeout for the checking state
+    setTimeout(() => {
+      if (pc.iceConnectionState === 'checking') {
+        console.warn('ICE checking timeout - forcing reconnection');
+        handleDisconnect();
+        initConnection();
+      }
+    }, 10000); // 10 second timeout
+  }
+  
+  if (pc.iceConnectionState === 'failed') {
+    console.error('ICE Connection failed - gathering diagnostic information');
+    logLastKnownGoodConnection();
+    pc.getStats().then(stats => {
+      console.log('Final ICE stats before failure:', stats);
+    });
+    
+    // Immediate cleanup for localhost/development
+    if (!isProduction) {
+      console.log('Development environment - immediate cleanup on failure');
+      handleDisconnect();
+      updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
+      return;
+    }
+    
+    // Production can try ICE restart
+    pc.restartIce();
+    setTimeout(() => {
+      if (pc.iceConnectionState === 'failed') {
+        handleDisconnect();
+        updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
+      }
+    }, 5000);
+  }
 }
 
 function onIceCandidate(event) {
@@ -180,25 +245,42 @@ function onIceCandidate(event) {
     const candidateStr = event.candidate.candidate;
     const parts = candidateStr.split(' ');
     const type = parts[7];
-
-    console.log("ICE candidate details:", {
-      type,
-      protocol: parts[2],
-      ip: parts[4],
-      port: parts[5],
-      isFiltered: isProduction && type !== 'relay',
-      fullCandidate: candidateStr,
-    });
-    console.log("ICE server configuration:", pc.getConfiguration());
+    const protocol = parts[2].toLowerCase();
+    const ip = parts[4];
     
-    navigator.mediaDevices.enumerateDevices()
-      .then(devices => console.log("Local network interfaces:", devices));
-
-    if (isProduction && type !== 'relay') {
-      console.warn('Filtered non-relay candidate');
+    const candidateInfo = {
+      type,
+      protocol,
+      ip,
+      port: parts[5],
+      priority: event.candidate.priority,
+      fullCandidate: candidateStr,
+    };
+    
+    console.log("ICE candidate details:", candidateInfo);
+    
+    // Only allow TURN/relay candidates
+    if (type !== 'relay') {
+      console.warn('Filtered non-relay candidate:', candidateInfo);
       return;
     }
-
+    
+    // Special handling for localhost development
+    if (!isProduction && ip === '127.0.0.1') {
+      console.log('Accepting localhost relay candidate');
+      pendingIceCandidates.push(event.candidate);
+      sendIceCandidate(event.candidate);
+      return;
+    }
+    
+    // For all other cases, prefer UDP over TCP
+    if (protocol === 'tcp' && pendingIceCandidates.some(c => 
+      c.candidate.includes('relay') && c.candidate.includes('udp'))) {
+      console.log('Skipping TCP relay candidate as UDP is available');
+      return;
+    }
+    
+    pendingIceCandidates.push(event.candidate);
     sendIceCandidate(event.candidate);
   }
 }
@@ -233,49 +315,84 @@ function onTrack(event) {
 }
 
 function setupAudioTrack(track) {
-  console.log('Audio track received:', track);
+  try {
+    console.log('Audio track received:', track);
+    console.log('Track Settings:', track.getSettings());
+    
+    // Create audio context with fallback
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContext({
+      latencyHint: 'interactive',
+      sampleRate: 48000,
+    });
 
-  // Create audio context with fallback
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  const audioContext = new AudioContext({
-    latencyHint: 'interactive',
-    sampleRate: 48000,
-  });
+    // Log audio context state immediately after creation
+    console.log('Audio Context State:', audioContext.state);
 
-  // Create and configure audio element
-  const audioElement = document.createElement('audio');
-  audioElement.srcObject = new MediaStream([track]);
-  audioElement.autoplay = true;
-  audioElement.volume = 1.0;
+    // Create and configure audio element
+    const audioElement = document.createElement('audio');
+    audioElement.srcObject = new MediaStream([track]);
+    audioElement.autoplay = true;
+    audioElement.volume = 1.0;
 
-  // Create audio graph
-  const source = audioContext.createMediaStreamSource(new MediaStream([track]));
-  const gainNode = audioContext.createGain();
-  const analyser = audioContext.createAnalyser();
-  analyser.fftSize = 2048;
+    // Log audio element state
+    console.log('Audio Element Ready State:', audioElement.readyState);
+    console.log('Track Settings:', track.getSettings());
 
-  source.connect(gainNode);
-  gainNode.connect(analyser);
-  analyser.connect(audioContext.destination);
+    // Add event listeners for debugging
+    audioElement.onplay = () => console.log('Audio playback started');
+    audioElement.onpause = () => console.log('Audio playback paused');
+    audioElement.onerror = (e) => console.error('Audio element error:', e);
+    audioElement.onwaiting = () => console.log('Audio buffering...');
+    audioElement.onstalled = () => console.log('Audio stalled');
 
-  console.log('Audio Context State:', audioContext.state);
-  console.log('Audio Element Ready State:', audioElement.readyState);
-  console.log('Track Settings:', track.getSettings());
+    // Create audio graph
+    const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+    const gainNode = audioContext.createGain();
+    const analyser = audioContext.createAnalyser();
+    
+    source.connect(analyser);
+    analyser.connect(gainNode);
+    gainNode.connect(audioContext.destination);
 
-  audioElement.onerror = (e) => console.error('Audio element error:', e);
-  audioElement.onplay = () => {
-    console.log('Audio playback started');
-    audioContext.resume().catch((e) => console.error('Failed to resume audio context:', e));
-  };
+    // Start monitoring audio levels
+    startAudioLevelMonitoring(analyser, track, audioElement);
 
-  monitorAudioLevels(analyser, track, audioElement);
+  } catch (error) {
+    console.error('Error in setupAudioTrack:', error);
+    // Log detailed information about the track state
+    console.log('Track state at error:', {
+      enabled: track.enabled,
+      muted: track.muted,
+      readyState: track.readyState,
+      id: track.id
+    });
+  }
+}
 
-  const capabilities = track.getCapabilities();
-  console.log('Audio track capabilities:', capabilities);
-
-  monitorTrackStats(track);
-
-  document.body.appendChild(audioElement);
+function startAudioLevelMonitoring(analyser, track, audioElement) {
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  audioLevelsInterval = setInterval(() => {
+    try {
+      analyser.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      console.log('Audio RMS level:', average.toFixed(6));
+      console.log('Track state:', {
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState
+      });
+      console.log('Audio element state:', {
+        currentTime: audioElement.currentTime,
+        paused: audioElement.paused,
+        volume: audioElement.volume,
+        muted: audioElement.muted
+      });
+    } catch (error) {
+      console.error('Error monitoring audio levels:', error);
+      clearInterval(audioLevelsInterval);
+    }
+  }, 1000);
 }
 
 async function sendOffer(offer) {
@@ -418,46 +535,46 @@ async function stopSynthesis() {
   }
 }
 
-async function fetchTurnCredentials(retries = 3) {
-  if (!isProduction) {
-    // Not production, just return development creds
-    return TURN_CONFIG.development.iceServers;
-  }
+// async function fetchTurnCredentials(retries = 3) {
+//   if (!isProduction) {
+//     // Not production, just return development creds
+//     return TURN_CONFIG.development.iceServers;
+//   }
 
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await fetch('/turn-credentials', {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-ID': sessionID,
-        },
-      });
+//   for (let i = 0; i < retries; i++) {
+//     try {
+//       const response = await fetch('/turn-credentials', {
+//         headers: {
+//           'Content-Type': 'application/json',
+//           'X-Session-ID': sessionID,
+//         },
+//       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch TURN credentials: ${response.statusText}`);
-      }
+//       if (!response.ok) {
+//         throw new Error(`Failed to fetch TURN credentials: ${response.statusText}`);
+//       }
 
-      const credentials = await response.json();
-      console.log('TURN credentials received:', credentials);
+//       const credentials = await response.json();
+//       console.log('TURN credentials received:', credentials);
 
-      return [
-        {
-          urls: [
-            `turn:${credentials.hostname}:3478?transport=udp`,
-            `turn:${credentials.hostname}:3478?transport=tcp`,
-          ],
-          username: credentials.username,
-          credential: credentials.password,
-          credentialType: 'password'
-        }
-      ];
-    } catch (error) {
-      console.error(`TURN credential fetch attempt ${i + 1}/${retries} failed:`, error);
-      if (i === retries - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
-    }
-  }
-}
+//       return [
+//         {
+//           urls: [
+//             `turn:${credentials.hostname}:3478?transport=udp`,
+//             `turn:${credentials.hostname}:3478?transport=tcp`,
+//           ],
+//           username: credentials.username,
+//           credential: credentials.password,
+//           credentialType: 'password'
+//         }
+//       ];
+//     } catch (error) {
+//       console.error(`TURN credential fetch attempt ${i + 1}/${retries} failed:`, error);
+//       if (i === retries - 1) throw error;
+//       await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
+//     }
+//   }
+// }
 
 // Monitoring and logging helpers
 function startConnectionQualityMonitoring() {
@@ -571,4 +688,3 @@ function monitorTrackStats(track) {
     });
   }, 1000);
 }
-

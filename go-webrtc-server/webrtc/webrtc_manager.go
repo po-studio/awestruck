@@ -380,8 +380,8 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	)
 
 	config := webrtc.Configuration{
-		ICEServers:           iceServers,
-		ICETransportPolicy:   webrtc.ICETransportPolicyRelay, // Force TURN relay
+		ICEServers: iceServers,
+		// ICETransportPolicy:   webrtc.ICETransportPolicyRelay, // Force TURN relay ONLY for deployed environments
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 	}
