@@ -536,47 +536,6 @@ async function stopSynthesis() {
   }
 }
 
-// async function fetchTurnCredentials(retries = 3) {
-//   if (!isProduction) {
-//     // Not production, just return development creds
-//     return TURN_CONFIG.development.iceServers;
-//   }
-
-//   for (let i = 0; i < retries; i++) {
-//     try {
-//       const response = await fetch('/turn-credentials', {
-//         headers: {
-//           'Content-Type': 'application/json',
-//           'X-Session-ID': sessionID,
-//         },
-//       });
-
-//       if (!response.ok) {
-//         throw new Error(`Failed to fetch TURN credentials: ${response.statusText}`);
-//       }
-
-//       const credentials = await response.json();
-//       console.log('TURN credentials received:', credentials);
-
-//       return [
-//         {
-//           urls: [
-//             `turn:${credentials.hostname}:3478?transport=udp`,
-//             `turn:${credentials.hostname}:3478?transport=tcp`,
-//           ],
-//           username: credentials.username,
-//           credential: credentials.password,
-//           credentialType: 'password'
-//         }
-//       ];
-//     } catch (error) {
-//       console.error(`TURN credential fetch attempt ${i + 1}/${retries} failed:`, error);
-//       if (i === retries - 1) throw error;
-//       await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
-//     }
-//   }
-// }
-
 // Monitoring and logging helpers
 function startConnectionQualityMonitoring() {
   clearInterval(qualityMonitorInterval);
