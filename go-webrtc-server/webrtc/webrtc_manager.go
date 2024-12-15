@@ -397,11 +397,13 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		webrtc.WithMediaEngine(m),
 	)
 
+	// Force TURN relay ONLY for deployed environments
+	// TODO set this policy based on environment config
 	config := webrtc.Configuration{
 		ICEServers:           iceServers,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
-		// ICETransportPolicy:   webrtc.ICETransportPolicyRelay, // Force TURN relay ONLY for deployed environments
+		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
 	}
 
 	pc, err := api.NewPeerConnection(config)
