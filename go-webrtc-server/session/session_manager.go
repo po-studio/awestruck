@@ -55,8 +55,13 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 
 	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio src")
 	appSession.Synth = synth.NewSuperColliderSynth(id)
+	appSession.Synth.SetOnClientName(func(clientName string) {
+		appSession.JackClientName = clientName
+	})
 
 	log.Printf("[AUDIO] Configuring audio pipeline for session %s: %s", id, audioSrcConfig)
+
+	appSession.monitorClosed.Store(false)
 
 	sm.Sessions[id] = appSession
 

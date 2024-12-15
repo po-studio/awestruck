@@ -25,6 +25,7 @@ type SuperColliderSynth struct {
 	GStreamerPorts string
 	JackClientName string
 	outputReader   *io.PipeReader
+	OnClientName   func(string)
 }
 
 const (
@@ -143,8 +144,8 @@ func (s *SuperColliderSynth) setupCmd() error {
 // Stop stops the SuperCollider server gracefully
 func (s *SuperColliderSynth) Stop() error {
 	// First disconnect JACK ports
-	if err := jack.DisconnectJackPorts(s.Id); err != nil {
-		return fmt.Errorf("failed to disconnect JACK ports: %w", err)
+	if err := jack.DisconnectJackPorts(s.Id, s.JackClientName); err != nil {
+		log.Printf("Warning: error disconnecting JACK ports: %v", err)
 	}
 
 	// Send quit message to scsynth
@@ -231,6 +232,9 @@ func (s *SuperColliderSynth) waitForSuperColliderReady() error {
 			return fmt.Errorf("timeout waiting for SuperCollider to initialize")
 		case clientName := <-clientNameChan:
 			s.JackClientName = clientName
+			if s.OnClientName != nil {
+				s.OnClientName(clientName)
+			}
 		case <-ticker.C:
 			msg := osc.NewMessage("/status")
 			if err := client.Send(msg); err == nil && s.JackClientName != "" {
@@ -302,4 +306,8 @@ func (s *SuperColliderSynth) connectJackPorts(scPorts []string) error {
 	}
 
 	return nil
+}
+
+func (s *SuperColliderSynth) SetOnClientName(callback func(string)) {
+	s.OnClientName = callback
 }

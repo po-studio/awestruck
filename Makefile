@@ -10,7 +10,7 @@ AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output t
 ECR_REPO = po-studio/awestruck
 ECR_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 
-.PHONY: build network up-turn down-turn up down rshell shell aws-login aws-push deploy-all
+.PHONY: build up-turn down-turn up down rshell shell aws-login aws-push deploy-all
 
 # ---------------------------------------
 # local dev only
@@ -19,13 +19,16 @@ down:
 	docker-compose down --remove-orphans
 
 up:
-	docker-compose up --build
+	docker-compose up
+
+upb:
+	docker compose up --build
 # ---------------------------------------
 
 # ---------------------------------------
 # deployment build, push, and deploy
 # ---------------------------------------
-build: network
+build:
 	@if ! docker buildx inspect mybuilder > /dev/null 2>&1; then \
 		docker buildx create --use --name mybuilder; \
 	else \

@@ -245,7 +245,7 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          fromPort: 10000,
+          fromPort: 10000, // change to 49152? see min-port
           toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
@@ -375,8 +375,8 @@ class AwestruckInfrastructure extends TerraformStack {
       "awestruck-task-definition",
       {
         family: "go-webrtc-server-arm64",
-        cpu: "256",
-        memory: "512",
+        cpu: "1024",
+        memory: "2048",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
         executionRoleArn: ecsTaskExecutionRole.arn,
@@ -399,13 +399,18 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
+              { name: "ENVIRONMENT", value: "production" },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-r -d dummy" },
+              { name: "JACK_OPTIONS", value: "-R -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
+              { name: "GST_DEBUG", value: "2" },
+              { name: "JACK_BUFFER_SIZE", value: "2048" },
+              { name: "JACK_PERIODS", value: "3" },
+              { name: "GST_BUFFER_SIZE", value: "4194304" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
-              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -415,7 +420,7 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-stream-prefix": "ecs",
               },
             }
-          },
+          }
         ]),
       }
     );
