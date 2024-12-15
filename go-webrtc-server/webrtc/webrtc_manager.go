@@ -221,19 +221,26 @@ func startSynthEngine(appSession *session.AppSession) error {
 }
 
 func MonitorAudioPipeline(appSession *session.AppSession) {
+	appSession.MonitorDone = make(chan struct{})
+
 	// Monitor JACK connections
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			cmd := exec.Command("jack_lsp", "-c")
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				log.Printf("[%s] Error monitoring JACK: %v", appSession.Id, err)
-				continue
+		for {
+			select {
+			case <-appSession.MonitorDone:
+				return
+			case <-ticker.C:
+				cmd := exec.Command("jack_lsp", "-c")
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("[%s] Error monitoring JACK: %v", appSession.Id, err)
+					continue
+				}
+				log.Printf("[%s] JACK Connections:\n%s", appSession.Id, string(output))
 			}
-			log.Printf("[%s] JACK Connections:\n%s", appSession.Id, string(output))
 		}
 	}()
 
@@ -298,23 +305,34 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 	}
 	appSession.PeerConnection = peerConnection
 	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("ICE Connection State has changed: %s\n", state.String())
+		log.Printf("[ICE] Connection state changed to %s for session %s", state.String(), appSession.Id)
 
 		if appSession.PeerConnection != nil {
 			log.Printf("Signaling State: %s\n", appSession.PeerConnection.SignalingState().String())
 			log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
 		}
 
-		if state == webrtc.ICEConnectionStateFailed || state == webrtc.ICEConnectionStateDisconnected {
-			log.Printf("[ICE][ERROR] Connection %s for session %s, initiating cleanup...",
-				state.String(), appSession.Id)
-
+		switch state {
+		case webrtc.ICEConnectionStateFailed:
+			// Complete failure - clean up everything
+			log.Printf("[ICE][ERROR] Connection failed for session %s, initiating cleanup...", appSession.Id)
 			if appSession.PeerConnection != nil {
 				stats := appSession.PeerConnection.GetStats()
-				log.Printf("[ICE] Last known ICE stats for session %s: %+v",
-					appSession.Id, stats)
+				log.Printf("[ICE] Last known ICE stats for session %s: %+v", appSession.Id, stats)
 			}
 			cleanUpSession(appSession)
+
+		case webrtc.ICEConnectionStateDisconnected:
+			// Temporary disconnection - wait for potential reconnect
+			log.Printf("[ICE] Connection disconnected for session %s, waiting for reconnection...", appSession.Id)
+			// Start a timer to cleanup only if disconnection persists
+			time.AfterFunc(30*time.Second, func() {
+				if appSession.PeerConnection != nil &&
+					appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateDisconnected {
+					log.Printf("[ICE] Disconnection timeout for session %s, cleaning up", appSession.Id)
+					cleanUpSession(appSession)
+				}
+			})
 		}
 	})
 
@@ -380,10 +398,10 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	)
 
 	config := webrtc.Configuration{
-		ICEServers: iceServers,
-		// ICETransportPolicy:   webrtc.ICETransportPolicyRelay, // Force TURN relay ONLY for deployed environments
+		ICEServers:           iceServers,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
+		// ICETransportPolicy:   webrtc.ICETransportPolicyRelay, // Force TURN relay ONLY for deployed environments
 	}
 
 	pc, err := api.NewPeerConnection(config)

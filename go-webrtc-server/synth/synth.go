@@ -9,6 +9,7 @@ type Synth interface {
 	Stop() error
 	GetPort() int
 	SendPlayMessage()
+	SetOnClientName(func(string))
 }
 
 func NewSuperColliderSynth(id string) *sc.SuperColliderSynth {

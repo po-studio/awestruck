@@ -38,7 +38,8 @@ const TURN_CONFIG = {
     // NB: for local dev, do not use relay
     // Docker networking can interfere with NAT traversal when forcing relay
     // ideally local would mirror deployed environments more closely,
-    // but 
+    // but this is a good workaround for now
+    iceTransportPolicy: 'relay',
     iceCandidatePoolSize: 1,
   },
   production: {
