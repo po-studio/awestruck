@@ -403,16 +403,13 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_OPTIONS", value: "-R -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
               { name: "GST_DEBUG", value: "2" },
-              { name: "JACK_PRIORITY", value: "89" },
-              { name: "JACK_BUFFER_SIZE", value: "1024" },
-              { name: "JACK_PERIODS", value: "2" },
-              { name: "GST_BUFFER_SIZE", value: "2097152" },
+              { name: "JACK_BUFFER_SIZE", value: "2048" },
+              { name: "JACK_PERIODS", value: "3" },
+              { name: "GST_BUFFER_SIZE", value: "4194304" }
             ],
             ulimits: [
-              { name: "rtprio", softLimit: 99, hardLimit: 99 },
               { name: "memlock", softLimit: -1, hardLimit: -1 },
-              { name: "nice", softLimit: -20, hardLimit: -20 },
-              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -421,13 +418,8 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "ecs",
               },
-            },
-            linuxParameters: {
-              capabilities: {
-                add: ["SYS_NICE"],  // Allow real-time priority
-              },
-            },
-          },
+            }
+          }
         ]),
       }
     );
