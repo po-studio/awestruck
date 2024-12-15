@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,8 +10,15 @@ import (
 	"github.com/po-studio/go-webrtc-server/routes"
 )
 
+var (
+	environment = os.Getenv("ENVIRONMENT")
+)
+
 func main() {
-	flag.Parse()
+	if environment == "" {
+		environment = "development" // Default to development if not set
+	}
+	log.Printf("Starting server in %s environment", environment)
 
 	// Graceful shutdown
 	signalChannel := make(chan os.Signal, 1)

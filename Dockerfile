@@ -78,6 +78,7 @@ ENV GST_DEBUG=4 \
     JACK_NO_AUDIO_RESERVATION=1 \
     JACK_NO_START_SERVER=1 \
     XDG_RUNTIME_DIR=/tmp/runtime-appuser \
-    JACK_SAMPLE_RATE=48000
+    JACK_SAMPLE_RATE=48000 \
+    ENVIRONMENT=development
 
 CMD ["./startup.sh"]
