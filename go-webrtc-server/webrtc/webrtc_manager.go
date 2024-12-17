@@ -7,13 +7,13 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pion/webrtc/v3"
+	awestruckConfig "github.com/po-studio/go-webrtc-server/config"
 	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
 	"github.com/po-studio/go-webrtc-server/internal/signal"
 	"github.com/po-studio/go-webrtc-server/session"
@@ -405,7 +405,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	}
 
 	// Only force TURN relay in production/staging environments
-	if os.Getenv("ENVIRONMENT") != "development" {
+	if awestruckConfig.Get().Environment != "development" {
 		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
 	}
 

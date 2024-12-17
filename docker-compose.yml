@@ -25,6 +25,8 @@ services:
     container_name: go-webrtc-server-arm64
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./supercollider/src:/app/supercollider/src
+      - ./supercollider/synthdefs:/app/supercollider/synthdefs
     network_mode: host
     shm_size: 1g
     security_opt:
@@ -44,6 +46,8 @@ services:
       - JACK_SAMPLE_RATE=48000
       - GST_DEBUG=2
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
+      - ENVIRONMENT=development
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
       - coturn
     cap_add:

@@ -1,4 +1,4 @@
-package synth
+package supercollider
 
 import (
 	"bufio"
