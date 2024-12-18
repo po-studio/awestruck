@@ -13,11 +13,6 @@ SynthDef.new("openai-o1-preview-2024_12_18_07_08_46", { |out=0, amp=0.5|
   // Scale and base frequency
   scale = [0, 2, 3, 5, 7, 8, 10];
   baseFreq = 220;
-  freq1 = baseFreq * (2 ** (degreeSeq1 / 12)) + lfo1;
-  freq2 = baseFreq * (2 ** (degreeSeq2 / 12)) + lfo2;
-  freq3 = baseFreq * (2 ** (degreeSeq3 / 12)) + lfo3;
-  freqMel = baseFreq * (2 ** (degreeSeqMel / 12));
-  freqRhythmic = baseFreq * (2 ** (degreeSeqRhythmic / 12));
   
   // LFOs for modulation
   lfo1 = LFNoise1.kr(0.05).range(-5, 5);
@@ -30,15 +25,28 @@ SynthDef.new("openai-o1-preview-2024_12_18_07_08_46", { |out=0, amp=0.5|
   lfoAmp2 = LFNoise1.kr(0.12).range(0.2, 0.8);
   timbreMod = SinOsc.kr(0.05).range(0.5, 1);
   modIndex = LFNoise1.kr(0.04).range(1, 5);
-  modOsc1 = SinOsc.kr(freq1 * modIndex);
-  modOsc2 = SinOsc.kr(freq2 * modIndex);
   
   // Degree sequences for oscillators
   degreeSeq1 = Demand.kr(Impulse.kr(0.1), 0, Dshuf(scale, inf));
+  degreeSeq2 = Demand.kr(Impulse.kr(0.08), 0, Dshuf(scale, inf));
+  degreeSeq3 = Demand.kr(Impulse.kr(0.12), 0, Dshuf(scale, inf));
+  degreeSeqMel = Demand.kr(Impulse.kr(0.05), 0, Dseq(scale, inf));
+  degreeSeqRhythmic = Demand.kr(Impulse.kr(1), 0, Dshuf(scale, inf));
+  
+  // Calculate frequencies from degrees
+  freq1 = baseFreq * (2 ** (degreeSeq1 / 12)) + lfo1;
+  freq2 = baseFreq * (2 ** (degreeSeq2 / 12)) + lfo2;
+  freq3 = baseFreq * (2 ** (degreeSeq3 / 12)) + lfo3;
+  freqMel = baseFreq * (2 ** (degreeSeqMel / 12));
+  freqRhythmic = baseFreq * (2 ** (degreeSeqRhythmic / 12));
+  
+  modOsc1 = SinOsc.kr(freq1 * modIndex);
+  modOsc2 = SinOsc.kr(freq2 * modIndex);
+  
+  // Main oscillators
   osc1 = SinOsc.ar(freq1 + modOsc1, 0, lfoAmp1) * timbreMod;
   osc1 = Pan2.ar(osc1, lfoPan1);
   
-  degreeSeq2 = Demand.kr(Impulse.kr(0.08), 0, Dshuf(scale, inf));
   osc2 = Saw.ar(freq2 + modOsc2, lfoAmp2) * (1 - timbreMod);
   osc2 = Pan2.ar(osc2, lfoPan2);
   
