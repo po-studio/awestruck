@@ -57,42 +57,46 @@ func GenerateSynthCode(provider, prompt, model string) (string, error) {
 func generateWithOpenAI(userPrompt, model string) (string, error) {
 	log.Printf("[OPENAI] Starting OpenAI code generation with model=%s", model)
 	key := config.Get().OpenAIAPIKey
-	mainPrompt := fmt.Sprintf(`
-		Generate a single SuperCollider SynthDef that produces a continuously evolving, otherworldly sonic environment reminiscent of a complex handcrafted patch. The result should feel organic, layered, and immersive, with an intricate interplay of textures that evolve unpredictably over time.
 
-		Requirements and guidance:
-		- The synth should run continuously and evolve without external control messages.
-		- Use multiple sources: a mixture of tonal elements (e.g., saw or sine waves), noisy textures (e.g., filtered noise), and percussive impulses.
-		- Incorporate multiple layers of random triggers, pitch shifts, frequency modulation, and resonant filtering to achieve evolving complexity.
-		- Employ LocalIn and LocalOut to create feedback loops, feeding signals back into themselves to build richness.
-		- Utilize dynamic filtering (RLPF, HPF, BPF, etc.) modulated by slow-moving random LFOs, as well as amplitude tracking or pitch-tracking as nonlinear modulation sources.
-		- Include pitch shifting (PitchShift.ar) and nonlinear waveshaping (e.g., tanh) to add harmonic richness and unpredictability.
-		- Introduce various reverbs (GVerb, FreeVerb) and delay-based effects (CombL, CombC, DelayL) to produce a sense of depth and space. Large reverb times and spatialization (Splay, Rotate2, etc.) are encouraged.
-		- Gradually bring in new elements over time with EnvGen, Line.kr, Demand UGens, or low-frequency triggers that reveal or hide layers as it evolves.
-		- Keep amplitude safe: consider using Limiter or gentle amplitude envelopes, and ensure the final output does not exceed safe levels.
-		- Aim for about 100-200 lines of code. Don’t worry about exact code length; just ensure enough complexity.
-		- The final signal should be assigned to a variable called ‘sound’.
-		- Do not include SuperCollider SynthDef wrapper code, comments, or markdown formatting in the final output – only the raw code that would go inside the SynthDef where ‘sound’ is defined.
+	if userPrompt == "" {
+		userPrompt = `
+		Generate a single SuperCollider SynthDef that creates a continuously evolving, musical ambient environment, rather than just sound effects. The result should evoke a lush ambient track: layered, harmonic pads, gentle melodic fragments, and soft, evolving textures that feel like "music" rather than random noise.
+		`
+	}
 
-		Generate ONLY the core SuperCollider synthesis code that will be interpolated into this template:
+	mainPrompt := fmt.Sprintf(`	
+	USER PROMPT START
+	%s
+	USER PROMPT END
 
-		SynthDef.new("name", { |out=0, amp=0.5|
-			var sound;
-			// YOUR CODE HERE - Define 'sound' variable
-			Out.ar(out, sound * amp);
-		}).writeDefFile("/app/supercollider/synthdefs");
+	Requirements and guidance:
+	- Establish a tonal center, for example A minor, and quantize all pitched elements to notes in that scale (A, B, C, D, E, F, G) or their harmonic variants.
+	- Use pitched oscillators (Sine, Saw) that evolve slowly, occasionally gliding or shifting, but staying within a musical scale.
+	- Include a gentle melodic element that emerges over time. Use Demand UGens or slowly changing LFOs to pick pitches from a set scale.
+	- Keep noise-based textures subtle, using them as soft, filtered washes that support the harmonic content rather than dominate it.
+	- Introduce very subtle rhythmic pulses—delicate bell-like tones or soft plucked sounds—that feel organic and not like abrupt sound effects.
+	- Use filtering and reverbs/delays to create a sense of spaciousness, but keep them musical and not overly chaotic.
+	- Consider slow changes in timbre and spectral emphasis rather than wild, unpredictable modulations.
+	- Limit overall distortion or harsh nonlinearity; any waveshaping should be gentle and maintain a musical feel.
+	- Use amplitude management (Limiter, EnvGen) to keep levels safe and balanced at around 0.5 max amplitude.
+	- Aim for about 300 lines of code to allow enough complexity for evolving musical structure.
+	- Declare all variables at the start and assign the final sound to 'sound'. Do not declare any variables in the template more than once.
 
-		Requirements:
-		1. Declare all variables at the start
-		2. Final output must be assigned to 'sound' variable
-		3. Keep amplitude levels safe (below 1.0)
-		4. Use proper audio (ar) and control (kr) rates
-		5. DO NOT include markdown code block markers or comments
+	Generate ONLY the core SuperCollider synthesis code that will be interpolated into this template:
 
-		Return ONLY the raw SuperCollider code that would replace // YOUR CODE HERE. No comments, no SynthDef wrapper, no markdown formatting.
+	// SYNTHDEF TEMPLATE START
+	SynthDef.new("name", { |out=0, amp=0.5|
+		// YOUR CODE HERE
+		Out.ar(out, sound * amp);
+	}).writeDefFile("/app/supercollider/synthdefs");
+	// SYNTHDEF TEMPLATE END
+	
+	Return ONLY the raw SuperCollider code that replaces // YOUR CODE HERE.
 	`, userPrompt)
+
+	// hardcode to O1Preview for now
 	if model == "" {
-		model = openai.GPT4o
+		model = openai.O1Preview
 	}
 
 	client := openai.NewClient(key)
@@ -106,7 +110,7 @@ func generateWithOpenAI(userPrompt, model string) (string, error) {
 					Content: mainPrompt,
 				},
 			},
-			MaxTokens: 10000,
+			MaxCompletionTokens: 20000,
 		},
 	)
 
