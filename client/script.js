@@ -118,13 +118,22 @@ function handleDisconnect() {
     pc = null;
   }
   
+  // Clear the code display with a fade out effect
+  const codeDisplay = document.getElementById('codeDisplay');
+  codeDisplay.style.transition = 'opacity 0.3s ease-out';
+  codeDisplay.style.opacity = '0';
+  setTimeout(() => {
+    clearCode();
+    codeDisplay.style.transition = '';
+  }, 300);
+  
   console.log('Session cleanup completed:', {
     ...sessionInfo,
     intervalsCleared: true,
     peerConnectionClosed: true
   });
   
-  updateToggleButton({ text: 'Stream New Synth', disabled: false, disconnectStyle: false });
+  updateToggleButton({ text: 'Generate Synth', disabled: false, disconnectStyle: false });
   isConnectionEstablished = false;
 }
 
@@ -151,25 +160,6 @@ function onConnectionStateChange() {
   };
   console.log('Connection state change:', states);
 
-  // Add detailed state logging
-  if (pc.connectionState === 'connected') {
-    console.log('Connection established, checking media tracks...');
-    pc.getReceivers().forEach((receiver) => {
-      const track = receiver.track;
-      console.log('Track details:', {
-        kind: track.kind,
-        state: track.readyState,
-        enabled: track.enabled,
-        muted: track.muted,
-        id: track.id
-      });
-      
-      receiver.getStats().then(stats => {
-        console.log('Receiver stats:', stats);
-      });
-    });
-  }
-
   switch (pc.connectionState) {
     case 'connected':
       console.log('Connection established, checking media tracks...');
@@ -181,22 +171,39 @@ function onConnectionStateChange() {
       startAudioStatsMonitoring();
 
       updateToggleButton({ text: 'Disconnect', disconnectStyle: true, disabled: false });
+      
+      // Fetch and display the synth code
+      fetch('/synth-code', {
+        headers: {
+          'X-Session-ID': sessionID
+        }
+      })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch synth code: ${response.status}`);
+          }
+          return response.text();
+        })
+        .then(code => typeCode(code))
+        .catch(error => console.error('Failed to fetch synth code:', error));
       break;
 
     case 'disconnected':
       console.log('Connection disconnected. Last known state:', states);
       logLastKnownGoodConnection();
-      // Consider handling a reconnect or just leaving it disconnected
+      clearCode();
       break;
 
     case 'failed':
-      console.error('Connection failed:', states);
-      updateToggleButton({ text: 'Failed to Connect - Retry?', disabled: false });
+      console.error('Failed:', states);
+      updateToggleButton({ text: 'Generate Synth', disabled: false });
+      clearCode();
       break;
 
     case 'closed':
       console.log('Connection closed cleanly');
       updateToggleButton({ text: 'Stream New Synth', disabled: false });
+      clearCode();
       break;
   }
 }
@@ -212,7 +219,7 @@ function onIceConnectionStateChange() {
         handleDisconnect();
         initConnection();
       }
-    }, 10000); // 10 second timeout
+    }, 5000); // 5 second timeout for ICE checking
   }
   
   if (pc.iceConnectionState === 'failed') {
@@ -230,14 +237,14 @@ function onIceConnectionStateChange() {
       return;
     }
     
-    // Production can try ICE restart
+    // Production can try ICE restart with shorter timeout
     pc.restartIce();
     setTimeout(() => {
       if (pc.iceConnectionState === 'failed') {
         handleDisconnect();
         updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
       }
-    }, 5000);
+    }, 3000); // 3 second timeout for ICE restart
   }
 }
 
@@ -305,7 +312,7 @@ async function onNegotiationNeeded() {
       pc.close();
       pc = null;
     }
-    updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
+    updateToggleButton({ text: 'Error: ', disabled: false });
   }
 }
 
@@ -647,4 +654,48 @@ function monitorTrackStats(track) {
       });
     });
   }, 1000);
+}
+
+// ensures text and scrolling stay perfectly synchronized
+// slows down typing speed for better readability
+// uses immediate scrolling to prevent lag
+async function typeCode(code) {
+  const codeDisplay = document.getElementById('codeDisplay');
+  codeDisplay.textContent = '';
+  codeDisplay.classList.add('visible');
+  
+  // Only add syntax highlighting class if Prism is available
+  if (window.Prism) {
+    codeDisplay.classList.add('language-supercollider');
+  }
+  
+  const chunkSize = 20; // Smaller chunks for smoother typing
+  for (let i = 0; i < code.length; i += chunkSize) {
+    const chunk = code.slice(i, i + chunkSize);
+    codeDisplay.textContent += chunk;
+    
+    // Use immediate scrolling to stay in sync with typing
+    codeDisplay.scrollTop = codeDisplay.scrollHeight;
+    
+    await new Promise(resolve => setTimeout(resolve, 25)); // Slower typing speed
+  }
+  
+  // Apply syntax highlighting after typing is complete if Prism is available
+  if (window.Prism && typeof window.Prism.highlightElement === 'function') {
+    try {
+      Prism.highlightElement(codeDisplay);
+    } catch (e) {
+      console.warn('Prism syntax highlighting failed:', e);
+    }
+    codeDisplay.scrollTop = codeDisplay.scrollHeight;
+  }
+}
+
+function clearCode() {
+  const codeDisplay = document.getElementById('codeDisplay');
+  codeDisplay.textContent = '';
+  codeDisplay.classList.remove('visible');
+  if (window.Prism) {
+    codeDisplay.classList.remove('language-supercollider');
+  }
 }

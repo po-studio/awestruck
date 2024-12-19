@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ type SuperColliderSynth struct {
 	JackClientName string
 	outputReader   *io.PipeReader
 	OnClientName   func(string)
+	ActiveSynthId  string
 }
 
 const (
@@ -185,6 +187,8 @@ func (s *SuperColliderSynth) SendPlayMessage() {
 		return
 	}
 
+	s.ActiveSynthId = synthDefName
+
 	msg.Append(synthDefName)
 	msg.Append(int32(1)) // node ID
 	msg.Append(int32(0)) // action: 0 for add to head
@@ -310,4 +314,54 @@ func (s *SuperColliderSynth) connectJackPorts(scPorts []string) error {
 
 func (s *SuperColliderSynth) SetOnClientName(callback func(string)) {
 	s.OnClientName = callback
+}
+
+// GetSynthCode returns the SuperCollider code for this synth
+func (s *SuperColliderSynth) GetSynthCode() (string, error) {
+	if s.ActiveSynthId == "" {
+		return "", fmt.Errorf("no active synth")
+	}
+
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %v", err)
+	}
+
+	// Extract timestamp from synth ID (assuming format like "openai-o1-preview-2024_12_18_05_26_02")
+	parts := strings.Split(s.ActiveSynthId, "-")
+	if len(parts) < 4 {
+		return "", fmt.Errorf("invalid synth ID format")
+	}
+	timestamp := parts[len(parts)-1]
+
+	// Find the matching .scd file
+	srcDir := filepath.Join(cwd, "supercollider", "src")
+	var matchingFile string
+	err = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".scd" && strings.Contains(path, timestamp) {
+			matchingFile = path
+			return filepath.SkipDir // Stop walking after finding the match
+		}
+		return nil
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to find synth code: %v", err)
+	}
+
+	if matchingFile == "" {
+		return "", fmt.Errorf("no matching synth code found for ID: %s", s.ActiveSynthId)
+	}
+
+	// Read the file
+	code, err := os.ReadFile(matchingFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read synth code: %v", err)
+	}
+
+	return string(code), nil
 }

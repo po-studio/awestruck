@@ -25,6 +25,7 @@ services:
     container_name: go-webrtc-server-arm64
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./client:/app/client
       - ./supercollider/src:/app/supercollider/src
       - ./supercollider/synthdefs:/app/supercollider/synthdefs
     network_mode: host
@@ -48,6 +49,7 @@ services:
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
       - ENVIRONMENT=development
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
     depends_on:
       - coturn
     cap_add:

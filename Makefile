@@ -78,9 +78,9 @@ deploy-all: build aws-login
 	# Deploy infrastructure
 	cd infra && npm install && cdktf deploy --auto-approve
 
-# optional prompt
 test-generate-synth:
 	curl -X POST \
-	  http://localhost:8080/generate-synth \
-	  -H "Content-Type: application/json" \
-	  -d '{"prompt":"","provider":"openai","model":"o1-preview"}'
+		http://localhost:8080/generate-synth \
+		-H "Content-Type: application/json" \
+		-H "Awestruck-API-Key: $${AWESTRUCK_API_KEY}" \
+		-d '{"prompt":"","provider":"openai","model":"o1-preview"}'

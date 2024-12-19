@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/po-studio/go-webrtc-server/config"
 	"github.com/po-studio/go-webrtc-server/llm"
 	sc "github.com/po-studio/go-webrtc-server/supercollider"
 )
@@ -42,6 +43,19 @@ type GenerateSynthRequest struct {
 }
 
 func GenerateSynth(w http.ResponseWriter, r *http.Request) {
+	// Check for API key in header
+	apiKey := r.Header.Get("Awestruck-API-Key")
+	if apiKey == "" {
+		http.Error(w, "Missing API key", http.StatusUnauthorized)
+		return
+	}
+
+	// Validate API key
+	if !config.ValidateAPIKey(apiKey) {
+		http.Error(w, "Invalid API key", http.StatusUnauthorized)
+		return
+	}
+
 	var req GenerateSynthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)

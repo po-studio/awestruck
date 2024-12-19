@@ -407,7 +407,8 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_BUFFER_SIZE", value: "2048" },
               { name: "JACK_PERIODS", value: "3" },
               { name: "GST_BUFFER_SIZE", value: "4194304" },
-              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" }
+              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
+              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
@@ -727,21 +728,18 @@ class AwestruckInfrastructure extends TerraformStack {
       securityGroupId: securityGroup.id,
     });
 
-    // Allow STUN/TURN egress
-    // new SecurityGroupRule(this, "ecs-stun-turn-egress", {
-    //   type: "egress",
-    //   fromPort: 3478,
-    //   toPort: 3478,
-    //   protocol: "-1",  // Both TCP and UDP
-    //   cidrBlocks: ["0.0.0.0/0"],
-    //   securityGroupId: securityGroup.id,
-    // });
-
     new SsmParameter(this, "openai-api-key", {
       name: "/awestruck/openai_api_key",
       type: "SecureString",
       value: process.env.OPENAI_API_KEY || this.node.tryGetContext("openaiApiKey"),
       description: "OpenAI API key for AI services",
+    });
+
+    new SsmParameter(this, "awestruck-api-key", {
+      name: "/awestruck/awestruck_api_key",
+      type: "SecureString",
+      value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
+      description: "Awestruck API key for authentication",
     });
   }
 }
