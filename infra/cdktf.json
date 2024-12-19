@@ -9,7 +9,8 @@
     "awsRegion": "us-east-1",
     "awsAccountId": "",
     "sslCertificateArn": "",
-    "taskDefinitionFamily": "go-webrtc-server-arm64"
+    "taskDefinitionFamily": "go-webrtc-server-arm64",
+    "openaiApiKey": ""
   },
   "terraformVersion": "1.5.0"
 }

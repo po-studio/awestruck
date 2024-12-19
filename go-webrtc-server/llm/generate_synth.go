@@ -12,11 +12,6 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-// NB: not ideal to depend on the LLM to set the right output path here
-// also a waste of tokens since we know we need to write to a specific path
-// for every synth in order to generate the synthdef binary
-// return to this...
-
 func GenerateSynthCode(provider, prompt, model string) (string, error) {
 	var llmResponse string
 	var err error
@@ -60,7 +55,8 @@ func generateWithOpenAI(userPrompt, model string) (string, error) {
 
 	if userPrompt == "" {
 		userPrompt = `
-		Generate a single SuperCollider SynthDef that creates a continuously evolving, musical ambient environment, rather than just sound effects. The result should evoke a lush ambient track: layered, harmonic pads, gentle melodic fragments, and soft, evolving textures that feel like "music" rather than random noise.
+		Generate a single SuperCollider SynthDef that creates a continuously evolving, musical ambient environment, rather than just sound effects. 
+		The result should evoke a lush ambient track: layered, harmonic pads, gentle melodic fragments, and soft, evolving textures that feel like "music" rather than random noise.
 		`
 	}
 

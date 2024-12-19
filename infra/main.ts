@@ -406,7 +406,8 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "GST_DEBUG", value: "2" },
               { name: "JACK_BUFFER_SIZE", value: "2048" },
               { name: "JACK_PERIODS", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "4194304" }
+              { name: "GST_BUFFER_SIZE", value: "4194304" },
+              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
@@ -735,6 +736,13 @@ class AwestruckInfrastructure extends TerraformStack {
     //   cidrBlocks: ["0.0.0.0/0"],
     //   securityGroupId: securityGroup.id,
     // });
+
+    new SsmParameter(this, "openai-api-key", {
+      name: "/awestruck/openai_api_key",
+      type: "SecureString",
+      value: process.env.OPENAI_API_KEY || this.node.tryGetContext("openaiApiKey"),
+      description: "OpenAI API key for AI services",
+    });
   }
 }
 
