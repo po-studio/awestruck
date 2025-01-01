@@ -328,12 +328,17 @@ func (s *SuperColliderSynth) GetSynthCode() (string, error) {
 		return "", fmt.Errorf("failed to get working directory: %v", err)
 	}
 
-	// Extract timestamp from synth ID (assuming format like "openai-o1-preview-2024_12_18_05_26_02")
+	// Extract identifier from synth ID
 	parts := strings.Split(s.ActiveSynthId, "-")
-	if len(parts) < 4 {
-		return "", fmt.Errorf("invalid synth ID format")
+	var searchPattern string
+	if len(parts) >= 4 {
+		// OpenAI format with timestamp
+		timestamp := parts[len(parts)-1]
+		searchPattern = timestamp
+	} else {
+		// Human format (e.g., romero_1)
+		searchPattern = s.ActiveSynthId
 	}
-	timestamp := parts[len(parts)-1]
 
 	// Find the matching .scd file
 	srcDir := filepath.Join(cwd, "supercollider", "src")
@@ -342,9 +347,10 @@ func (s *SuperColliderSynth) GetSynthCode() (string, error) {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && filepath.Ext(path) == ".scd" && strings.Contains(path, timestamp) {
+		if !info.IsDir() && filepath.Ext(path) == ".scd" &&
+			(strings.Contains(path, searchPattern) || strings.Contains(info.Name(), searchPattern)) {
 			matchingFile = path
-			return filepath.SkipDir // Stop walking after finding the match
+			return filepath.SkipDir
 		}
 		return nil
 	})
