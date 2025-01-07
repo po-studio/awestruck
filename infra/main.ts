@@ -105,9 +105,6 @@ class AwestruckInfrastructure extends TerraformStack {
     min-port=49152
     max-port=65535
 
-    chmod 640 /etc/coturn/turnserver.conf
-    chown root:turnserver /etc/coturn/turnserver.conf
-
     # Authentication
     lt-cred-mech
     user=awestruck:${turnPassword}
@@ -142,6 +139,19 @@ class AwestruckInfrastructure extends TerraformStack {
     log-allocate
     EOF
 
+    # Set TURN server permissions
+    chmod 640 /etc/coturn/turnserver.conf
+    chown root:turnserver /etc/coturn/turnserver.conf
+
+    # Add debug logging
+    echo "Debug: Setting up TURN server..."
+    echo "Debug: Checking TURN config permissions:"
+    ls -l /etc/coturn/turnserver.conf
+    echo "Debug: Checking TURN log directory permissions:"
+    ls -l /var/log/coturn
+    echo "Debug: Checking TURN service status:"
+    systemctl status coturn || true
+
     # Configure and start CloudWatch agent
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
@@ -170,6 +180,10 @@ class AwestruckInfrastructure extends TerraformStack {
 
     systemctl enable amazon-cloudwatch-agent
     systemctl start amazon-cloudwatch-agent
+
+    echo "Debug: Checking CloudWatch agent status:"
+    systemctl status amazon-cloudwatch-agent || true
+    cat /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log || true
 
     # Finally, start COTURN
     systemctl enable coturn
