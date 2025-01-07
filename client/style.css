@@ -72,4 +72,58 @@
 
 .code-display::-webkit-scrollbar-thumb:hover {
     background: #666;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+    background: #000;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.container {
+    padding: 2rem;
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    gap: 4rem;
+}
+
+/* Add the rest of the styles from the inline CSS in index.html */
+
+.connection-button {
+    background: #00FF86;
+    border: none;
+    color: #000;
+    padding: 1rem 2rem;
+    font-size: 1rem;
+    font-family: 'Figtree', sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 12rem;
+    text-align: center;
+    border-radius: 4px;
+}
+
+.connection-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 255, 134, 0.2);
+}
+
+.connection-button.button-disconnect {
+    background: #FF0086;
+}
+
+.connection-button.button-disconnect:hover {
+    box-shadow: 0 4px 12px rgba(255, 0, 134, 0.2);
+}
+
+.connection-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
 } 
