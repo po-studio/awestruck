@@ -576,3 +576,15 @@ function logLastKnownGoodConnection() {
       console.log('[CLEANUP] Last known connection stats:', lastStats);
   });
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const synthButton = document.getElementById('synthButton');
+    if (synthButton) {
+        synthButton.addEventListener('click', handleSynthClick);
+    }
+    
+    // Move your existing event listener inside DOMContentLoaded
+    document.body.addEventListener('htmx:configRequest', evt => {
+        evt.detail.headers['X-Session-ID'] = sessionID;
+    });
+});

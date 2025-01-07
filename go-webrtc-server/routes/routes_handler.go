@@ -2,6 +2,7 @@ package routes
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 
@@ -27,5 +28,15 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveStatic(path string) http.Handler {
-	return http.FileServer(http.Dir(path))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set correct MIME types for different file extensions
+		if strings.HasSuffix(r.URL.Path, ".css") {
+			w.Header().Set("Content-Type", "text/css")
+		} else if strings.HasSuffix(r.URL.Path, ".js") {
+			w.Header().Set("Content-Type", "application/javascript")
+		}
+
+		// Use the default file server to serve the file
+		http.FileServer(http.Dir(path)).ServeHTTP(w, r)
+	})
 }
