@@ -87,6 +87,14 @@ class AwestruckInfrastructure extends TerraformStack {
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
     ELASTIC_IP=${coturnElasticIp.publicIp}
 
+    # Create TURN server user and group
+    groupadd turnserver
+    useradd -r -g turnserver turnserver
+
+    # Set permissions
+    mkdir -p /var/log/coturn
+    chown -R turnserver:turnserver /var/log/coturn
+
     # Configure TURN server
     cat > /etc/coturn/turnserver.conf <<EOF
     # Network settings
@@ -96,6 +104,9 @@ class AwestruckInfrastructure extends TerraformStack {
     external-ip=$ELASTIC_IP/$LOCAL_IP
     min-port=49152
     max-port=65535
+
+    chmod 640 /etc/coturn/turnserver.conf
+    chown root:turnserver /etc/coturn/turnserver.conf
 
     # Authentication
     lt-cred-mech
