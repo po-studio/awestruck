@@ -59,45 +59,38 @@ class AwestruckInfrastructure extends TerraformStack {
     const userData = `#!/bin/bash
     set -ex
     
-    # Install required packages
     yum update -y
     yum install -y coturn amazon-cloudwatch-agent
     
-    # Setup users and groups
     groupadd turnserver || true
     useradd -r -g turnserver turnserver || true
     
-    # Setup directories with correct permissions
     mkdir -p /var/log/coturn /etc/coturn /run/coturn
     chown -R turnserver:turnserver /var/log/coturn /run/coturn
     chmod 750 /var/log/coturn
     chmod 755 /run/coturn
     
-    # Get instance IP information
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+    ELASTIC_IP=${coturnElasticIp.publicIp}
     
-    # Create coturn config
     cat > /etc/coturn/turnserver.conf <<EOF
     listening-port=3478
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
-    external-ip=$PUBLIC_IP/$LOCAL_IP
+    external-ip=$ELASTIC_IP/$LOCAL_IP
     min-port=49152
     max-port=65535
-    
+    no-ipv6
+    no-loopback-peers
     lt-cred-mech
     user=awestruck:${turnPassword}
     realm=awestruck.io
-    
     log-file=/var/log/coturn/turnserver.log
     verbose
-    
     no-multicast-peers
     no-cli
     mobility
     fingerprint
-    
     cli-password=password
     total-quota=100
     max-bps=0
@@ -106,19 +99,11 @@ class AwestruckInfrastructure extends TerraformStack {
     no-tlsv1_1
     stale-nonce=0
     cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
-    syslog
-    log-binding
-    log-allocate
-    debug
-    extra-logging
-    trace
-    verbose
     EOF
     
     chmod 640 /etc/coturn/turnserver.conf
     chown root:turnserver /etc/coturn/turnserver.conf
     
-    # Setup CloudWatch agent configuration
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
       "logs": {
@@ -144,7 +129,6 @@ class AwestruckInfrastructure extends TerraformStack {
     }
     EOF
     
-    # Setup systemd service override
     mkdir -p /etc/systemd/system/coturn.service.d
     cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
     [Service]
@@ -155,14 +139,12 @@ class AwestruckInfrastructure extends TerraformStack {
     PIDFile=/run/coturn/turnserver.pid
     EOF
     
-    # Start services
     systemctl daemon-reload
     systemctl enable amazon-cloudwatch-agent
     systemctl start amazon-cloudwatch-agent
     systemctl enable coturn
     systemctl start coturn
     
-    # Debug output
     echo "Debug: Setting up TURN server..."
     echo "Debug: Checking TURN config permissions:"
     ls -l /etc/coturn/turnserver.conf
@@ -171,8 +153,7 @@ class AwestruckInfrastructure extends TerraformStack {
     echo "Debug: Checking TURN service status:"
     systemctl status coturn || true
     echo "Debug: Checking CloudWatch agent status:"
-    systemctl status amazon-cloudwatch-agent || true
-    `;
+    systemctl status amazon-cloudwatch-agent || true`;
 
     new AwsProvider(this, "AWS", {
       region: awsRegion,

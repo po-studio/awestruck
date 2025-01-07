@@ -90,3 +90,15 @@ get-coturn-id:
 	--filters "Name=tag:Name,Values=coturn-server" "Name=instance-state-name,Values=running" \
 	--query "Reservations[].Instances[].InstanceId" \
 	--output text
+
+# ensures we get the instance id first, then uses it for the ssm session
+ssh-coturn:
+	$(eval COTURN_ID := $(shell aws ec2 describe-instances \
+		--filters "Name=tag:Name,Values=coturn-server" "Name=instance-state-name,Values=running" \
+		--query "Reservations[].Instances[].InstanceId" \
+		--output text))
+	@if [ -z "$(COTURN_ID)" ]; then \
+		echo "No running COTURN instance found"; \
+		exit 1; \
+	fi
+	aws ssm start-session --target $(COTURN_ID)
