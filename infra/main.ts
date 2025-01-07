@@ -75,14 +75,14 @@ class AwestruckInfrastructure extends TerraformStack {
     
     # Get instance IP information
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    ELASTIC_IP=${coturnElasticIp.publicIp}
+    PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
     
     # Create coturn config
     cat > /etc/coturn/turnserver.conf <<EOF
     listening-port=3478
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
-    external-ip=$ELASTIC_IP/$LOCAL_IP
+    external-ip=$PUBLIC_IP/$LOCAL_IP
     min-port=49152
     max-port=65535
     
