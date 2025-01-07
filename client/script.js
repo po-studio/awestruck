@@ -1,5 +1,3 @@
-// script.js
-
 const sessionID = getSessionID();
 
 function getSessionID() {
@@ -14,6 +12,8 @@ function getSessionID() {
 let pc;
 let pendingIceCandidates = [];
 let isConnectionEstablished = false;
+let audioContext = null;
+let audioElement = null;
 
 let qualityMonitorInterval;
 let audioStatsInterval;
@@ -112,6 +112,11 @@ function handleDisconnect() {
   clearInterval(audioLevelsInterval);
   clearInterval(trackStatsInterval);
   
+  if (iceCheckingTimeout) {
+    clearTimeout(iceCheckingTimeout);
+    iceCheckingTimeout = null;
+  }
+  
   if (pc) {
     logLastKnownGoodConnection();
     pc.close();
@@ -135,6 +140,21 @@ function handleDisconnect() {
   
   updateToggleButton({ text: 'Generate Synth', disabled: false, disconnectStyle: false });
   isConnectionEstablished = false;
+  
+  if (audioContext) {
+    audioContext.close().then(() => {
+      audioContext = null;
+      console.log('Audio context closed successfully');
+    }).catch(err => {
+      console.error('Error closing audio context:', err);
+    });
+  }
+  
+  if (audioElement) {
+    audioElement.srcObject = null;
+    audioElement.remove();
+    audioElement = null;
+  }
 }
 
 async function setupPeerConnection(config) {
@@ -152,6 +172,11 @@ async function setupPeerConnection(config) {
 }
 
 function onConnectionStateChange() {
+  if (!pc) {
+    console.warn('Connection state change called but pc is null');
+    return;
+  }
+
   const states = {
     connectionState: pc.connectionState,
     iceConnectionState: pc.iceConnectionState,
@@ -208,28 +233,63 @@ function onConnectionStateChange() {
   }
 }
 
+let iceCheckingTimeout = null;
+
 function onIceConnectionStateChange() {
   console.log('ICE Connection State:', pc.iceConnectionState);
+
+  const timestamp = new Date().toISOString();
+  const diagnosticInfo = {
+      timestamp,
+      iceState: pc.iceConnectionState,
+      connectionState: pc.connectionState,
+      signalingState: pc.signalingState,
+      sessionId: sessionID
+  };
+
+  console.log('[ICE] State change diagnostic info:', diagnosticInfo);
+
+  if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'failed') {
+      pc.getStats().then(stats => {
+          const candidatePairs = [];
+          stats.forEach(stat => {
+              if (stat.type === 'candidate-pair') {
+                  candidatePairs.push({
+                      state: stat.state,
+                      nominated: stat.nominated,
+                      priority: stat.priority
+                  });
+              }
+          });
+          console.log('[ICE] Candidate pairs during', pc.iceConnectionState, ':', candidatePairs);
+      });
+  }
+  
+  if (iceCheckingTimeout) {
+    clearTimeout(iceCheckingTimeout);
+    iceCheckingTimeout = null;
+  }
   
   if (pc.iceConnectionState === 'checking') {
-    // Set a timeout for the checking state
-    setTimeout(() => {
-      if (pc.iceConnectionState === 'checking') {
+    iceCheckingTimeout = setTimeout(() => {
+      if (pc && pc.iceConnectionState === 'checking') {
         console.warn('ICE checking timeout - forcing reconnection');
         handleDisconnect();
         initConnection();
       }
-    }, 5000); // 5 second timeout for ICE checking
+    }, 5000);
   }
   
   if (pc.iceConnectionState === 'failed') {
     console.error('ICE Connection failed - gathering diagnostic information');
     logLastKnownGoodConnection();
-    pc.getStats().then(stats => {
-      console.log('Final ICE stats before failure:', stats);
-    });
     
-    // Immediate cleanup for localhost/development
+    if (pc) {
+      pc.getStats().then(stats => {
+        console.log('Final ICE stats before failure:', stats);
+      });
+    }
+    
     if (!isProduction) {
       console.log('Development environment - immediate cleanup on failure');
       handleDisconnect();
@@ -237,14 +297,15 @@ function onIceConnectionStateChange() {
       return;
     }
     
-    // Production can try ICE restart with shorter timeout
-    pc.restartIce();
-    setTimeout(() => {
-      if (pc.iceConnectionState === 'failed') {
-        handleDisconnect();
-        updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
-      }
-    }, 3000); // 3 second timeout for ICE restart
+    if (pc) {
+      pc.restartIce();
+      setTimeout(() => {
+        if (pc && pc.iceConnectionState === 'failed') {
+          handleDisconnect();
+          updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
+        }
+      }, 3000);
+    }
   }
 }
 
@@ -301,6 +362,11 @@ function onIceGatheringStateChange() {
 }
 
 async function onNegotiationNeeded() {
+  // ensure any previous connection is fully cleaned up
+  if (sessionID) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
   try {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -495,26 +561,32 @@ async function sendOffer(offer) {
 }
 
 async function sendIceCandidate(candidate) {
-  const requestBody = {
-    candidate: {
-      candidate: candidate.candidate,
-      sdpMid: candidate.sdpMid,
-      sdpMLineIndex: candidate.sdpMLineIndex,
-      usernameFragment: candidate.usernameFragment,
-    },
-  };
+  try {
+    const requestBody = {
+      candidate: {
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid,
+        sdpMLineIndex: candidate.sdpMLineIndex,
+        usernameFragment: candidate.usernameFragment,
+      },
+    };
 
-  const response = await fetch('/ice-candidate', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Session-ID': sessionID,
-    },
-    body: JSON.stringify(requestBody),
-  });
+    const response = await fetch('/ice-candidate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-ID': sessionID,
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to send ICE candidate: ${response.status}`);
+    if (!response.ok) {
+      console.warn(`ICE candidate send failed with status ${response.status}`, candidate);
+      return; // Don't throw, just log and continue
+    }
+  } catch (error) {
+    console.warn('Failed to send ICE candidate:', error);
+    // Don't throw, just log the error
   }
 }
 
