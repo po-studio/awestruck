@@ -144,7 +144,6 @@ function handleDisconnect() {
   codeDisplay.style.opacity = '0';
   setTimeout(() => {
     clearCode();
-    codeDisplay.style.transition = '';
   }, 300);
   
   console.log('Session cleanup completed:', {
@@ -734,6 +733,8 @@ async function typeCode(code) {
 function clearCode() {
   const codeDisplay = document.getElementById('codeDisplay');
   codeDisplay.textContent = '';
+  codeDisplay.style.opacity = '1'; // Reset opacity
+  codeDisplay.style.transition = ''; // Clear any transition
   codeDisplay.classList.remove('visible');
   if (window.Prism) {
     codeDisplay.classList.remove('language-supercollider');

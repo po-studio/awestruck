@@ -14,36 +14,52 @@ func DisconnectJackPorts(appSessionId string, jackClientName string) error {
 		return fmt.Errorf("error getting JACK connections: %w", err)
 	}
 
+	// Track unique connections to avoid duplicates
+	seenConnections := make(map[string]bool)
 	connections := strings.Split(string(output), "\n")
-	var disconnectErrors []string
-
-	// Track the current port being processed
 	var currentPort string
 	var currentConnections []string
+	var disconnectErrors []string
 
-	// Build a map of all connections
 	for _, line := range connections {
 		if line == "" {
 			continue
 		}
 
 		if !strings.HasPrefix(line, "   ") {
-			// This is a main port entry
+			// Handle previous port's connections
 			if len(currentConnections) > 0 {
-				// Disconnect previous port's connections if needed
-				disconnectErrors = append(disconnectErrors, disconnectPortConnections(currentPort, currentConnections, appSessionId, jackClientName)...)
+				for _, conn := range currentConnections {
+					// Create unique connection identifier
+					connKey := fmt.Sprintf("%s->%s", currentPort, conn)
+					reverseKey := fmt.Sprintf("%s->%s", conn, currentPort)
+
+					if !seenConnections[connKey] && !seenConnections[reverseKey] {
+						seenConnections[connKey] = true
+						disconnectErrors = append(disconnectErrors,
+							disconnectPortConnections(currentPort, []string{conn}, appSessionId, jackClientName)...)
+					}
+				}
 			}
 			currentPort = strings.TrimSpace(line)
 			currentConnections = nil
 		} else {
-			// This is a connection
 			currentConnections = append(currentConnections, strings.TrimSpace(line))
 		}
 	}
 
 	// Handle the last port's connections
 	if len(currentConnections) > 0 {
-		disconnectErrors = append(disconnectErrors, disconnectPortConnections(currentPort, currentConnections, appSessionId, jackClientName)...)
+		for _, conn := range currentConnections {
+			connKey := fmt.Sprintf("%s->%s", currentPort, conn)
+			reverseKey := fmt.Sprintf("%s->%s", conn, currentPort)
+
+			if !seenConnections[connKey] && !seenConnections[reverseKey] {
+				seenConnections[connKey] = true
+				disconnectErrors = append(disconnectErrors,
+					disconnectPortConnections(currentPort, []string{conn}, appSessionId, jackClientName)...)
+			}
+		}
 	}
 
 	if len(disconnectErrors) > 0 {
