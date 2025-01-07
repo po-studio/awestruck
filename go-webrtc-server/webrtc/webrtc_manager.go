@@ -7,13 +7,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pion/webrtc/v3"
-	awestruckConfig "github.com/po-studio/go-webrtc-server/config"
 	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
 	"github.com/po-studio/go-webrtc-server/internal/signal"
 	"github.com/po-studio/go-webrtc-server/session"
@@ -122,6 +122,31 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	log.Println("Sending answer to client")
 	sendAnswer(w, peerConnection.LocalDescription())
 }
+
+// func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
+// 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
+
+// 	log.Println("Setting local description")
+// 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
+// 		log.Println("Error setting local description:", err)
+// 		return fmt.Errorf("failed to set local description: %v", err)
+// 	}
+
+// 	log.Println("Starting media pipeline")
+// 	if err := startMediaPipeline(appSession, audioTrack); err != nil {
+// 		return err
+// 	}
+
+// 	log.Println("Starting synth engine")
+// 	if err := startSynthEngine(appSession); err != nil {
+// 		return err
+// 	}
+
+// 	log.Println("Waiting for ICE gathering to complete")
+// 	<-gatherComplete
+// 	log.Println("ICE gathering complete")
+// 	return nil
+// }
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
@@ -280,29 +305,6 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 		return nil, err
 	}
 	appSession.PeerConnection = peerConnection
-
-	// Track connection state changes
-	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		log.Printf("[WebRTC] Connection state changed to %s for session %s", state.String(), appSession.Id)
-
-		switch state {
-		case webrtc.PeerConnectionStateFailed:
-			log.Printf("[WebRTC][ERROR] Connection failed for session %s, initiating cleanup...", appSession.Id)
-			cleanUpSession(appSession)
-		case webrtc.PeerConnectionStateDisconnected:
-			log.Printf("[WebRTC] Connection disconnected for session %s", appSession.Id)
-			// Faster cleanup for disconnection
-			time.AfterFunc(5*time.Second, func() {
-				if appSession.PeerConnection != nil &&
-					appSession.PeerConnection.ConnectionState() == webrtc.PeerConnectionStateDisconnected {
-					log.Printf("[WebRTC] Disconnection timeout for session %s, cleaning up", appSession.Id)
-					cleanUpSession(appSession)
-				}
-			})
-		}
-	})
-
-	// Track ICE connection state changes
 	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("[ICE] Connection state changed to %s for session %s", state.String(), appSession.Id)
 
@@ -313,6 +315,7 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 
 		switch state {
 		case webrtc.ICEConnectionStateFailed:
+			// Complete failure - clean up everything
 			log.Printf("[ICE][ERROR] Connection failed for session %s, initiating cleanup...", appSession.Id)
 			if appSession.PeerConnection != nil {
 				stats := appSession.PeerConnection.GetStats()
@@ -321,9 +324,10 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 			cleanUpSession(appSession)
 
 		case webrtc.ICEConnectionStateDisconnected:
+			// Temporary disconnection - wait for potential reconnect
 			log.Printf("[ICE] Connection disconnected for session %s, waiting for reconnection...", appSession.Id)
-			// Faster cleanup for ICE disconnection
-			time.AfterFunc(5*time.Second, func() {
+			// Start a timer to cleanup only if disconnection persists
+			time.AfterFunc(30*time.Second, func() {
 				if appSession.PeerConnection != nil &&
 					appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateDisconnected {
 					log.Printf("[ICE] Disconnection timeout for session %s, cleaning up", appSession.Id)
@@ -333,7 +337,6 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 		}
 	})
 
-	// Track ICE candidates
 	appSession.PeerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
 			log.Printf("[ICE] New candidate for session %s: type=%d protocol=%s address=%s port=%d priority=%d",
@@ -378,9 +381,9 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	s := webrtc.SettingEngine{}
 	s.SetEphemeralUDPPortRange(10000, 10100)
 	s.SetICETimeouts(
-		2*time.Second, // disconnectedTimeout
-		5*time.Second, // failedTimeout
-		1*time.Second, // keepAliveInterval
+		5*time.Second,  // disconnectedTimeout
+		10*time.Second, // failedTimeout
+		5*time.Second,  // keepAliveInterval
 	)
 
 	// Create MediaEngine
@@ -402,7 +405,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	}
 
 	// Only force TURN relay in production/staging environments
-	if awestruckConfig.Get().Environment != "development" {
+	if os.Getenv("ENVIRONMENT") != "development" {
 		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
 	}
 
@@ -489,18 +492,11 @@ func HandleStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func cleanUpSession(appSession *session.AppSession) error {
-	if appSession == nil {
-		return nil
-	}
-
-	// Ensure we don't try to clean up the same session multiple times
-	if appSession.PeerConnection == nil {
-		return nil
-	}
-
-	// Get final stats before cleanup
-	if stats := appSession.PeerConnection.GetStats(); stats != nil {
-		log.Printf("[Cleanup] Final WebRTC stats for session %s: %+v", appSession.Id, stats)
+	// Close the peer connection
+	err := closePeerConnection(appSession.PeerConnection)
+	if err != nil {
+		log.Printf("Error closing peer connection: %v", err)
+		return err
 	}
 
 	appSession.StopAllProcesses()
@@ -578,4 +574,12 @@ func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 	}
 
 	return nil
+}
+
+func verifyTURNConfig(iceServers []webrtc.ICEServer) {
+	for _, server := range iceServers {
+		log.Printf("TURN Server URLs: %v", server.URLs)
+		log.Printf("TURN Server Username length: %d", len(server.Username))
+		log.Printf("TURN Server Credential length: %d", len(server.Credential.(string)))
+	}
 }

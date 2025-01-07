@@ -39,7 +39,7 @@ const TURN_CONFIG = {
     // Docker networking can interfere with NAT traversal when forcing relay
     // ideally local would mirror deployed environments more closely,
     // but this is a good workaround for now
-    iceTransportPolicy: 'relay',
+    iceTransportPolicy: 'all',
     iceCandidatePoolSize: 1,
   },
   production: {
@@ -117,6 +117,21 @@ function handleDisconnect() {
     iceCheckingTimeout = null;
   }
   
+  if (audioElement) {
+    audioElement.srcObject = null;
+    audioElement.remove();
+    audioElement = null;
+  }
+  
+  if (audioContext) {
+    audioContext.close().then(() => {
+      audioContext = null;
+      console.log('Audio context closed successfully');
+    }).catch(err => {
+      console.error('Error closing audio context:', err);
+    });
+  }
+  
   if (pc) {
     logLastKnownGoodConnection();
     pc.close();
@@ -140,21 +155,6 @@ function handleDisconnect() {
   
   updateToggleButton({ text: 'Generate Synth', disabled: false, disconnectStyle: false });
   isConnectionEstablished = false;
-  
-  if (audioContext) {
-    audioContext.close().then(() => {
-      audioContext = null;
-      console.log('Audio context closed successfully');
-    }).catch(err => {
-      console.error('Error closing audio context:', err);
-    });
-  }
-  
-  if (audioElement) {
-    audioElement.srcObject = null;
-    audioElement.remove();
-    audioElement = null;
-  }
 }
 
 async function setupPeerConnection(config) {
@@ -277,7 +277,7 @@ function onIceConnectionStateChange() {
         handleDisconnect();
         initConnection();
       }
-    }, 5000);
+    }, 30000);
   }
   
   if (pc.iceConnectionState === 'failed') {
@@ -311,44 +311,6 @@ function onIceConnectionStateChange() {
 
 function onIceCandidate(event) {
   if (event.candidate) {
-    const candidateStr = event.candidate.candidate;
-    const parts = candidateStr.split(' ');
-    const type = parts[7];
-    const protocol = parts[2].toLowerCase();
-    const ip = parts[4];
-    
-    const candidateInfo = {
-      type,
-      protocol,
-      ip,
-      port: parts[5],
-      priority: event.candidate.priority,
-      fullCandidate: candidateStr,
-    };
-    
-    console.log("ICE candidate details:", candidateInfo);
-    
-    // Only allow TURN/relay candidates
-    if (type !== 'relay') {
-      console.warn('Filtered non-relay candidate:', candidateInfo);
-      return;
-    }
-    
-    // Special handling for localhost development
-    if (!isProduction && ip === '127.0.0.1') {
-      console.log('Accepting localhost relay candidate');
-      pendingIceCandidates.push(event.candidate);
-      sendIceCandidate(event.candidate);
-      return;
-    }
-    
-    // For all other cases, prefer UDP over TCP
-    if (protocol === 'tcp' && pendingIceCandidates.some(c => 
-      c.candidate.includes('relay') && c.candidate.includes('udp'))) {
-      console.log('Skipping TCP relay candidate as UDP is available');
-      return;
-    }
-    
     pendingIceCandidates.push(event.candidate);
     sendIceCandidate(event.candidate);
   }
@@ -362,23 +324,29 @@ function onIceGatheringStateChange() {
 }
 
 async function onNegotiationNeeded() {
-  // ensure any previous connection is fully cleaned up
   if (sessionID) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-  
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    console.log("Local description set, sending offer to server");
-    await sendOffer(pc.localDescription);
-  } catch (err) {
-    console.error("Error during negotiation:", err);
-    if (pc) {
-      pc.close();
-      pc = null;
+    try {
+      const response = await fetch('/stop', {
+        method: 'POST',
+        headers: {
+          'X-Session-ID': sessionID
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to cleanup previous session');
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Create and send offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log("Local description set, sending offer to server");
+      await sendOffer(pc.localDescription);
+    } catch (error) {
+      console.error('Negotiation failed:', error);
+      handleDisconnect();
+      return;
     }
-    updateToggleButton({ text: 'Error: ', disabled: false });
   }
 }
 
@@ -596,8 +564,8 @@ async function stopSynthesis() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Session-ID': sessionID,
-      },
+        'X-Session-ID': sessionID
+      }
     });
 
     if (!response.ok) {
