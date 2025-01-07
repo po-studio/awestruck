@@ -87,6 +87,8 @@ class AwestruckInfrastructure extends TerraformStack {
     realm=awestruck.io
     log-file=/var/log/coturn/turnserver.log
     verbose
+    log-binding
+    log-allocate
     no-multicast-peers
     no-cli
     mobility
