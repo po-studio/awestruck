@@ -57,53 +57,27 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     const userData = `#!/bin/bash
-    exec 1> >(logger -s -t $(basename $0)) 2>&1
-
+    set -ex
+    
+    # Install required packages
     yum update -y
-    amazon-linux-extras enable epel || echo "Failed to enable EPEL"
-    yum install -y epel-release || echo "Failed to install EPEL release"
-    yum install -y coturn amazon-cloudwatch-agent || echo "Failed to install coturn and cloudwatch agent"
-
-    rpm -qa | grep coturn
-    rpm -qa | grep cloudwatch
-
-    echo "Debug: Checking EPEL status..."
-    amazon-linux-extras list | grep epel
-    yum repolist | grep epel
-
-    echo "Debug: Attempting manual coturn installation..."
-    yum clean all
-    yum makecache
-    yum install -y coturn --verbose
-
-    echo "Debug: Checking coturn installation..."
-    rpm -qa | grep coturn
-    which turnserver
-
-    mkdir -p /etc/coturn /var/log/coturn /run/coturn
-    chmod 755 /etc/coturn /var/log/coturn /run/coturn
-    chown turnserver:turnserver /run/coturn
-
-    mkdir -p /etc/systemd/system/coturn.service.d/
-
-    cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
-    [Service]
-    RuntimeDirectory=coturn
-    RuntimeDirectoryMode=0755
-    PIDFile=/run/coturn/turnserver.pid
-    EOF
-
-    systemctl daemon-reload
-
+    yum install -y coturn amazon-cloudwatch-agent
+    
+    # Setup users and groups
+    groupadd turnserver || true
+    useradd -r -g turnserver turnserver || true
+    
+    # Setup directories with correct permissions
+    mkdir -p /var/log/coturn /etc/coturn /run/coturn
+    chown -R turnserver:turnserver /var/log/coturn /run/coturn
+    chmod 750 /var/log/coturn
+    chmod 755 /run/coturn
+    
+    # Get instance IP information
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
     ELASTIC_IP=${coturnElasticIp.publicIp}
-
-    groupadd turnserver
-    useradd -r -g turnserver turnserver
-
-    mkdir -p /var/log/coturn
-    chown -R turnserver:turnserver /var/log/coturn
-
+    
+    # Create coturn config
     cat > /etc/coturn/turnserver.conf <<EOF
     listening-port=3478
     listening-ip=$LOCAL_IP
@@ -111,19 +85,19 @@ class AwestruckInfrastructure extends TerraformStack {
     external-ip=$ELASTIC_IP/$LOCAL_IP
     min-port=49152
     max-port=65535
-
+    
     lt-cred-mech
     user=awestruck:${turnPassword}
     realm=awestruck.io
-
+    
     log-file=/var/log/coturn/turnserver.log
     verbose
-
+    
     no-multicast-peers
     no-cli
     mobility
     fingerprint
-
+    
     cli-password=password
     total-quota=100
     max-bps=0
@@ -139,13 +113,56 @@ class AwestruckInfrastructure extends TerraformStack {
     extra-logging
     trace
     verbose
-    log-binding
-    log-allocate
     EOF
-
+    
     chmod 640 /etc/coturn/turnserver.conf
     chown root:turnserver /etc/coturn/turnserver.conf
-
+    
+    # Setup CloudWatch agent configuration
+    cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
+    {
+      "logs": {
+        "logs_collected": {
+          "files": {
+            "collect_list": [
+              {
+                "file_path": "/var/log/coturn/turnserver.log",
+                "log_group_name": "/coturn/turnserver",
+                "log_stream_name": "{instance_id}",
+                "timezone": "UTC"
+              },
+              {
+                "file_path": "/var/log/syslog",
+                "log_group_name": "/coturn/system",
+                "log_stream_name": "{instance_id}",
+                "timezone": "UTC"
+              }
+            ]
+          }
+        }
+      }
+    }
+    EOF
+    
+    # Setup systemd service override
+    mkdir -p /etc/systemd/system/coturn.service.d
+    cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
+    [Service]
+    User=turnserver
+    Group=turnserver
+    RuntimeDirectory=coturn
+    RuntimeDirectoryMode=0755
+    PIDFile=/run/coturn/turnserver.pid
+    EOF
+    
+    # Start services
+    systemctl daemon-reload
+    systemctl enable amazon-cloudwatch-agent
+    systemctl start amazon-cloudwatch-agent
+    systemctl enable coturn
+    systemctl start coturn
+    
+    # Debug output
     echo "Debug: Setting up TURN server..."
     echo "Debug: Checking TURN config permissions:"
     ls -l /etc/coturn/turnserver.conf
@@ -153,41 +170,8 @@ class AwestruckInfrastructure extends TerraformStack {
     ls -l /var/log/coturn
     echo "Debug: Checking TURN service status:"
     systemctl status coturn || true
-
-    cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
-    {
-      "logs": {
-          "logs_collected": {
-              "files": {
-                  "collect_list": [
-                      {
-                          "file_path": "/var/log/coturn/turnserver.log",
-                          "log_group_name": "/coturn/turnserver",
-                          "log_stream_name": "{instance_id}",
-                          "timezone": "UTC"
-                      },
-                      {
-                          "file_path": "/var/log/syslog",
-                          "log_group_name": "/coturn/system",
-                          "log_stream_name": "{instance_id}",
-                          "timezone": "UTC"
-                      }
-                  ]
-              }
-          }
-      }
-    }
-    EOF
-
-    systemctl enable amazon-cloudwatch-agent
-    systemctl start amazon-cloudwatch-agent
-
     echo "Debug: Checking CloudWatch agent status:"
     systemctl status amazon-cloudwatch-agent || true
-    cat /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log || true
-
-    systemctl enable coturn
-    systemctl start coturn
     `;
 
     new AwsProvider(this, "AWS", {

@@ -84,3 +84,9 @@ test-generate-synth:
 		-H "Content-Type: application/json" \
 		-H "Awestruck-API-Key: $${AWESTRUCK_API_KEY}" \
 		-d '{"prompt":"","provider":"openai","model":"o1-preview"}'
+
+get-coturn-id:
+	aws ec2 describe-instances \
+	--filters "Name=tag:Name,Values=coturn-server" "Name=instance-state-name,Values=running" \
+	--query "Reservations[].Instances[].InstanceId" \
+	--output text

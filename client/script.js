@@ -123,59 +123,87 @@ let pendingCandidates = [];
 async function handleICECandidate(event) {
   if (!event.candidate) return;
   
-  const candidateObj = {
-      candidate: {
-          candidate: event.candidate.candidate,
-          sdpMid: event.candidate.sdpMid,
-          sdpMLineIndex: event.candidate.sdpMLineIndex,
-          usernameFragment: event.candidate.usernameFragment
-      }
-  };
+  const candidateStr = event.candidate.candidate;
+  const parts = candidateStr.split(' ');
+  const type = parts[7];
+  const isProduction = window.location.hostname !== 'localhost';
+
+  console.log("ICE candidate details:", {
+    type,
+    protocol: parts[2],
+    ip: parts[4],
+    port: parts[5],
+    isFiltered: isProduction && type !== 'relay',
+    fullCandidate: candidateStr,
+  });
   
-  // If remote description isn't set yet, queue the candidate
-  if (!pc || !pc.remoteDescription) {
-      pendingCandidates.push(candidateObj);
-      return;
+  if (isProduction && type !== 'relay') {
+    console.warn('Filtered non-relay candidate');
+    return;
   }
 
+  const candidateObj = {
+    candidate: {
+      candidate: event.candidate.candidate,
+      sdpMid: event.candidate.sdpMid,
+      sdpMLineIndex: event.candidate.sdpMLineIndex,
+      usernameFragment: event.candidate.usernameFragment
+    }
+  };
+
   try {
-      const response = await fetch('/ice-candidate', {
-          method: 'POST',
-          headers: {
-              'Content-Type': 'application/json',
-              'X-Session-ID': sessionID
-          },
-          body: JSON.stringify(candidateObj)
-      });
-      if (!response.ok) {
-          console.warn(`Failed to send ICE candidate: ${response.status}`);
-      }
+    const response = await fetch('/ice-candidate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-ID': sessionID
+      },
+      body: JSON.stringify(candidateObj)
+    });
+    if (!response.ok) {
+      console.warn(`Failed to send ICE candidate: ${response.status}`);
+    }
   } catch (error) {
-      console.warn('Failed to send ICE candidate:', error);
+    console.warn('Failed to send ICE candidate:', error);
   }
 }
 
 function handleConnectionStateChange() {
   if (!pc) {
-      console.warn('Connection state change called but pc is null');
-      return;
+    console.warn('Connection state change called but pc is null');
+    return;
   }
 
   const states = {
-      connectionState: pc.connectionState,
-      iceConnectionState: pc.iceConnectionState,
-      iceGatheringState: pc.iceGatheringState,
-      signalingState: pc.signalingState
+    connectionState: pc.connectionState,
+    iceConnectionState: pc.iceConnectionState,
+    iceGatheringState: pc.iceGatheringState,
+    signalingState: pc.signalingState
   };
   console.log('Connection state change:', states);
 
   switch (pc.connectionState) {
-      case 'connected':
-          startConnectionMonitoring();
-          break;
-      case 'failed':
-          cleanupConnection();
-          break;
+    case 'connected':
+      console.log('Connection established, checking media tracks...');
+      pc.getReceivers().forEach((receiver) => {
+        console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
+      });
+      startConnectionMonitoring();
+      break;
+
+    case 'disconnected':
+      console.log('Connection disconnected. Last known state:', states);
+      logLastKnownGoodConnection();
+      break;
+
+    case 'failed':
+      console.error('Connection failed:', states);
+      cleanupConnection();
+      break;
+
+    case 'closed':
+      console.log('Connection closed cleanly');
+      break;
   }
 }
 
@@ -377,13 +405,13 @@ const TURN_CONFIG = {
       iceServers: [
           {
               urls: [
-                  'turn:localhost:3478?transport=udp',
-                  'turn:localhost:3478?transport=tcp'
+                "turn:localhost:3478?transport=udp",
+                "turn:localhost:3478?transport=tcp"
               ],
-              username: 'awestruck',
-              credential: 'password',
-              credentialType: 'password',
-              realm: 'localhost'
+              username: "awestruck",
+              credential: "password",
+              credentialType: "password",
+              realm: "localhost"
           }
       ],
       iceTransportPolicy: 'all',
@@ -393,13 +421,13 @@ const TURN_CONFIG = {
       iceServers: [
           {
               urls: [
-                  'turn:turn.awestruck.io:3478?transport=udp',
-                  'turn:turn.awestruck.io:3478?transport=tcp'
+                "turn:turn.awestruck.io:3478?transport=udp",
+                "turn:turn.awestruck.io:3478?transport=tcp"
               ],
-              username: 'awestruck',
-              credential: 'password',
-              credentialType: 'password',
-              realm: 'awestruck.io'
+              username: "awestruck",
+              credential: "password",
+              credentialType: "password",
+              realm: "awestruck.io"
           }
       ],
       iceTransportPolicy: 'relay',
