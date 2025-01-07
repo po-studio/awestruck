@@ -5,6 +5,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	synth "github.com/po-studio/go-webrtc-server/synth"
 	webrtc "github.com/po-studio/go-webrtc-server/webrtc"
 )
 
@@ -15,6 +16,8 @@ func NewRouter() *mux.Router {
 	router.HandleFunc("/", serveHome).Methods("GET")
 	router.HandleFunc("/turn-credentials", webrtc.HandleTURNCredentials).Methods("GET")
 	router.HandleFunc("/ice-candidate", webrtc.HandleICECandidate).Methods("POST")
+	router.HandleFunc("/generate-synth", synth.GenerateSynth).Methods("POST")
+	router.HandleFunc("/synth-code", webrtc.HandleSynthCode).Methods("GET")
 	router.PathPrefix("/").Handler(serveStatic("./client/"))
 	return router
 }

@@ -7,18 +7,21 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/po-studio/go-webrtc-server/config"
 	"github.com/po-studio/go-webrtc-server/routes"
 )
 
 var (
-	environment = os.Getenv("ENVIRONMENT")
+	awestruck_env  = os.Getenv("AWESTRUCK_ENV")
+	openai_api_key = os.Getenv("OPENAI_API_KEY")
 )
 
 func main() {
-	if environment == "" {
-		environment = "development" // Default to development if not set
+	if awestruck_env == "" {
+		awestruck_env = "development" // Default to development if not set
 	}
-	log.Printf("Starting server in %s environment", environment)
+	config.Init(awestruck_env, openai_api_key)
+	log.Printf("Starting server in %s environment", awestruck_env)
 
 	// Graceful shutdown
 	signalChannel := make(chan os.Signal, 1)

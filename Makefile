@@ -10,7 +10,7 @@ AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output t
 ECR_REPO = po-studio/awestruck
 ECR_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 
-.PHONY: build up-turn down-turn up down rshell shell aws-login aws-push deploy-all
+.PHONY: build up down test-generate-synth aws-login aws-push deploy-all
 
 # ---------------------------------------
 # local dev only
@@ -77,3 +77,10 @@ deploy-all: build aws-login
 	docker push $(ECR_URL)/$(ECR_REPO):latest
 	# Deploy infrastructure
 	cd infra && npm install && cdktf deploy --auto-approve
+
+test-generate-synth:
+	curl -X POST \
+		http://localhost:8080/generate-synth \
+		-H "Content-Type: application/json" \
+		-H "Awestruck-API-Key: $${AWESTRUCK_API_KEY}" \
+		-d '{"prompt":"","provider":"openai","model":"o1-preview"}'

@@ -3,12 +3,10 @@ module github.com/po-studio/go-webrtc-server
 go 1.18
 
 require (
-	github.com/aws/aws-sdk-go v1.55.5
 	github.com/gorilla/mux v1.8.1
 	github.com/pion/webrtc/v3 v3.2.29
+	github.com/sashabaranov/go-openai v1.36.0
 )
-
-require github.com/jmespath/go-jmespath v0.4.0 // indirect
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

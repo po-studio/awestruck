@@ -1,5 +1,3 @@
-// script.js
-
 const sessionID = getSessionID();
 
 function getSessionID() {
@@ -14,6 +12,8 @@ function getSessionID() {
 let pc;
 let pendingIceCandidates = [];
 let isConnectionEstablished = false;
+let audioContext = null;
+let audioElement = null;
 
 let qualityMonitorInterval;
 let audioStatsInterval;
@@ -39,7 +39,7 @@ const TURN_CONFIG = {
     // Docker networking can interfere with NAT traversal when forcing relay
     // ideally local would mirror deployed environments more closely,
     // but this is a good workaround for now
-    iceTransportPolicy: 'relay',
+    iceTransportPolicy: 'all',
     iceCandidatePoolSize: 1,
   },
   production: {
@@ -112,11 +112,39 @@ function handleDisconnect() {
   clearInterval(audioLevelsInterval);
   clearInterval(trackStatsInterval);
   
+  if (iceCheckingTimeout) {
+    clearTimeout(iceCheckingTimeout);
+    iceCheckingTimeout = null;
+  }
+  
+  if (audioElement) {
+    audioElement.srcObject = null;
+    audioElement.remove();
+    audioElement = null;
+  }
+  
+  if (audioContext) {
+    audioContext.close().then(() => {
+      audioContext = null;
+      console.log('Audio context closed successfully');
+    }).catch(err => {
+      console.error('Error closing audio context:', err);
+    });
+  }
+  
   if (pc) {
     logLastKnownGoodConnection();
     pc.close();
     pc = null;
   }
+  
+  // Clear the code display with a fade out effect
+  const codeDisplay = document.getElementById('codeDisplay');
+  codeDisplay.style.transition = 'opacity 0.3s ease-out';
+  codeDisplay.style.opacity = '0';
+  setTimeout(() => {
+    clearCode();
+  }, 300);
   
   console.log('Session cleanup completed:', {
     ...sessionInfo,
@@ -124,7 +152,7 @@ function handleDisconnect() {
     peerConnectionClosed: true
   });
   
-  updateToggleButton({ text: 'Stream New Synth', disabled: false, disconnectStyle: false });
+  updateToggleButton({ text: 'Generate Synth', disabled: false, disconnectStyle: false });
   isConnectionEstablished = false;
 }
 
@@ -143,6 +171,11 @@ async function setupPeerConnection(config) {
 }
 
 function onConnectionStateChange() {
+  if (!pc) {
+    console.warn('Connection state change called but pc is null');
+    return;
+  }
+
   const states = {
     connectionState: pc.connectionState,
     iceConnectionState: pc.iceConnectionState,
@@ -150,25 +183,6 @@ function onConnectionStateChange() {
     signalingState: pc.signalingState,
   };
   console.log('Connection state change:', states);
-
-  // Add detailed state logging
-  if (pc.connectionState === 'connected') {
-    console.log('Connection established, checking media tracks...');
-    pc.getReceivers().forEach((receiver) => {
-      const track = receiver.track;
-      console.log('Track details:', {
-        kind: track.kind,
-        state: track.readyState,
-        enabled: track.enabled,
-        muted: track.muted,
-        id: track.id
-      });
-      
-      receiver.getStats().then(stats => {
-        console.log('Receiver stats:', stats);
-      });
-    });
-  }
 
   switch (pc.connectionState) {
     case 'connected':
@@ -181,48 +195,100 @@ function onConnectionStateChange() {
       startAudioStatsMonitoring();
 
       updateToggleButton({ text: 'Disconnect', disconnectStyle: true, disabled: false });
+      
+      // Fetch and display the synth code
+      fetch('/synth-code', {
+        headers: {
+          'X-Session-ID': sessionID
+        }
+      })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch synth code: ${response.status}`);
+          }
+          return response.text();
+        })
+        .then(code => typeCode(code))
+        .catch(error => console.error('Failed to fetch synth code:', error));
       break;
 
     case 'disconnected':
       console.log('Connection disconnected. Last known state:', states);
       logLastKnownGoodConnection();
-      // Consider handling a reconnect or just leaving it disconnected
+      clearCode();
       break;
 
     case 'failed':
-      console.error('Connection failed:', states);
-      updateToggleButton({ text: 'Failed to Connect - Retry?', disabled: false });
+      console.error('Failed:', states);
+      updateToggleButton({ text: 'Generate Synth', disabled: false });
+      clearCode();
       break;
 
     case 'closed':
       console.log('Connection closed cleanly');
       updateToggleButton({ text: 'Stream New Synth', disabled: false });
+      clearCode();
       break;
   }
 }
 
+let iceCheckingTimeout = null;
+
 function onIceConnectionStateChange() {
   console.log('ICE Connection State:', pc.iceConnectionState);
+
+  const timestamp = new Date().toISOString();
+  const diagnosticInfo = {
+      timestamp,
+      iceState: pc.iceConnectionState,
+      connectionState: pc.connectionState,
+      signalingState: pc.signalingState,
+      sessionId: sessionID
+  };
+
+  console.log('[ICE] State change diagnostic info:', diagnosticInfo);
+
+  if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'failed') {
+      pc.getStats().then(stats => {
+          const candidatePairs = [];
+          stats.forEach(stat => {
+              if (stat.type === 'candidate-pair') {
+                  candidatePairs.push({
+                      state: stat.state,
+                      nominated: stat.nominated,
+                      priority: stat.priority
+                  });
+              }
+          });
+          console.log('[ICE] Candidate pairs during', pc.iceConnectionState, ':', candidatePairs);
+      });
+  }
+  
+  if (iceCheckingTimeout) {
+    clearTimeout(iceCheckingTimeout);
+    iceCheckingTimeout = null;
+  }
   
   if (pc.iceConnectionState === 'checking') {
-    // Set a timeout for the checking state
-    setTimeout(() => {
-      if (pc.iceConnectionState === 'checking') {
+    iceCheckingTimeout = setTimeout(() => {
+      if (pc && pc.iceConnectionState === 'checking') {
         console.warn('ICE checking timeout - forcing reconnection');
         handleDisconnect();
         initConnection();
       }
-    }, 10000); // 10 second timeout
+    }, 30000);
   }
   
   if (pc.iceConnectionState === 'failed') {
     console.error('ICE Connection failed - gathering diagnostic information');
     logLastKnownGoodConnection();
-    pc.getStats().then(stats => {
-      console.log('Final ICE stats before failure:', stats);
-    });
     
-    // Immediate cleanup for localhost/development
+    if (pc) {
+      pc.getStats().then(stats => {
+        console.log('Final ICE stats before failure:', stats);
+      });
+    }
+    
     if (!isProduction) {
       console.log('Development environment - immediate cleanup on failure');
       handleDisconnect();
@@ -230,57 +296,20 @@ function onIceConnectionStateChange() {
       return;
     }
     
-    // Production can try ICE restart
-    pc.restartIce();
-    setTimeout(() => {
-      if (pc.iceConnectionState === 'failed') {
-        handleDisconnect();
-        updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
-      }
-    }, 5000);
+    if (pc) {
+      pc.restartIce();
+      setTimeout(() => {
+        if (pc && pc.iceConnectionState === 'failed') {
+          handleDisconnect();
+          updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
+        }
+      }, 3000);
+    }
   }
 }
 
 function onIceCandidate(event) {
   if (event.candidate) {
-    const candidateStr = event.candidate.candidate;
-    const parts = candidateStr.split(' ');
-    const type = parts[7];
-    const protocol = parts[2].toLowerCase();
-    const ip = parts[4];
-    
-    const candidateInfo = {
-      type,
-      protocol,
-      ip,
-      port: parts[5],
-      priority: event.candidate.priority,
-      fullCandidate: candidateStr,
-    };
-    
-    console.log("ICE candidate details:", candidateInfo);
-    
-    // Only allow TURN/relay candidates
-    if (type !== 'relay') {
-      console.warn('Filtered non-relay candidate:', candidateInfo);
-      return;
-    }
-    
-    // Special handling for localhost development
-    if (!isProduction && ip === '127.0.0.1') {
-      console.log('Accepting localhost relay candidate');
-      pendingIceCandidates.push(event.candidate);
-      sendIceCandidate(event.candidate);
-      return;
-    }
-    
-    // For all other cases, prefer UDP over TCP
-    if (protocol === 'tcp' && pendingIceCandidates.some(c => 
-      c.candidate.includes('relay') && c.candidate.includes('udp'))) {
-      console.log('Skipping TCP relay candidate as UDP is available');
-      return;
-    }
-    
     pendingIceCandidates.push(event.candidate);
     sendIceCandidate(event.candidate);
   }
@@ -294,18 +323,29 @@ function onIceGatheringStateChange() {
 }
 
 async function onNegotiationNeeded() {
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    console.log("Local description set, sending offer to server");
-    await sendOffer(pc.localDescription);
-  } catch (err) {
-    console.error("Error during negotiation:", err);
-    if (pc) {
-      pc.close();
-      pc = null;
+  if (sessionID) {
+    try {
+      const response = await fetch('/stop', {
+        method: 'POST',
+        headers: {
+          'X-Session-ID': sessionID
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to cleanup previous session');
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Create and send offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log("Local description set, sending offer to server");
+      await sendOffer(pc.localDescription);
+    } catch (error) {
+      console.error('Negotiation failed:', error);
+      handleDisconnect();
+      return;
     }
-    updateToggleButton({ text: 'Connection Failed - Retry?', disabled: false });
   }
 }
 
@@ -488,26 +528,32 @@ async function sendOffer(offer) {
 }
 
 async function sendIceCandidate(candidate) {
-  const requestBody = {
-    candidate: {
-      candidate: candidate.candidate,
-      sdpMid: candidate.sdpMid,
-      sdpMLineIndex: candidate.sdpMLineIndex,
-      usernameFragment: candidate.usernameFragment,
-    },
-  };
+  try {
+    const requestBody = {
+      candidate: {
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid,
+        sdpMLineIndex: candidate.sdpMLineIndex,
+        usernameFragment: candidate.usernameFragment,
+      },
+    };
 
-  const response = await fetch('/ice-candidate', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Session-ID': sessionID,
-    },
-    body: JSON.stringify(requestBody),
-  });
+    const response = await fetch('/ice-candidate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-ID': sessionID,
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to send ICE candidate: ${response.status}`);
+    if (!response.ok) {
+      console.warn(`ICE candidate send failed with status ${response.status}`, candidate);
+      return; // Don't throw, just log and continue
+    }
+  } catch (error) {
+    console.warn('Failed to send ICE candidate:', error);
+    // Don't throw, just log the error
   }
 }
 
@@ -517,8 +563,8 @@ async function stopSynthesis() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Session-ID': sessionID,
-      },
+        'X-Session-ID': sessionID
+      }
     });
 
     if (!response.ok) {
@@ -647,4 +693,50 @@ function monitorTrackStats(track) {
       });
     });
   }, 1000);
+}
+
+// ensures text and scrolling stay perfectly synchronized
+// slows down typing speed for better readability
+// uses immediate scrolling to prevent lag
+async function typeCode(code) {
+  const codeDisplay = document.getElementById('codeDisplay');
+  codeDisplay.textContent = '';
+  codeDisplay.classList.add('visible');
+  
+  // Only add syntax highlighting class if Prism is available
+  if (window.Prism) {
+    codeDisplay.classList.add('language-supercollider');
+  }
+  
+  const chunkSize = 20; // Smaller chunks for smoother typing
+  for (let i = 0; i < code.length; i += chunkSize) {
+    const chunk = code.slice(i, i + chunkSize);
+    codeDisplay.textContent += chunk;
+    
+    // Use immediate scrolling to stay in sync with typing
+    codeDisplay.scrollTop = codeDisplay.scrollHeight;
+    
+    await new Promise(resolve => setTimeout(resolve, 25)); // Slower typing speed
+  }
+  
+  // Apply syntax highlighting after typing is complete if Prism is available
+  if (window.Prism && typeof window.Prism.highlightElement === 'function') {
+    try {
+      Prism.highlightElement(codeDisplay);
+    } catch (e) {
+      console.warn('Prism syntax highlighting failed:', e);
+    }
+    codeDisplay.scrollTop = codeDisplay.scrollHeight;
+  }
+}
+
+function clearCode() {
+  const codeDisplay = document.getElementById('codeDisplay');
+  codeDisplay.textContent = '';
+  codeDisplay.style.opacity = '1'; // Reset opacity
+  codeDisplay.style.transition = ''; // Clear any transition
+  codeDisplay.classList.remove('visible');
+  if (window.Prism) {
+    codeDisplay.classList.remove('language-supercollider');
+  }
 }

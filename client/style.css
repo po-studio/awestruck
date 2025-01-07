@@ -1,0 +1,75 @@
+.code-display {
+    display: none;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 1.5rem;
+    margin: 0;
+    background: #1e1e1e;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    width: 50vw;
+    height: 80vh;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    scroll-behavior: smooth;
+}
+
+.code-display.visible {
+    display: block;
+    opacity: 1;
+}
+
+/* Prism.js theme overrides */
+.code-display.language-supercollider {
+    color: #d4d4d4;
+}
+
+.code-display .token.comment {
+    color: #6a9955;
+}
+
+.code-display .token.function {
+    color: #dcdcaa;
+}
+
+.code-display .token.keyword {
+    color: #569cd6;
+}
+
+.code-display .token.string {
+    color: #ce9178;
+}
+
+.code-display .token.number {
+    color: #b5cea8;
+}
+
+.code-display .token.operator {
+    color: #d4d4d4;
+}
+
+.code-display .token.punctuation {
+    color: #d4d4d4;
+}
+
+/* Scrollbar styling */
+.code-display::-webkit-scrollbar {
+    width: 8px;
+}
+
+.code-display::-webkit-scrollbar-track {
+    background: #2e2e2e;
+    border-radius: 4px;
+}
+
+.code-display::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 4px;
+}
+
+.code-display::-webkit-scrollbar-thumb:hover {
+    background: #666;
+} 

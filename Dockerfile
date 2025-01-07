@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
-    supercollider \
+    supercollider-server \
+    supercollider-language \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     libjack-jackd2-dev \
@@ -59,15 +60,19 @@ RUN useradd -m appuser && \
     chown appuser:appuser /tmp/runtime-appuser
 
 WORKDIR /app
-RUN chown -R appuser:appuser /app && \
-    echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# RUN chown -R appuser:appuser /app && \
+#     echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Copy built artifacts and application files
 COPY --from=builder /app/webrtc-server /app/webrtc-server
 COPY supercollider /app/supercollider
 COPY client /app/client
 COPY startup.sh /app/startup.sh
-RUN chmod +x /app/startup.sh
+# RUN chmod +x /app/startup.sh
+
+RUN chown -R appuser:appuser /app && \
+    chmod +x /app/startup.sh && \
+    echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 USER appuser
 
@@ -79,6 +84,6 @@ ENV GST_DEBUG=4 \
     JACK_NO_START_SERVER=1 \
     XDG_RUNTIME_DIR=/tmp/runtime-appuser \
     JACK_SAMPLE_RATE=48000 \
-    ENVIRONMENT=development
+    AWESTRUCK_ENV=development
 
 CMD ["./startup.sh"]
