@@ -14,7 +14,6 @@
     white-space: pre-wrap;
     opacity: 0;
     transition: opacity 0.3s ease;
-    scroll-behavior: smooth;
 }
 
 .code-display.visible {
@@ -28,23 +27,26 @@
 }
 
 .code-display .token.comment {
-    color: #6a9955;
+    color: #00FF86;
+    opacity: 0.6;
 }
 
 .code-display .token.function {
-    color: #dcdcaa;
+    color: #FF0086;
 }
 
 .code-display .token.keyword {
-    color: #569cd6;
+    color: #00FF86;
 }
 
 .code-display .token.string {
-    color: #ce9178;
+    color: #FF0086;
+    opacity: 0.8;
 }
 
 .code-display .token.number {
-    color: #b5cea8;
+    color: #00FF86;
+    opacity: 0.9;
 }
 
 .code-display .token.operator {
@@ -53,6 +55,7 @@
 
 .code-display .token.punctuation {
     color: #d4d4d4;
+    opacity: 0.7;
 }
 
 /* Scrollbar styling */

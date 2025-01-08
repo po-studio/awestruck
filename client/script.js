@@ -16,7 +16,9 @@ let audioElement = null;
 let codePollingInterval = null;
 let qualityMonitorInterval = null;
 let iceCheckingTimeout = null;
-// We removed unused global intervals and the unused global turnConfig variable
+let audioStatsInterval = null;
+let audioLevelsInterval = null;
+let trackStatsInterval = null;
 
 // Add session ID to all HTMX requests
 document.body.addEventListener('htmx:configRequest', evt => {
@@ -44,21 +46,16 @@ async function handleSynthResponse(event) {
   button.disabled = true;
 
   try {
-      // Dynamically fetch TURN credentials from the server
       const turnResponse = await fetch('/turn-credentials', {
           headers: { 'X-Session-ID': sessionID }
       });
       const fetchedTurnConfig = await turnResponse.json();
 
-      // Initialize WebRTC
       await setupWebRTC(fetchedTurnConfig);
 
       button.textContent = 'Stop Synth';
       button.classList.add('button-disconnect');
       button.disabled = false;
-
-      // Start polling for code updates
-      startCodeMonitoring();
   } catch (error) {
       console.error('Connection failed:', error);
       button.textContent = 'Error - Try Again';
@@ -69,7 +66,7 @@ async function handleSynthResponse(event) {
 async function setupWebRTC(config) {
   pc = new RTCPeerConnection(config);
 
-  pc.onconnectionstatechange = handleConnectionStateChange;
+  pc.onconnectionstatechange = onConnectionStateChange;
   pc.onicecandidate = handleICECandidate;
   pc.oniceconnectionstatechange = onIceConnectionStateChange;
   pc.onicegatheringstatechange = onIceGatheringStateChange;
@@ -169,9 +166,9 @@ async function handleICECandidate(event) {
   }
 }
 
-function handleConnectionStateChange() {
+function onConnectionStateChange() {
   if (!pc) {
-    console.warn('Connection state change called but pc is null');
+    console.log('Connection state change called but pc is null');
     return;
   }
 
@@ -179,7 +176,7 @@ function handleConnectionStateChange() {
     connectionState: pc.connectionState,
     iceConnectionState: pc.iceConnectionState,
     iceGatheringState: pc.iceGatheringState,
-    signalingState: pc.signalingState
+    signalingState: pc.signalingState,
   };
   console.log('Connection state change:', states);
 
@@ -189,21 +186,37 @@ function handleConnectionStateChange() {
       pc.getReceivers().forEach((receiver) => {
         console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
       });
+
       startConnectionMonitoring();
+      startAudioStatsMonitoring();
+
+      // updateToggleButton({ text: 'Disconnect', disconnectStyle: true, disabled: false });
+      
+      // Fetch and display the synth code
+      console.log('Fetching synth code...');
+      fetch('/synth-code', {
+        headers: {
+          'X-Session-ID': sessionID
+        }
+      })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch synth code: ${response.status}`);
+          }
+          return response.text();
+        })
+        .then(code => {
+          console.log('Code fetched, length:', code.length);
+          return typeCode(code);
+        })
+        .catch(error => console.error('Failed to fetch synth code:', error));
       break;
 
     case 'disconnected':
-      console.log('Connection disconnected. Last known state:', states);
-      logLastKnownGoodConnection();
-      break;
-
     case 'failed':
-      console.error('Connection failed:', states);
-      cleanupConnection();
-      break;
-
     case 'closed':
-      console.log('Connection closed cleanly');
+      console.log('Connection ended:', states);
+      clearCode();
       break;
   }
 }
@@ -282,50 +295,35 @@ async function cleanupConnection() {
   });
 }
 
-function startCodeMonitoring() {
-  const codeDisplay = document.getElementById('codeDisplay');
-
-  const pollCode = async () => {
-      if (!pc || pc.connectionState === 'closed') return;
-      try {
-          const response = await fetch('/synth-code', {
-              headers: { 'X-Session-ID': sessionID }
-          });
-          const code = await response.text();
-          await typeCode(code);
-      } catch (error) {
-          console.error('Failed to fetch code:', error);
-      }
-  };
-
-  // Kick it off once, then poll every 5s
-  pollCode();
-  codePollingInterval = setInterval(pollCode, 5000);
-}
-
 async function typeCode(code) {
-  const codeDisplay = document.getElementById('codeDisplay');
-  if (!codeDisplay) return;
+    const codeDisplay = document.getElementById('codeDisplay');
+    if (!codeDisplay) return;
 
-  clearCode();
-  codeDisplay.classList.add('visible', 'language-supercollider');
+    clearCode();
+    codeDisplay.classList.add('visible');
+    
+    // Ensure language class is added before content
+    codeDisplay.classList.add('language-supercollider');
+    
+    const chars = code.split('');
+    let currentText = '';
 
-  const chars = code.split('');
-  let currentText = '';
-
-  for (const char of chars) {
-      currentText += char;
-      codeDisplay.textContent = currentText;
-      Prism.highlightElement(codeDisplay);
-      // Random typing speed 1-5ms
-      await new Promise(resolve => setTimeout(resolve, Math.random() * 4 + 1));
-  }
+    for (const char of chars) {
+        currentText += char;
+        codeDisplay.textContent = currentText;
+        if (window.Prism) {
+            Prism.highlightElement(codeDisplay);
+        }
+        await new Promise(resolve => setTimeout(resolve, Math.random() * 4 + 1));
+    }
 }
 
 function clearCode() {
   const codeDisplay = document.getElementById('codeDisplay');
   if (codeDisplay) {
       codeDisplay.textContent = '';
+      codeDisplay.style.opacity = '1';
+      codeDisplay.style.transition = '';
       codeDisplay.classList.remove('visible', 'language-supercollider');
   }
 }
@@ -540,6 +538,28 @@ function onIceGatheringStateChange() {
   }
 }
 
+function startAudioStatsMonitoring() {
+  clearInterval(audioStatsInterval);
+  audioStatsInterval = setInterval(() => {
+    if (!pc) {
+      clearInterval(audioStatsInterval);
+      return;
+    }
+    pc.getStats().then((stats) => {
+      stats.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+          console.log('Audio Stats:', {
+            packetsReceived: report.packetsReceived,
+            bytesReceived: report.bytesReceived,
+            packetsLost: report.packetsLost,
+            jitter: report.jitter,
+          });
+        }
+      });
+    });
+  }, 2000);
+}
+
 function logLastKnownGoodConnection() {
   if (!pc) return;
 
@@ -618,3 +638,28 @@ document.addEventListener('DOMContentLoaded', function() {
         evt.detail.headers['X-Session-ID'] = sessionID;
     });
 });
+
+// register supercollider syntax highlighting
+Prism.languages.supercollider = {
+    'comment': {
+        pattern: /\/\/.*|\/\*[\s\S]*?\*\//,
+        greedy: true
+    },
+    'string': {
+        pattern: /"(?:\\.|[^\\"])*"/,
+        greedy: true
+    },
+    'class-name': {
+        pattern: /\b[A-Z]\w*\b/,
+        greedy: true
+    },
+    'function': {
+        pattern: /\b(?:SynthDef|Out|Mix|Pan2|SinOsc|LFNoise1|EnvGen|Env|Array|RLPF|BPF|HPF|GVerb|Splay|Limiter|Saw|WhiteNoise|PinkNoise|BrownNoise|DelayN|LocalIn|LocalOut|Dust|Decay|FreqShift|PitchShift|tanh)\b\.?(?=\()/,
+        greedy: true
+    },
+    'number': /\b-?(?:0x[\da-f]+|\d*\.?\d+(?:e[+-]?\d+)?)\b/i,
+    'keyword': /\b(?:var|arg|kr|ar|mul|add|range|exprange|fill|new)\b/,
+    'operator': /[-+*\/=!<>]=?|[&|^~]|\b(?:and|or|not)\b/,
+    'punctuation': /[{}[\];(),.:]/
+};
+
