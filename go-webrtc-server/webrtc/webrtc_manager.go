@@ -405,7 +405,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	}
 
 	// Only force TURN relay in production/staging environments
-	if os.Getenv("ENVIRONMENT") != "development" {
+	if os.Getenv("AWESTRUCK_ENV") != "development" {
 		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
 	}
 

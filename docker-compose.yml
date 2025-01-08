@@ -47,7 +47,7 @@ services:
       - JACK_SAMPLE_RATE=48000
       - GST_DEBUG=2
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
-      - ENVIRONMENT=development
+      - AWESTRUCK_ENV=development
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
     depends_on:
