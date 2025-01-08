@@ -36,6 +36,7 @@ async function handleSynthResponse(event) {
   if (pc) {
       await cleanupConnection();
       button.textContent = 'Generate Synth';
+      button.classList.remove('button-disconnect');
       return;
   }
 
@@ -376,6 +377,7 @@ async function handleSynthClick() {
   if (pc) {
       await cleanupConnection();
       button.textContent = 'Generate Synth';
+      button.classList.remove('button-disconnect');
       return;
   }
 

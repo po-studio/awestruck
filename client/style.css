@@ -110,8 +110,7 @@ body {
 }
 
 .connection-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 255, 134, 0.2);
+    filter: brightness(1.1);
 }
 
 .connection-button.button-disconnect {
@@ -119,11 +118,122 @@ body {
 }
 
 .connection-button.button-disconnect:hover {
-    box-shadow: 0 4px 12px rgba(255, 0, 134, 0.2);
+    filter: brightness(1.1);
 }
 
 .connection-button:disabled {
     opacity: 0.7;
     cursor: not-allowed;
     transform: none;
+}
+
+h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 3rem;
+    margin: 0;
+    font-weight: 500;
+}
+
+h2 {
+    font-family: 'Figtree', sans-serif;
+    font-size: 2.5rem;
+    margin: 0.5rem 0;
+    font-weight: 500;
+}
+
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.description {
+    font-size: 1.2rem;
+    margin: 0.5rem 0;
+    color: #ccc;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.logo-mark {
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+.logo-mark img {
+    width: 100%;
+    height: 100%;
+}
+
+.nav {
+    position: fixed;
+    bottom: 2rem;
+    left: 2rem;
+    display: flex;
+    gap: 1rem;
+}
+
+.nav a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1.2rem;
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+.nav a:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 1024px) {
+    .container {
+        flex-direction: column;
+        gap: 2rem;
+    }
+
+    .code-display {
+        width: auto;
+        max-height: 50vh;
+    }
+
+    h1 { font-size: 2.5rem; }
+    h2 { font-size: 2rem; }
+    .description { font-size: 1rem; }
+}
+
+@media (max-width: 480px) {
+    .container {
+        padding: 1rem;
+        gap: 1.5rem;
+    }
+    
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.75rem; }
+    .description { font-size: 0.9rem; }
+    
+    button {
+        width: 100%;
+        padding: 0.875rem 1.5rem;
+    }
+    
+    .nav {
+        left: 1rem;
+        bottom: 1rem;
+    }
+    
+    .nav a { font-size: 1rem; }
+    .logo-mark {
+        width: 2rem;
+        height: 2rem;
+    }
+}
+
+@media (max-height: 700px) {
+    .code-display {
+        max-height: 40vh;
+    }
 } 
