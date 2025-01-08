@@ -57,10 +57,14 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     const userData = `#!/bin/bash
+    exec 1> >(logger -s -t $(basename $0)) 2>&1
     set -ex
     
     yum update -y
     yum install -y coturn amazon-cloudwatch-agent
+
+    amazon-linux-extras enable epel
+    yum install -y epel-release
     
     groupadd turnserver || true
     useradd -r -g turnserver turnserver || true
@@ -86,6 +90,10 @@ class AwestruckInfrastructure extends TerraformStack {
     user=awestruck:${turnPassword}
     realm=awestruck.io
     log-file=/var/log/coturn/turnserver.log
+    debug
+    extra-logging
+    trace
+    syslog
     verbose
     log-binding
     log-allocate
@@ -139,6 +147,8 @@ class AwestruckInfrastructure extends TerraformStack {
     RuntimeDirectory=coturn
     RuntimeDirectoryMode=0755
     PIDFile=/run/coturn/turnserver.pid
+    ExecStartPre=/bin/mkdir -p /run/coturn
+    ExecStartPre=/bin/chown -R turnserver:turnserver /run/coturn
     EOF
     
     systemctl daemon-reload
