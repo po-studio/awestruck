@@ -28,7 +28,6 @@ import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile
 import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
 import { Eip } from "@cdktf/provider-aws/lib/eip";
 import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
-import { DataAwsCloudwatchLogGroup } from "@cdktf/provider-aws/lib/data-aws-cloudwatch-log-group";
 
 dotenv.config();
 
@@ -58,44 +57,51 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     const userData = `#!/bin/bash
+    set -e
     exec 1> >(logger -s -t $(basename $0)) 2>&1
+
+    # system updates and installation
     yum update -y
     amazon-linux-extras enable epel
-
     yum install -y epel-release
     yum install -y coturn amazon-cloudwatch-agent
 
+    # create required directories with proper permissions
     mkdir -p /etc/coturn /var/log/coturn /run/coturn
     chmod 755 /etc/coturn /var/log/coturn /run/coturn
-    chown turnserver:turnserver /run/coturn
+    chown turnserver:turnserver /run/coturn /var/log/coturn
 
+    # get instance metadata
+    LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+    ELASTIC_IP=${coturnElasticIp.publicIp}
+
+    # configure coturn service directory
     mkdir -p /etc/systemd/system/coturn.service.d/
-
     cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
     [Service]
+    User=turnserver
+    Group=turnserver
     RuntimeDirectory=coturn
     RuntimeDirectoryMode=0755
     PIDFile=/run/coturn/turnserver.pid
     EOF
 
-    systemctl daemon-reload
-
-    LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    ELASTIC_IP=${coturnElasticIp.publicIp}
-
+    # configure turn server
     cat > /etc/coturn/turnserver.conf <<EOF
-
+    # network settings
     listening-port=3478
-    listening-ip=$LOCAL_IP
-    relay-ip=$LOCAL_IP
-    external-ip=$ELASTIC_IP
+    listening-ip=\$LOCAL_IP
+    relay-ip=\$LOCAL_IP
+    external-ip=\$ELASTIC_IP
     min-port=49152
     max-port=65535
 
+    # authentication
     lt-cred-mech
-    user=awestruck:${turnPassword}
+    user=turnserver:${turnPassword}
     realm=awestruck.io
 
+    # logging configuration
     log-file=/var/log/coturn/turnserver.log
     syslog
     log-binding
@@ -104,11 +110,12 @@ class AwestruckInfrastructure extends TerraformStack {
     extra-logging
     trace
 
+    # security settings
     no-multicast-peers
     no-cli
     mobility
     fingerprint
-    cli-password=password
+    cli-password=${turnPassword}
     total-quota=100
     max-bps=0
     no-auth-pings
@@ -116,17 +123,13 @@ class AwestruckInfrastructure extends TerraformStack {
     no-tlsv1_1
     stale-nonce=0
     cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
-    syslog
-    log-binding
-    log-allocate
-    debug
-    extra-logging
-    trace
-    verbose
-    log-binding
-    log-allocate
     EOF
 
+    # set proper permissions for config
+    chown turnserver:turnserver /etc/coturn/turnserver.conf
+    chmod 644 /etc/coturn/turnserver.conf
+
+    # configure cloudwatch
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
       "agent": {
@@ -143,7 +146,7 @@ class AwestruckInfrastructure extends TerraformStack {
                 "log_stream_name": "{instance_id}",
                 "timezone": "UTC",
                 "timestamp_format": "%Y-%m-%d %H:%M:%S",
-                "multi_line_start_pattern": "^\\[\\d{4}-\\d{2}-\\d{2}"
+                "multi_line_start_pattern": "^\\\\["
               },
               {
                 "file_path": "/var/log/syslog",
@@ -158,15 +161,17 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     }
     EOF
-    systemctl enable amazon-cloudwatch-agent
-    systemctl start amazon-cloudwatch-agent
 
-    chown -R turnserver:turnserver /var/log/coturn
-    chmod 755 /var/log/coturn
+    # setup log file
     touch /var/log/coturn/turnserver.log
+    chown turnserver:turnserver /var/log/coturn/turnserver.log
     chmod 644 /var/log/coturn/turnserver.log
 
-    systemctl restart amazon-cloudwatch-agent
+    # start services
+    systemctl daemon-reload
+    systemctl enable amazon-cloudwatch-agent
+    systemctl start amazon-cloudwatch-agent
+    systemctl enable coturn
     systemctl restart coturn
     `;
 
@@ -481,58 +486,32 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // STUN/TURN ports
-    const stunTurnPorts = [
-      { port: 3478, protocol: "tcp" }, // STUN/TURN
-      { port: 3478, protocol: "udp" }, // STUN/TURN
-    ];
+    // TURN/STUN server ports
+    new SecurityGroupRule(this, "coturn-stun-turn", {
+      type: "ingress",
+      fromPort: 3478,
+      toPort: 3478,
+      protocol: "-1",  // both TCP and UDP
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id,
+    });
 
-    // Allow TURN relay ports
-    new SecurityGroupRule(this, "coturn-relay-range", {
+    // TLS port for TURN
+    new SecurityGroupRule(this, "coturn-tls", {
+      type: "ingress",
+      fromPort: 5349,
+      toPort: 5349,
+      protocol: "tcp",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id,
+    });
+
+    // WebRTC media port range
+    new SecurityGroupRule(this, "coturn-media-range", {
       type: "ingress",
       fromPort: 49152,
       toPort: 65535,
       protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    // Add STUN/TURN specific ports
-    stunTurnPorts.forEach(({ port, protocol }) => {
-      new SecurityGroupRule(this, `coturn-${protocol}-${port}`, {
-        type: "ingress",
-        fromPort: port,
-        toPort: port,
-        protocol,
-        cidrBlocks: ["0.0.0.0/0"],
-        securityGroupId: coturnSecurityGroup.id,
-      });
-    });
-
-    // Allow all outbound traffic
-    new SecurityGroupRule(this, "coturn-egress", {
-      type: "egress",
-      fromPort: 0,
-      toPort: 0,
-      protocol: "-1",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "coturn-https-inbound", {
-      type: "ingress",
-      fromPort: 443,
-      toPort: 443,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "coturn-http-inbound", {
-      type: "ingress",
-      fromPort: 80,
-      toPort: 80,
-      protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
     });
@@ -650,24 +629,12 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "TURN server password for WebRTC connections",
     });
 
-    new DataAwsCloudwatchLogGroup(this, "existing-turnserver-logs", {
-      name: "/coturn/turnserver"
-    });
-
-    new DataAwsCloudwatchLogGroup(this, "existing-system-logs", {
-      name: "/coturn/system"
-    });
-
     new CloudwatchLogGroup(this, "coturn-turnserver-logs", {
       name: "/coturn/turnserver",
       retentionInDays: 14,
       tags: {
         Name: "coturn-turnserver-logs",
       },
-      lifecycle: {
-        preventDestroy: true,
-        ignoreChanges: ["retentionInDays"]
-      }
     });
 
     new CloudwatchLogGroup(this, "coturn-system-logs", {
@@ -676,10 +643,6 @@ class AwestruckInfrastructure extends TerraformStack {
       tags: {
         Name: "coturn-system-logs",
       },
-      lifecycle: {
-        preventDestroy: true,
-        ignoreChanges: ["retentionInDays"]
-      }
     });
 
     new SsmParameter(this, "cloudwatch-agent-config", {
