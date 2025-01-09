@@ -28,6 +28,7 @@ import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile
 import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
 import { Eip } from "@cdktf/provider-aws/lib/eip";
 import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
+import { DataAwsCloudwatchLogGroup } from "@cdktf/provider-aws/lib/data-aws-cloudwatch-log-group";
 
 dotenv.config();
 
@@ -649,12 +650,24 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "TURN server password for WebRTC connections",
     });
 
+    new DataAwsCloudwatchLogGroup(this, "existing-turnserver-logs", {
+      name: "/coturn/turnserver"
+    });
+
+    new DataAwsCloudwatchLogGroup(this, "existing-system-logs", {
+      name: "/coturn/system"
+    });
+
     new CloudwatchLogGroup(this, "coturn-turnserver-logs", {
       name: "/coturn/turnserver",
       retentionInDays: 14,
       tags: {
         Name: "coturn-turnserver-logs",
       },
+      lifecycle: {
+        preventDestroy: true,
+        ignoreChanges: ["retentionInDays"]
+      }
     });
 
     new CloudwatchLogGroup(this, "coturn-system-logs", {
@@ -663,6 +676,10 @@ class AwestruckInfrastructure extends TerraformStack {
       tags: {
         Name: "coturn-system-logs",
       },
+      lifecycle: {
+        preventDestroy: true,
+        ignoreChanges: ["retentionInDays"]
+      }
     });
 
     new SsmParameter(this, "cloudwatch-agent-config", {
