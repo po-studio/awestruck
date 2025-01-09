@@ -58,52 +58,60 @@ class AwestruckInfrastructure extends TerraformStack {
 
     const userData = `#!/bin/bash
     exec 1> >(logger -s -t $(basename $0)) 2>&1
-    set -ex
-    
-    yum update -y
-    yum install -y coturn amazon-cloudwatch-agent
 
+    yum update -y
     amazon-linux-extras enable epel
     yum install -y epel-release
-    
-    groupadd turnserver || true
-    useradd -r -g turnserver turnserver || true
-    
-    mkdir -p /var/log/coturn /etc/coturn /run/coturn
-    chown -R turnserver:turnserver /var/log/coturn /run/coturn
-    chmod 750 /var/log/coturn
-    chmod 755 /run/coturn
-    
+    yum install -y coturn amazon-cloudwatch-agent
+
+    # Create required directories
+    mkdir -p /etc/coturn /var/log/coturn /run/coturn
+    chmod 755 /etc/coturn /var/log/coturn /run/coturn
+    chown turnserver:turnserver /run/coturn
+
+    # Create systemd override directory
+    mkdir -p /etc/systemd/system/coturn.service.d/
+
+    # Create override file
+    cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
+    [Service]
+    RuntimeDirectory=coturn
+    RuntimeDirectoryMode=0755
+    PIDFile=/run/coturn/turnserver.pid
+    EOF
+
+    # Reload systemd
+    systemctl daemon-reload
+
+    # Get instance IPs
     LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
     ELASTIC_IP=${coturnElasticIp.publicIp}
-    
+
+    # Configure TURN server
     cat > /etc/coturn/turnserver.conf <<EOF
+    # Network settings
     listening-port=3478
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
-    external-ip=$ELASTIC_IP
+    external-ip=$ELASTIC_IP/$LOCAL_IP
     min-port=49152
     max-port=65535
-    no-ipv6
-    no-loopback-peers
-    no-tcp-relay
-    relay-threads=4
-    
+
+    # Authentication
     lt-cred-mech
     user=awestruck:${turnPassword}
     realm=awestruck.io
+
+    # Logging
     log-file=/var/log/coturn/turnserver.log
-    debug
-    extra-logging
-    trace
-    syslog
     verbose
-    log-binding
-    log-allocate
+
+    # Performance and security
     no-multicast-peers
     no-cli
     mobility
     fingerprint
+
     cli-password=password
     total-quota=100
     max-bps=0
@@ -112,63 +120,50 @@ class AwestruckInfrastructure extends TerraformStack {
     no-tlsv1_1
     stale-nonce=0
     cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
+    syslog
+    log-binding
+    log-allocate
+    debug
+    extra-logging
+    trace
+    verbose
+    log-binding
+    log-allocate
     EOF
-    
-    chmod 640 /etc/coturn/turnserver.conf
-    chown root:turnserver /etc/coturn/turnserver.conf
-    
+
+    # Configure and start CloudWatch agent
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
       "logs": {
-        "logs_collected": {
-          "files": {
-            "collect_list": [
-              {
-                "file_path": "/var/log/coturn/turnserver.log",
-                "log_group_name": "/coturn/turnserver",
-                "log_stream_name": "{instance_id}",
-                "timezone": "UTC"
-              },
-              {
-                "file_path": "/var/log/syslog",
-                "log_group_name": "/coturn/system",
-                "log_stream_name": "{instance_id}",
-                "timezone": "UTC"
+          "logs_collected": {
+              "files": {
+                  "collect_list": [
+                      {
+                          "file_path": "/var/log/coturn/turnserver.log",
+                          "log_group_name": "/coturn/turnserver",
+                          "log_stream_name": "{instance_id}",
+                          "timezone": "UTC"
+                      },
+                      {
+                          "file_path": "/var/log/syslog",
+                          "log_group_name": "/coturn/system",
+                          "log_stream_name": "{instance_id}",
+                          "timezone": "UTC"
+                      }
+                  ]
               }
-            ]
           }
-        }
       }
     }
     EOF
-    
-    mkdir -p /etc/systemd/system/coturn.service.d
-    cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
-    [Service]
-    User=turnserver
-    Group=turnserver
-    RuntimeDirectory=coturn
-    RuntimeDirectoryMode=0755
-    PIDFile=/run/coturn/turnserver.pid
-    ExecStartPre=/bin/mkdir -p /run/coturn
-    ExecStartPre=/bin/chown -R turnserver:turnserver /run/coturn
-    EOF
-    
-    systemctl daemon-reload
+
     systemctl enable amazon-cloudwatch-agent
     systemctl start amazon-cloudwatch-agent
+
+    # Finally, start COTURN
     systemctl enable coturn
     systemctl start coturn
-    
-    echo "Debug: Setting up TURN server..."
-    echo "Debug: Checking TURN config permissions:"
-    ls -l /etc/coturn/turnserver.conf
-    echo "Debug: Checking TURN log directory permissions:"
-    ls -l /var/log/coturn
-    echo "Debug: Checking TURN service status:"
-    systemctl status coturn || true
-    echo "Debug: Checking CloudWatch agent status:"
-    systemctl status amazon-cloudwatch-agent || true`;
+    `;
 
     new AwsProvider(this, "AWS", {
       region: awsRegion,
@@ -250,7 +245,7 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          fromPort: 10000, // change to 49152? see min-port
+          fromPort: 10000,
           toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
@@ -380,8 +375,8 @@ class AwestruckInfrastructure extends TerraformStack {
       "awestruck-task-definition",
       {
         family: "go-webrtc-server-arm64",
-        cpu: "1024",
-        memory: "2048",
+        cpu: "256",
+        memory: "512",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
         executionRoleArn: ecsTaskExecutionRole.arn,
@@ -404,20 +399,13 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
-              { name: "AWESTRUCK_ENV", value: "production" },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-R -d dummy" },
+              { name: "JACK_OPTIONS", value: "-r -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
-              { name: "GST_DEBUG", value: "2" },
-              { name: "JACK_BUFFER_SIZE", value: "2048" },
-              { name: "JACK_PERIODS", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "4194304" },
-              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
-              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
-              { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -427,7 +415,7 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-stream-prefix": "ecs",
               },
             }
-          }
+          },
         ]),
       }
     );
@@ -733,19 +721,15 @@ class AwestruckInfrastructure extends TerraformStack {
       securityGroupId: securityGroup.id,
     });
 
-    new SsmParameter(this, "openai-api-key", {
-      name: "/awestruck/openai_api_key",
-      type: "SecureString",
-      value: process.env.OPENAI_API_KEY || this.node.tryGetContext("openaiApiKey"),
-      description: "OpenAI API key for AI services",
-    });
-
-    new SsmParameter(this, "awestruck-api-key", {
-      name: "/awestruck/awestruck_api_key",
-      type: "SecureString",
-      value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
-      description: "Awestruck API key for authentication",
-    });
+    // Allow STUN/TURN egress
+    // new SecurityGroupRule(this, "ecs-stun-turn-egress", {
+    //   type: "egress",
+    //   fromPort: 3478,
+    //   toPort: 3478,
+    //   protocol: "-1",  // Both TCP and UDP
+    //   cidrBlocks: ["0.0.0.0/0"],
+    //   securityGroupId: securityGroup.id,
+    // });
   }
 }
 
