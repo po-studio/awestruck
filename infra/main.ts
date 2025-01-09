@@ -754,30 +754,6 @@ class AwestruckInfrastructure extends TerraformStack {
       value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
       description: "Awestruck API key for authentication",
     });
-
-    const coturnCloudWatchPolicy = new IamPolicy(this, "coturn-cloudwatch-policy", {
-      name: "coturn-cloudwatch-policy",
-      policy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Action: [
-              "logs:CreateLogGroup",
-              "logs:CreateLogStream",
-              "logs:PutLogEvents",
-              "logs:DescribeLogStreams"
-            ],
-            Resource: ["arn:aws:logs:*:*:*"]
-          }
-        ]
-      })
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy-attachment", {
-      role: coturnInstanceRole.name,
-      policyArn: coturnCloudWatchPolicy.arn
-    });
   }
 }
 
