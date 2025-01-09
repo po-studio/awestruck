@@ -28,7 +28,6 @@ import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile
 import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
 import { Eip } from "@cdktf/provider-aws/lib/eip";
 import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
-import { IamPolicy } from "@cdktf/provider-aws/lib/iam-policy";
 
 dotenv.config();
 
