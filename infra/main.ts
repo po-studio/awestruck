@@ -81,11 +81,14 @@ class AwestruckInfrastructure extends TerraformStack {
     listening-port=3478
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
-    external-ip=$ELASTIC_IP/$LOCAL_IP
+    external-ip=$ELASTIC_IP
     min-port=49152
     max-port=65535
     no-ipv6
     no-loopback-peers
+    no-tcp-relay
+    relay-threads=4
+    
     lt-cred-mech
     user=awestruck:${turnPassword}
     realm=awestruck.io

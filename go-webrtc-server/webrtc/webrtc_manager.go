@@ -554,6 +554,8 @@ func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 	}
 
 	for i, server := range iceServers {
+		log.Printf("[ICE] Server %d full configuration: %+v", i, server)
+
 		log.Printf("[ICE] Server %d configuration:", i)
 		log.Printf("  - URLs: %v", server.URLs)
 		log.Printf("  - Username length: %d", len(server.Username))

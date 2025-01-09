@@ -64,15 +64,35 @@ async function handleSynthResponse(event) {
 }
 
 async function setupWebRTC(config) {
+  if (!validateTurnConfig(config)) {
+      throw new Error('Invalid TURN configuration');
+  }
+
+  console.log('Starting WebRTC setup with config:', {
+      iceTransportPolicy: config.iceTransportPolicy,
+      iceServers: config.iceServers.map(s => ({
+          urls: s.urls,
+          hasCredentials: !!(s.username && s.credential)
+      }))
+  });
+
   pc = new RTCPeerConnection(config);
 
   pc.onconnectionstatechange = onConnectionStateChange;
-  pc.onicecandidate = handleICECandidate;
+  // pc.onicecandidate = handleICECandidate;
   pc.oniceconnectionstatechange = onIceConnectionStateChange;
   pc.onicegatheringstatechange = onIceGatheringStateChange;
   pc.ontrack = handleTrack;
 
   pc.addTransceiver('audio', { direction: 'recvonly' });
+
+  const checkIceCandidates = monitorIceCandidates(pc);
+  pc.onicecandidate = (event) => {
+      handleICECandidate(event);  // Your existing handler
+      if (event.candidate) {
+          checkIceCandidates(event.candidate);  // Additional monitoring
+      }
+  };
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -435,8 +455,33 @@ const TURN_CONFIG = {
   }
 };
 
+function validateTurnConfig(config) {
+  if (!config || !config.iceServers) {
+      console.error('Invalid ICE configuration');
+      return false;
+  }
+
+  const hasTurnServer = config.iceServers.some(server => {
+      return server.urls.some(url => 
+          url.startsWith('turn:') || url.startsWith('turns:')
+      );
+  });
+
+  if (!hasTurnServer) {
+      console.error('No TURN server found in configuration');
+      return false;
+  }
+
+  console.log('ICE Configuration validated:', config);
+  return true;
+}
+
 function onIceConnectionStateChange() {
   console.log('ICE Connection State:', pc.iceConnectionState);
+  onIceConnectionStateChange();
+  if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'connected') {
+      monitorTurnConnectivity(pc);
+  }
 
   const timestamp = new Date().toISOString();
   const diagnosticInfo = {
@@ -478,7 +523,6 @@ function onIceConnectionStateChange() {
           }
       }, 30000);
   }
-
   if (pc.iceConnectionState === 'failed') {
       console.error('ICE Connection failed - gathering diagnostic information');
       logLastKnownGoodConnection();
@@ -663,3 +707,52 @@ Prism.languages.supercollider = {
     'punctuation': /[{}[\];(),.:]/
 };
 
+function monitorIceCandidates(pc) {
+  let relayFound = false;
+  
+  pc.addEventListener('icegatheringstatechange', () => {
+      if (pc.iceGatheringState === 'complete' && !relayFound) {
+          console.error('ICE gathering completed without finding relay candidates');
+          pc.getStats().then(stats => {
+              const candidates = [];
+              stats.forEach(stat => {
+                  if (stat.type === 'local-candidate') {
+                      candidates.push({
+                          type: stat.candidateType,
+                          protocol: stat.protocol,
+                          address: stat.address
+                      });
+                  }
+              });
+              console.log('Final ICE candidates:', candidates);
+          });
+      }
+  });
+
+  return (candidate) => {
+      if (candidate.candidate.includes(' relay ')) {
+          relayFound = true;
+          console.log('Relay candidate found:', candidate.candidate);
+      }
+  };
+}
+
+function monitorTurnConnectivity(pc) {
+  pc.getStats().then(stats => {
+      stats.forEach(stat => {
+          if (stat.type === 'remote-candidate') {
+              console.log('TURN Candidate:', {
+                  type: stat.candidateType,
+                  protocol: stat.protocol,
+                  address: stat.address,
+                  port: stat.port,
+                  turnServer: stat.relayProtocol ? {
+                      protocol: stat.relayProtocol,
+                      address: stat.relayAddress,
+                      port: stat.relayPort
+                  } : null
+              });
+          }
+      });
+  });
+}
