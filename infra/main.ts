@@ -486,32 +486,58 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // TURN/STUN server ports
-    new SecurityGroupRule(this, "coturn-stun-turn", {
+    // STUN/TURN ports
+    const stunTurnPorts = [
+      { port: 3478, protocol: "tcp" }, // STUN/TURN
+      { port: 3478, protocol: "udp" }, // STUN/TURN
+    ];
+
+    // Allow TURN relay ports
+    new SecurityGroupRule(this, "coturn-relay-range", {
       type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "-1",  // both TCP and UDP
+      fromPort: 49152,
+      toPort: 65535,
+      protocol: "udp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
     });
 
-    // TLS port for TURN
-    new SecurityGroupRule(this, "coturn-tls", {
+    // Add STUN/TURN specific ports
+    stunTurnPorts.forEach(({ port, protocol }) => {
+      new SecurityGroupRule(this, `coturn-${protocol}-${port}`, {
+        type: "ingress",
+        fromPort: port,
+        toPort: port,
+        protocol,
+        cidrBlocks: ["0.0.0.0/0"],
+        securityGroupId: coturnSecurityGroup.id,
+      });
+    });
+
+    // Allow all outbound traffic
+    new SecurityGroupRule(this, "coturn-egress", {
+      type: "egress",
+      fromPort: 0,
+      toPort: 0,
+      protocol: "-1",
+      cidrBlocks: ["0.0.0.0/0"],
+      securityGroupId: coturnSecurityGroup.id,
+    });
+
+    new SecurityGroupRule(this, "coturn-https-inbound", {
       type: "ingress",
-      fromPort: 5349,
-      toPort: 5349,
+      fromPort: 443,
+      toPort: 443,
       protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
     });
 
-    // WebRTC media port range
-    new SecurityGroupRule(this, "coturn-media-range", {
+    new SecurityGroupRule(this, "coturn-http-inbound", {
       type: "ingress",
-      fromPort: 49152,
-      toPort: 65535,
-      protocol: "udp",
+      fromPort: 80,
+      toPort: 80,
+      protocol: "tcp",
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
     });
