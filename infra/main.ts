@@ -28,6 +28,7 @@ import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile
 import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
 import { Eip } from "@cdktf/provider-aws/lib/eip";
 import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
+import { IamPolicy } from "@cdktf/provider-aws/lib/iam-policy";
 
 dotenv.config();
 
@@ -87,7 +88,7 @@ class AwestruckInfrastructure extends TerraformStack {
     listening-port=3478
     listening-ip=$LOCAL_IP
     relay-ip=$LOCAL_IP
-    external-ip=$ELASTIC_IP/$LOCAL_IP
+    external-ip=$ELASTIC_IP
     min-port=49152
     max-port=65535
 
@@ -96,7 +97,12 @@ class AwestruckInfrastructure extends TerraformStack {
     realm=awestruck.io
 
     log-file=/var/log/coturn/turnserver.log
-    verbose
+    syslog
+    log-binding
+    log-allocate
+    debug
+    extra-logging
+    trace
 
     no-multicast-peers
     no-cli
@@ -123,33 +129,45 @@ class AwestruckInfrastructure extends TerraformStack {
 
     cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
     {
+      "agent": {
+        "metrics_collection_interval": 60,
+        "run_as_user": "root"
+      },
       "logs": {
-          "logs_collected": {
-              "files": {
-                  "collect_list": [
-                      {
-                          "file_path": "/var/log/coturn/turnserver.log",
-                          "log_group_name": "/coturn/turnserver",
-                          "log_stream_name": "{instance_id}",
-                          "timezone": "UTC"
-                      },
-                      {
-                          "file_path": "/var/log/syslog",
-                          "log_group_name": "/coturn/system",
-                          "log_stream_name": "{instance_id}",
-                          "timezone": "UTC"
-                      }
-                  ]
+        "logs_collected": {
+          "files": {
+            "collect_list": [
+              {
+                "file_path": "/var/log/coturn/turnserver.log",
+                "log_group_name": "/coturn/turnserver",
+                "log_stream_name": "{instance_id}",
+                "timezone": "UTC",
+                "timestamp_format": "%Y-%m-%d %H:%M:%S",
+                "multi_line_start_pattern": "^\\[\\d{4}-\\d{2}-\\d{2}"
+              },
+              {
+                "file_path": "/var/log/syslog",
+                "log_group_name": "/coturn/system",
+                "log_stream_name": "{instance_id}",
+                "timezone": "UTC"
               }
+            ]
           }
+        },
+        "force_flush_interval": 15
       }
     }
     EOF
     systemctl enable amazon-cloudwatch-agent
     systemctl start amazon-cloudwatch-agent
 
-    systemctl enable coturn
-    systemctl start coturn
+    chown -R turnserver:turnserver /var/log/coturn
+    chmod 755 /var/log/coturn
+    touch /var/log/coturn/turnserver.log
+    chmod 644 /var/log/coturn/turnserver.log
+
+    systemctl restart amazon-cloudwatch-agent
+    systemctl restart coturn
     `;
 
     new AwsProvider(this, "AWS", {
@@ -632,11 +650,19 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "TURN server password for WebRTC connections",
     });
 
-    new CloudwatchLogGroup(this, "coturn-logs", {
+    new CloudwatchLogGroup(this, "coturn-turnserver-logs", {
       name: "/coturn/turnserver",
       retentionInDays: 14,
       tags: {
-        Name: "coturn-logs",
+        Name: "coturn-turnserver-logs",
+      },
+    });
+
+    new CloudwatchLogGroup(this, "coturn-system-logs", {
+      name: "/coturn/system",
+      retentionInDays: 14,
+      tags: {
+        Name: "coturn-system-logs",
       },
     });
 
@@ -727,6 +753,30 @@ class AwestruckInfrastructure extends TerraformStack {
       type: "SecureString",
       value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
       description: "Awestruck API key for authentication",
+    });
+
+    const coturnCloudWatchPolicy = new IamPolicy(this, "coturn-cloudwatch-policy", {
+      name: "coturn-cloudwatch-policy",
+      policy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents",
+              "logs:DescribeLogStreams"
+            ],
+            Resource: ["arn:aws:logs:*:*:*"]
+          }
+        ]
+      })
+    });
+
+    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy-attachment", {
+      role: coturnInstanceRole.name,
+      policyArn: coturnCloudWatchPolicy.arn
     });
   }
 }
