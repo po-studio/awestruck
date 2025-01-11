@@ -494,22 +494,29 @@ const TURN_CONFIG = {
 
 function validateTurnConfig(config) {
   if (!config || !config.iceServers) {
-      console.error('Invalid ICE configuration');
+      console.error('[TURN] Invalid ICE configuration');
       return false;
   }
 
   const hasTurnServer = config.iceServers.some(server => {
+      console.log('[TURN] Validating server config:', {
+          urls: server.urls,
+          hasUsername: !!server.username,
+          hasCredential: !!server.credential,
+          realm: server.realm
+      });
+      
       return server.urls.some(url => 
           url.startsWith('turn:') || url.startsWith('turns:')
       );
   });
 
   if (!hasTurnServer) {
-      console.error('No TURN server found in configuration');
+      console.error('[TURN] No TURN server found in configuration');
       return false;
   }
 
-  console.log('ICE Configuration validated:', config);
+  console.log('[TURN] Configuration validated:', config);
   return true;
 }
 
@@ -824,44 +831,66 @@ function monitorTurnConnectivity(pc) {
 }
 
 function testTurnServer(turnConfig) {
-    console.log('[TURN] Testing TURN server connectivity...');
+    console.log('[TURN] Testing server connectivity...', {
+        urls: turnConfig.urls,
+        username: turnConfig.username,
+        realm: turnConfig.realm
+    });
+    
     return new Promise((resolve) => {
         const pc = new RTCPeerConnection({
             iceServers: [turnConfig],
             iceTransportPolicy: 'relay'
         });
         
+        pc.onicegatheringstatechange = () => {
+            console.log('[TURN] ICE gathering state:', pc.iceGatheringState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            console.log('[TURN] ICE connection state:', pc.iceConnectionState);
+        };
+        
         const stats = {
             gatheredCandidates: [],
             gatheringState: null,
-            connectionState: null
+            connectionState: null,
+            error: null
         };
         
         pc.onicecandidate = (e) => {
             if (e.candidate) {
+                console.log('[TURN] Raw candidate:', e.candidate.candidate);
                 stats.gatheredCandidates.push({
                     type: e.candidate.type,
                     protocol: e.candidate.protocol,
                     address: e.candidate.address,
-                    port: e.candidate.port
+                    port: e.candidate.port,
+                    raw: e.candidate.candidate
                 });
             }
         };
 
+        // Increase timeout to 10 seconds for more thorough testing
         setTimeout(() => {
             stats.gatheringState = pc.iceGatheringState;
             stats.connectionState = pc.connectionState;
+            console.log('[TURN] Test completed with stats:', stats);
             pc.close();
             resolve(stats);
-        }, 5000);
+        }, 10000);
 
         pc.createDataChannel('test');
         pc.createOffer()
-            .then(offer => pc.setLocalDescription(offer))
+            .then(offer => {
+                console.log('[TURN] Created offer:', offer.sdp);
+                return pc.setLocalDescription(offer);
+            })
             .catch(err => {
                 console.error('[TURN] Test failed:', err);
+                stats.error = err.message;
                 pc.close();
-                resolve({...stats, error: err.message});
+                resolve(stats);
             });
     });
 }
