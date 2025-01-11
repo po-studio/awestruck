@@ -684,10 +684,10 @@ systemctl restart coturn
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
     });
 
-    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
-    });
+    // new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
+    //   role: coturnInstanceRole.name,
+    //   policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+    // });
 
     // new SecurityGroupRule(this, "ecs-stun-turn-ports", {
     //   type: "ingress",
