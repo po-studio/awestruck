@@ -764,3 +764,80 @@ function monitorTurnConnectivity(pc) {
       });
   });
 }
+
+function testTurnServer(turnConfig) {
+  console.log('[TURN] Testing TURN server connectivity...');
+  const pc = new RTCPeerConnection({
+    iceServers: [turnConfig],
+    iceTransportPolicy: 'relay'
+  });
+  
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      console.log('[TURN] Candidate gathered:', {
+        type: e.candidate.type,
+        protocol: e.candidate.protocol,
+        address: e.candidate.address,
+        port: e.candidate.port,
+        raw: e.candidate.candidate
+      });
+    }
+  };
+
+  pc.onicegatheringstatechange = () => {
+    console.log('[TURN] ICE gathering state:', pc.iceGatheringState);
+  };
+
+  // Create data channel to trigger ICE gathering
+  pc.createDataChannel('test');
+  pc.createOffer().then(offer => pc.setLocalDescription(offer));
+  
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const stats = {
+        gatheredCandidates: [],
+        gatheringState: pc.iceGatheringState,
+        connectionState: pc.connectionState
+      };
+      pc.getStats().then(report => {
+        report.forEach(stat => {
+          if (stat.type === 'local-candidate') {
+            stats.gatheredCandidates.push(stat);
+          }
+        });
+        console.log('[TURN] Test results:', stats);
+        pc.close();
+        resolve(stats);
+      });
+    }, 5000);
+  });
+}
+
+pc.onconnectionstatechange = () => {
+  console.log('[WebRTC] Connection state changed:', {
+    connectionState: pc.connectionState,
+    iceConnectionState: pc.iceConnectionState,
+    signalingState: pc.signalingState
+  });
+  
+  if (pc.connectionState === 'failed') {
+    pc.getStats().then(stats => {
+      const diagnostics = {
+        timestamp: new Date().toISOString(),
+        candidates: [],
+        transportStats: []
+      };
+      
+      stats.forEach(stat => {
+        if (stat.type === 'candidate-pair') {
+          diagnostics.candidates.push(stat);
+        }
+        if (stat.type === 'transport') {
+          diagnostics.transportStats.push(stat);
+        }
+      });
+      
+      console.error('[WebRTC] Connection failed diagnostics:', diagnostics);
+    });
+  }
+};

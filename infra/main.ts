@@ -71,7 +71,16 @@ exec 1> >(logger -s -t $(basename $0)) 2>&1
 yum update -y
 amazon-linux-extras enable epel
 yum install -y epel-release
-yum install -y coturn amazon-cloudwatch-agent
+yum install -y coturn amazon-cloudwatch-agent rsyslog
+
+# Configure rsyslog for detailed Coturn logging
+cat > /etc/rsyslog.d/49-coturn.conf <<EOF
+# Log everything from Coturn
+local0.*    /var/log/coturn/turnserver.log
+EOF
+
+# Restart rsyslog to apply changes
+systemctl restart rsyslog
 
 mkdir -p /etc/coturn /var/log/coturn /run/coturn
 chmod 755 /etc/coturn /var/log/coturn /run/coturn
@@ -91,6 +100,7 @@ PIDFile=/run/coturn/turnserver.pid
 EOF
 
 cat > /etc/coturn/turnserver.conf <<EOF
+# Basic server settings
 listening-port=3478
 listening-ip=$LOCAL_IP
 relay-ip=$LOCAL_IP
@@ -98,10 +108,13 @@ external-ip=$ELASTIC_IP/$LOCAL_IP
 min-port=10000
 max-port=10100
 
+# Authentication
 lt-cred-mech
 user=awestruck:${turnPassword}
 realm=awestruck.io
 
+# Verbose logging configuration
+verbose
 log-file=/var/log/coturn/turnserver.log
 syslog
 log-binding
@@ -110,6 +123,16 @@ debug
 extra-logging
 trace
 
+# Additional debug options
+full-log-timestamp
+log-mobility
+log-session-lifetime
+log-tcp
+log-tcp-relay
+log-connection-lifetime
+log-relay-lifetime
+
+# Security settings
 no-multicast-peers
 no-cli
 mobility
@@ -127,11 +150,13 @@ EOF
 chown turnserver:turnserver /etc/coturn/turnserver.conf
 chmod 644 /etc/coturn/turnserver.conf
 
+# Configure CloudWatch agent for detailed logging
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
 {
   "agent": {
-    "metrics_collection_interval": 60,
-    "run_as_user": "root"
+    "metrics_collection_interval": 30,
+    "run_as_user": "root",
+    "debug": true
   },
   "logs": {
     "logs_collected": {
@@ -141,18 +166,29 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
             "file_path": "/var/log/coturn/turnserver.log",
             "log_group_name": "/coturn/turnserver",
             "log_stream_name": "{instance_id}",
-            "timezone": "UTC"
+            "timezone": "UTC",
+            "timestamp_format": "%Y-%m-%d %H:%M:%S",
+            "multi_line_start_pattern": "{timestamp_format}",
+            "encoding": "utf-8",
+            "initial_position": "start_of_file",
+            "buffer_duration": 5000
           },
           {
             "file_path": "/var/log/messages",
             "log_group_name": "/coturn/system",
             "log_stream_name": "{instance_id}",
-            "timezone": "UTC"
+            "timezone": "UTC",
+            "timestamp_format": "%b %d %H:%M:%S",
+            "multi_line_start_pattern": "{timestamp_format}",
+            "encoding": "utf-8",
+            "initial_position": "start_of_file",
+            "buffer_duration": 5000
           }
         ]
       }
     },
-    "force_flush_interval": 15
+    "force_flush_interval": 5,
+    "log_stream_name": "{instance_id}"
   }
 }
 EOF
@@ -161,9 +197,10 @@ touch /var/log/coturn/turnserver.log
 chown turnserver:turnserver /var/log/coturn/turnserver.log
 chmod 644 /var/log/coturn/turnserver.log
 
+# Start services
 systemctl daemon-reload
 systemctl enable amazon-cloudwatch-agent
-systemctl start amazon-cloudwatch-agent
+systemctl restart amazon-cloudwatch-agent
 systemctl enable coturn
 systemctl restart coturn
 `;
@@ -470,19 +507,15 @@ systemctl restart coturn
       dependsOn: [listener],
     });
 
-    // COTURN Security Group with restricted ephemeral range
-    const coturnSecurityGroup = new SecurityGroup(
-      this,
-      "coturn-security-group",
-      {
-        name: "coturn-security-group",
-        vpcId: vpc.id,
-        description: "Security group for COTURN server",
-        tags: { Name: "coturn-security-group" },
-      }
-    );
+    // Create dedicated security group for COTURN
+    const coturnSecurityGroup = new SecurityGroup(this, "coturn-security-group", {
+      name: "coturn-security-group",
+      vpcId: vpc.id,
+      description: "Security group for COTURN server",
+      tags: { Name: "coturn-security-group" },
+    });
 
-    // Allow STUN/TURN ports
+    // STUN/TURN ports
     new SecurityGroupRule(this, "coturn-3478-tcp", {
       type: "ingress",
       fromPort: 3478,
@@ -491,6 +524,7 @@ systemctl restart coturn
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
     });
+
     new SecurityGroupRule(this, "coturn-3478-udp", {
       type: "ingress",
       fromPort: 3478,
@@ -500,7 +534,7 @@ systemctl restart coturn
       securityGroupId: coturnSecurityGroup.id,
     });
 
-    // Restrict relay ports to 10000-10100
+    // Relay ports (for media streaming)
     new SecurityGroupRule(this, "coturn-relay-range", {
       type: "ingress",
       fromPort: 10000,
@@ -510,25 +544,7 @@ systemctl restart coturn
       securityGroupId: coturnSecurityGroup.id,
     });
 
-    // Allow inbound HTTP/HTTPS if needed
-    new SecurityGroupRule(this, "coturn-https-inbound", {
-      type: "ingress",
-      fromPort: 443,
-      toPort: 443,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-    new SecurityGroupRule(this, "coturn-http-inbound", {
-      type: "ingress",
-      fromPort: 80,
-      toPort: 80,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    // All outbound traffic
+    // Allow all outbound
     new SecurityGroupRule(this, "coturn-egress", {
       type: "egress",
       fromPort: 0,
@@ -537,9 +553,6 @@ systemctl restart coturn
       cidrBlocks: ["0.0.0.0/0"],
       securityGroupId: coturnSecurityGroup.id,
     });
-
-    // If not doing TLS on 5349, remove that rule
-    // If you want TLS, keep it and add tls-listening-port=5349 in turnserver.conf
 
     // IAM + instance profile for COTURN instance
     const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
@@ -571,14 +584,23 @@ systemctl restart coturn
       policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
     });
 
+    // Add CloudWatch permissions
     new IamRolePolicyAttachment(this, "coturn-cloudwatch-agent-policy", {
       role: coturnInstanceRole.name,
       policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
     });
 
-    new IamRolePolicyAttachment(this, "coturn-cloudwatch-logs-full", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
+    // Create CloudWatch Log Groups with 30 day retention
+    new CloudwatchLogGroup(this, "coturn-turnserver-logs", {
+      name: "/coturn/turnserver",
+      retentionInDays: 30,
+      tags: { Name: "coturn-turnserver-logs" },
+    });
+
+    new CloudwatchLogGroup(this, "coturn-system-logs", {
+      name: "/coturn/system",
+      retentionInDays: 30,
+      tags: { Name: "coturn-system-logs" },
     });
 
     const coturnInstanceProfile = new IamInstanceProfile(
@@ -652,47 +674,6 @@ systemctl restart coturn
       value: turnPassword,
       description: "TURN server password for WebRTC connections",
     });
-
-    new CloudwatchLogGroup(this, "coturn-turnserver-logs", {
-      name: "/coturn/turnserver",
-      retentionInDays: 14,
-      tags: { Name: "coturn-turnserver-logs" },
-    });
-
-    new CloudwatchLogGroup(this, "coturn-system-logs", {
-      name: "/coturn/system",
-      retentionInDays: 14,
-      tags: { Name: "coturn-system-logs" },
-    });
-
-    new SsmParameter(this, "cloudwatch-agent-config", {
-      name: "/AmazonCloudWatch-Config",
-      type: "String",
-      value: JSON.stringify({
-        logs: {
-          logs_collected: {
-            files: {
-              collect_list: [
-                {
-                  file_path: "/var/log/coturn/turnserver.log",
-                  log_group_name: "/coturn/turnserver",
-                  log_stream_name: "{instance_id}",
-                  timezone: "UTC",
-                },
-                {
-                  file_path: "/var/log/messages",
-                  log_group_name: "/coturn/system",
-                  log_stream_name: "{instance_id}",
-                  timezone: "UTC",
-                },
-              ],
-            },
-          },
-        },
-      }),
-    });
-
-    // Remove the second “ecs-task-cloudwatch-policy” since it’s duplicate.
 
     new SsmParameter(this, "openai-api-key", {
       name: "/awestruck/openai_api_key",
