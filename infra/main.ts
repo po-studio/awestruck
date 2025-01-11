@@ -709,14 +709,14 @@ systemctl restart coturn
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
     });
 
-    new SecurityGroupRule(this, "ecs-stun-turn-ports", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: securityGroup.id,
-    });
+    // new SecurityGroupRule(this, "ecs-stun-turn-ports", {
+    //   type: "ingress",
+    //   fromPort: 3478,
+    //   toPort: 3478,
+    //   protocol: "udp",
+    //   cidrBlocks: ["0.0.0.0/0"],
+    //   securityGroupId: securityGroup.id,
+    // });
 
     new SecurityGroupRule(this, "ecs-turn-tls", {
       type: "ingress",
