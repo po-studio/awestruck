@@ -1,3 +1,4 @@
+const iceProgress = monitorIceProgress();
 // Generate or retrieve session ID once
 function getSessionID() {
   let sessionID = sessionStorage.getItem('sessionID');
@@ -19,6 +20,7 @@ let iceCheckingTimeout = null;
 let audioStatsInterval = null;
 let audioLevelsInterval = null;
 let trackStatsInterval = null;
+let lastConnectionState = null;
 
 // Add session ID to all HTMX requests
 document.body.addEventListener('htmx:configRequest', evt => {
@@ -64,67 +66,78 @@ async function handleSynthResponse(event) {
 }
 
 async function setupWebRTC(config) {
-  if (!validateTurnConfig(config)) {
-      throw new Error('Invalid TURN configuration');
-  }
+    try {
+        if (!validateTurnConfig(config)) {
+            throw new Error('Invalid TURN configuration');
+        }
 
-  console.log('Starting WebRTC setup with config:', {
-      iceTransportPolicy: config.iceTransportPolicy,
-      iceServers: config.iceServers.map(s => ({
-          urls: s.urls,
-          hasCredentials: !!(s.username && s.credential)
-      }))
-  });
+        const turnTest = await testTurnBeforeConnect(config);
+        if (!turnTest.gatheredCandidates.length) {
+            throw new Error('TURN connectivity test failed');
+        }
 
-  pc = new RTCPeerConnection(config);
+        console.log('Starting WebRTC setup with config:', {
+            iceTransportPolicy: config.iceTransportPolicy,
+            iceServers: config.iceServers.map(s => ({
+                urls: s.urls,
+                hasCredentials: !!(s.username && s.credential)
+            }))
+        });
 
-  pc.onconnectionstatechange = onConnectionStateChange;
-  // pc.onicecandidate = handleICECandidate;
-  pc.oniceconnectionstatechange = onIceConnectionStateChange;
-  pc.onicegatheringstatechange = onIceGatheringStateChange;
-  pc.ontrack = handleTrack;
+        pc = new RTCPeerConnection(config);
 
-  pc.addTransceiver('audio', { direction: 'recvonly' });
+        pc.onconnectionstatechange = onConnectionStateChange;
+        // pc.onicecandidate = handleICECandidate;
+        pc.oniceconnectionstatechange = onIceConnectionStateChange;
+        pc.onicegatheringstatechange = onIceGatheringStateChange;
+        pc.ontrack = handleTrack;
 
-  const checkIceCandidates = monitorIceCandidates(pc);
-  pc.onicecandidate = (event) => {
-      handleICECandidate(event);  // Your existing handler
-      if (event.candidate) {
-          checkIceCandidates(event.candidate);  // Additional monitoring
-      }
-  };
+        pc.addTransceiver('audio', { direction: 'recvonly' });
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+        const checkIceCandidates = monitorIceCandidates(pc);
+        pc.onicecandidate = (event) => {
+            handleICECandidate(event);  // Your existing handler
+            if (event.candidate) {
+                checkIceCandidates(event.candidate);  // Additional monitoring
+            }
+        };
 
-  const browserOffer = {
-      sdp: btoa(JSON.stringify({
-          type: offer.type,
-          sdp: offer.sdp
-      })),
-      type: offer.type,
-      iceServers: config.iceServers
-  };
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
-  const response = await fetch('/offer', {
-      method: 'POST',
-      headers: {
-          'Content-Type': 'application/json',
-          'X-Session-ID': sessionID
-      },
-      body: JSON.stringify(browserOffer)
-  });
+        const browserOffer = {
+            sdp: btoa(JSON.stringify({
+                type: offer.type,
+                sdp: offer.sdp
+            })),
+            type: offer.type,
+            iceServers: config.iceServers
+        };
 
-  if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
-  }
+        const response = await fetch('/offer', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-ID': sessionID
+            },
+            body: JSON.stringify(browserOffer)
+        });
 
-  const answer = await response.json();
-  await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+        }
 
-  // (Optional) If you need to send any ICE candidates stored before remote desc:
-  // pendingCandidates.forEach(candidate => sendIceCandidate(candidate));
-  // pendingCandidates = [];
+        const answer = await response.json();
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+        // (Optional) If you need to send any ICE candidates stored before remote desc:
+        // pendingCandidates.forEach(candidate => sendIceCandidate(candidate));
+        // pendingCandidates = [];
+    } catch (error) {
+        console.error('[WebRTC] Setup failed:', error);
+        await cleanupConnection();
+        throw error;
+    }
 }
 
 function handleTrack(event) {
@@ -139,56 +152,61 @@ function handleTrack(event) {
 let pendingCandidates = [];
 
 async function handleICECandidate(event) {
-  if (!event.candidate) return;
-  
-  const candidateStr = event.candidate.candidate;
-  const parts = candidateStr.split(' ');
-  const type = parts[7];
-  const protocol = parts[2];
-  const ip = parts[4];
-  const port = parts[5];
-  const isProduction = window.location.hostname !== 'localhost';
-  
-  console.log("[ICE] Candidate details:", {
-      type,
-      protocol,
-      ip,
-      port,
-      isProduction,
-      isRelay: type === 'relay',
-      fullCandidate: candidateStr,
-      timestamp: new Date().toISOString()
-  });
-  
-  if (isProduction && type !== 'relay') {
-    console.warn('Filtered non-relay candidate');
-    return;
-  }
-
-  const candidateObj = {
-    candidate: {
-      candidate: event.candidate.candidate,
-      sdpMid: event.candidate.sdpMid,
-      sdpMLineIndex: event.candidate.sdpMLineIndex,
-      usernameFragment: event.candidate.usernameFragment
-    }
-  };
-
-  try {
-    const response = await fetch('/ice-candidate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': sessionID
-      },
-      body: JSON.stringify(candidateObj)
+    if (!event.candidate) return;
+    
+    const candidateStr = event.candidate.candidate;
+    const parts = candidateStr.split(' ');
+    const type = parts[7];
+    const protocol = parts[2];
+    const ip = parts[4];
+    const port = parts[5];
+    const isProduction = window.location.hostname !== 'localhost';
+    
+    console.log("[ICE] Candidate details:", {
+        type,
+        protocol,
+        ip,
+        port,
+        isProduction,
+        isRelay: type === 'relay',
+        fullCandidate: candidateStr,
+        timestamp: new Date().toISOString()
     });
-    if (!response.ok) {
-      console.warn(`Failed to send ICE candidate: ${response.status}`);
+    
+    if (isProduction && type !== 'relay') {
+        console.warn('Filtered non-relay candidate');
+        return;
     }
-  } catch (error) {
-    console.warn('Failed to send ICE candidate:', error);
-  }
+
+    const candidateObj = {
+        candidate: {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            usernameFragment: event.candidate.usernameFragment
+        }
+    };
+
+    try {
+        iceProgress.trackCandidate();
+        const response = await fetch('/ice-candidate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-ID': sessionID
+            },
+            body: JSON.stringify(candidateObj)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+        }
+        
+        iceProgress.trackAcknowledgement();
+        console.log('[ICE] Successfully sent candidate to server');
+    } catch (error) {
+        console.error('[ICE] Failed to send candidate:', error);
+    }
 }
 
 function onConnectionStateChange() {
@@ -197,7 +215,6 @@ function onConnectionStateChange() {
     return;
   }
 
-  // Prevent recursive calls by checking if state has actually changed
   const currentState = {
     connectionState: pc.connectionState,
     iceConnectionState: pc.iceConnectionState,
@@ -205,11 +222,10 @@ function onConnectionStateChange() {
     signalingState: pc.signalingState,
   };
   
-  // Store previous state in a closure or instance variable
-  if (JSON.stringify(currentState) === JSON.stringify(this.lastState)) {
+  if (JSON.stringify(currentState) === JSON.stringify(lastConnectionState)) {
     return;
   }
-  this.lastState = currentState;
+  lastConnectionState = currentState;
 
   console.log('Connection state change:', currentState);
 
@@ -266,15 +282,21 @@ async function cleanupConnection() {
 
   // Clear monitoring intervals
   clearInterval(qualityMonitorInterval);
-  if (codePollingInterval) {
-      clearInterval(codePollingInterval);
-      codePollingInterval = null;
-  }
-  // Clear ICE timeout if it exists
-  if (iceCheckingTimeout) {
-      clearTimeout(iceCheckingTimeout);
-      iceCheckingTimeout = null;
-  }
+  clearInterval(codePollingInterval);
+  clearInterval(audioStatsInterval);
+  clearInterval(audioLevelsInterval);
+  clearInterval(trackStatsInterval);
+  clearTimeout(iceCheckingTimeout);
+  
+  // Reset all interval variables
+  qualityMonitorInterval = null;
+  codePollingInterval = null;
+  audioStatsInterval = null;
+  audioLevelsInterval = null;
+  trackStatsInterval = null;
+  iceCheckingTimeout = null;
+  
+  // ... rest of the cleanup code
 
   // Remove audio element
   if (audioElement) {
@@ -802,51 +824,46 @@ function monitorTurnConnectivity(pc) {
 }
 
 function testTurnServer(turnConfig) {
-  console.log('[TURN] Testing TURN server connectivity...');
-  const pc = new RTCPeerConnection({
-    iceServers: [turnConfig],
-    iceTransportPolicy: 'relay'
-  });
-  
-  pc.onicecandidate = (e) => {
-    if (e.candidate) {
-      console.log('[TURN] Candidate gathered:', {
-        type: e.candidate.type,
-        protocol: e.candidate.protocol,
-        address: e.candidate.address,
-        port: e.candidate.port,
-        raw: e.candidate.candidate
-      });
-    }
-  };
-
-  pc.onicegatheringstatechange = () => {
-    console.log('[TURN] ICE gathering state:', pc.iceGatheringState);
-  };
-
-  // Create data channel to trigger ICE gathering
-  pc.createDataChannel('test');
-  pc.createOffer().then(offer => pc.setLocalDescription(offer));
-  
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const stats = {
-        gatheredCandidates: [],
-        gatheringState: pc.iceGatheringState,
-        connectionState: pc.connectionState
-      };
-      pc.getStats().then(report => {
-        report.forEach(stat => {
-          if (stat.type === 'local-candidate') {
-            stats.gatheredCandidates.push(stat);
-          }
+    console.log('[TURN] Testing TURN server connectivity...');
+    return new Promise((resolve) => {
+        const pc = new RTCPeerConnection({
+            iceServers: [turnConfig],
+            iceTransportPolicy: 'relay'
         });
-        console.log('[TURN] Test results:', stats);
-        pc.close();
-        resolve(stats);
-      });
-    }, 5000);
-  });
+        
+        const stats = {
+            gatheredCandidates: [],
+            gatheringState: null,
+            connectionState: null
+        };
+        
+        pc.onicecandidate = (e) => {
+            if (e.candidate) {
+                stats.gatheredCandidates.push({
+                    type: e.candidate.type,
+                    protocol: e.candidate.protocol,
+                    address: e.candidate.address,
+                    port: e.candidate.port
+                });
+            }
+        };
+
+        setTimeout(() => {
+            stats.gatheringState = pc.iceGatheringState;
+            stats.connectionState = pc.connectionState;
+            pc.close();
+            resolve(stats);
+        }, 5000);
+
+        pc.createDataChannel('test');
+        pc.createOffer()
+            .then(offer => pc.setLocalDescription(offer))
+            .catch(err => {
+                console.error('[TURN] Test failed:', err);
+                pc.close();
+                resolve({...stats, error: err.message});
+            });
+    });
 }
 
 async function testTurnBeforeConnect(config) {
@@ -870,4 +887,24 @@ function monitorIceGatheringTimeout(pc) {
             }
         };
     });
+}
+
+function monitorIceProgress() {
+    let candidatesSent = 0;
+    let candidatesAcknowledged = 0;
+    
+    return {
+        trackCandidate: () => {
+            candidatesSent++;
+            console.log(`[ICE] Candidates tracked: ${candidatesSent} sent, ${candidatesAcknowledged} acknowledged`);
+        },
+        trackAcknowledgement: () => {
+            candidatesAcknowledged++;
+            console.log(`[ICE] Candidates tracked: ${candidatesSent} sent, ${candidatesAcknowledged} acknowledged`);
+        },
+        getStats: () => ({
+            sent: candidatesSent,
+            acknowledged: candidatesAcknowledged
+        })
+    };
 }
