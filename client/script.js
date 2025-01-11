@@ -192,13 +192,21 @@ function onConnectionStateChange() {
     return;
   }
 
-  const states = {
+  // Prevent recursive calls by checking if state has actually changed
+  const currentState = {
     connectionState: pc.connectionState,
     iceConnectionState: pc.iceConnectionState,
     iceGatheringState: pc.iceGatheringState,
     signalingState: pc.signalingState,
   };
-  console.log('Connection state change:', states);
+  
+  // Store previous state in a closure or instance variable
+  if (JSON.stringify(currentState) === JSON.stringify(this.lastState)) {
+    return;
+  }
+  this.lastState = currentState;
+
+  console.log('Connection state change:', currentState);
 
   switch (pc.connectionState) {
     case 'connected':
@@ -235,7 +243,7 @@ function onConnectionStateChange() {
     case 'disconnected':
     case 'failed':
     case 'closed':
-      console.log('Connection ended:', states);
+      console.log('Connection ended:', currentState);
       clearCode();
       break;
   }
@@ -478,7 +486,7 @@ function validateTurnConfig(config) {
 
 function onIceConnectionStateChange() {
   console.log('ICE Connection State:', pc.iceConnectionState);
-  onIceConnectionStateChange();
+  
   if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'connected') {
       monitorTurnConnectivity(pc);
   }
