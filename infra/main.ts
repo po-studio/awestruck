@@ -64,17 +64,45 @@ exec 1> >(logger -s -t $(basename $0)) 2>&1
 # system updates and installation
 yum update -y
 amazon-linux-extras enable epel
-yum install -y epel-release
-yum install -y coturn amazon-cloudwatch-agent
+yum install -y epel-release coturn
+
+# install cloudwatch agent
+yum install -y amazon-cloudwatch-agent
 
 # create required directories with proper permissions
-mkdir -p /etc/coturn /var/log/coturn /run/coturn
+mkdir -p /etc/coturn /var/log/coturn /run/coturn /opt/aws/amazon-cloudwatch-agent/etc/
 chmod 755 /etc/coturn /var/log/coturn /run/coturn
 chown turnserver:turnserver /run/coturn /var/log/coturn
 
 # get instance metadata
 LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
 ELASTIC_IP=${coturnElasticIp.publicIp}
+
+# configure cloudwatch agent
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/coturn/turnserver.log",
+            "log_group_name": "/coturn/turnserver",
+            "log_stream_name": "{instance_id}",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/syslog",
+            "log_group_name": "/coturn/system",
+            "log_stream_name": "{instance_id}",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
 
 # configure coturn service directory
 mkdir -p /etc/systemd/system/coturn.service.d/
@@ -105,68 +133,15 @@ realm=awestruck.io
 # logging configuration
 log-file=/var/log/coturn/turnserver.log
 syslog
-log-binding
-log-allocate
-debug
-extra-logging
-trace
-
-# security settings
-no-multicast-peers
-no-cli
-mobility
-fingerprint
-cli-password=${turnPassword}
-total-quota=100
-max-bps=0
-no-auth-pings
-no-tlsv1
-no-tlsv1_1
-stale-nonce=0
-cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
-EOF
-
-# set proper permissions for config
-chown turnserver:turnserver /etc/coturn/turnserver.conf
-chmod 644 /etc/coturn/turnserver.conf
-
-# configure cloudwatch
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
-{
-  "agent": {
-    "metrics_collection_interval": 60,
-    "run_as_user": "root"
-  },
-  "logs": {
-    "logs_collected": {
-      "files": {
-        "collect_list": [
-          {
-            "file_path": "/var/log/coturn/turnserver.log",
-            "log_group_name": "/coturn/turnserver",
-            "log_stream_name": "{instance_id}",
-            "timezone": "UTC",
-            "timestamp_format": "%Y-%m-%d %H:%M:%S",
-            "multi_line_start_pattern": "^\\\\["
-          },
-          {
-            "file_path": "/var/log/syslog",
-            "log_group_name": "/coturn/system",
-            "log_stream_name": "{instance_id}",
-            "timezone": "UTC"
-          }
-        ]
-      }
-    },
-    "force_flush_interval": 15
-  }
-}
 EOF
 
 # setup log file
 touch /var/log/coturn/turnserver.log
 chown turnserver:turnserver /var/log/coturn/turnserver.log
 chmod 644 /var/log/coturn/turnserver.log
+
+# start cloudwatch agent
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
 # start services
 systemctl daemon-reload
@@ -572,6 +547,11 @@ systemctl restart coturn
     new IamRolePolicyAttachment(this, "coturn-ecr-policy", {
       role: coturnInstanceRole.name,
       policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+    });
+
+    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
+      role: coturnInstanceRole.name,
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
     });
 
     const coturnInstanceProfile = new IamInstanceProfile(
