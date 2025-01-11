@@ -144,15 +144,20 @@ async function handleICECandidate(event) {
   const candidateStr = event.candidate.candidate;
   const parts = candidateStr.split(' ');
   const type = parts[7];
+  const protocol = parts[2];
+  const ip = parts[4];
+  const port = parts[5];
   const isProduction = window.location.hostname !== 'localhost';
-
-  console.log("ICE candidate details:", {
-    type,
-    protocol: parts[2],
-    ip: parts[4],
-    port: parts[5],
-    isFiltered: isProduction && type !== 'relay',
-    fullCandidate: candidateStr,
+  
+  console.log("[ICE] Candidate details:", {
+      type,
+      protocol,
+      ip,
+      port,
+      isProduction,
+      isRelay: type === 'relay',
+      fullCandidate: candidateStr,
+      timestamp: new Date().toISOString()
   });
   
   if (isProduction && type !== 'relay') {
@@ -459,7 +464,9 @@ const TURN_CONFIG = {
           }
       ],
       iceTransportPolicy: 'relay',
-      iceCandidatePoolSize: 1
+      iceCandidatePoolSize: 2,
+      rtcpMuxPolicy: 'require',
+      bundlePolicy: 'max-bundle'
   }
 };
 
@@ -840,4 +847,27 @@ function testTurnServer(turnConfig) {
       });
     }, 5000);
   });
+}
+
+async function testTurnBeforeConnect(config) {
+    const testResult = await testTurnServer(config.iceServers[0]);
+    if (testResult.gatheredCandidates.length === 0) {
+        throw new Error('TURN server connection test failed - no candidates gathered');
+    }
+    return testResult;
+}
+
+function monitorIceGatheringTimeout(pc) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            reject(new Error('ICE gathering timed out'));
+        }, 10000); // 10 second timeout
+        
+        pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === 'complete') {
+                clearTimeout(timeout);
+                resolve();
+            }
+        };
+    });
 }
