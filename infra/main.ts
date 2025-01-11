@@ -402,7 +402,12 @@ systemctl restart coturn
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "AWESTRUCK_ENV", value: "production" },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              // etc...
+              { name: "JACK_OPTIONS", value: "-r -d dummy" },
+              { name: "JACK_SAMPLE_RATE", value: "48000" },
+              { name: "GST_DEBUG", value: "2" },
+              { name: "JACK_BUFFER_SIZE", value: "2048" },
+              { name: "JACK_PERIODS", value: "3" },
+              { name: "GST_BUFFER_SIZE", value: "4194304" },
               {
                 name: "OPENAI_API_KEY",
                 value: "{{resolve:ssm:/awestruck/openai_api_key:1}}",
