@@ -486,6 +486,35 @@ function validateTurnConfig(config) {
 
 function onIceConnectionStateChange() {
   console.log('ICE Connection State:', pc.iceConnectionState);
+
+  pc.onconnectionstatechange = () => {
+    console.log('[WebRTC] Connection state changed:', {
+      connectionState: pc.connectionState,
+      iceConnectionState: pc.iceConnectionState,
+      signalingState: pc.signalingState
+    });
+    
+    if (pc.connectionState === 'failed') {
+      pc.getStats().then(stats => {
+        const diagnostics = {
+          timestamp: new Date().toISOString(),
+          candidates: [],
+          transportStats: []
+        };
+        
+        stats.forEach(stat => {
+          if (stat.type === 'candidate-pair') {
+            diagnostics.candidates.push(stat);
+          }
+          if (stat.type === 'transport') {
+            diagnostics.transportStats.push(stat);
+          }
+        });
+        
+        console.error('[WebRTC] Connection failed diagnostics:', diagnostics);
+      });
+    }
+  };
   
   if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'connected') {
       monitorTurnConnectivity(pc);
@@ -812,32 +841,3 @@ function testTurnServer(turnConfig) {
     }, 5000);
   });
 }
-
-pc.onconnectionstatechange = () => {
-  console.log('[WebRTC] Connection state changed:', {
-    connectionState: pc.connectionState,
-    iceConnectionState: pc.iceConnectionState,
-    signalingState: pc.signalingState
-  });
-  
-  if (pc.connectionState === 'failed') {
-    pc.getStats().then(stats => {
-      const diagnostics = {
-        timestamp: new Date().toISOString(),
-        candidates: [],
-        transportStats: []
-      };
-      
-      stats.forEach(stat => {
-        if (stat.type === 'candidate-pair') {
-          diagnostics.candidates.push(stat);
-        }
-        if (stat.type === 'transport') {
-          diagnostics.transportStats.push(stat);
-        }
-      });
-      
-      console.error('[WebRTC] Connection failed diagnostics:', diagnostics);
-    });
-  }
-};
