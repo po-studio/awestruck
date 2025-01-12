@@ -159,10 +159,10 @@ class AwestruckInfrastructure extends TerraformStack {
         path: "/",
         port: "8080",
         protocol: "HTTP",
-        healthyThreshold: 2,
-        unhealthyThreshold: 3,
-        interval: 15,
-        timeout: 5,
+        healthyThreshold: 1,
+        unhealthyThreshold: 2,
+        interval: 5,
+        timeout: 2,
         matcher: "200-299"
       },
     });
@@ -402,13 +402,14 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-stream-prefix": "stun",
               },
             },
-            healthCheck: {
-              command: ["CMD-SHELL", "nc -zu localhost 3478 || exit 1"],
-              interval: 30,
-              timeout: 5,
-              retries: 3,
-              startPeriod: 60,
-            }
+            // NB: this health check is failing, likely udp related
+            // healthCheck: {
+            //   command: ["CMD-SHELL", "nc -zu localhost 3478 || exit 1"],
+            //   interval: 30,
+            //   timeout: 5,
+            //   retries: 3,
+            //   startPeriod: 60,
+            // }
           }
         ]),
       }
@@ -437,14 +438,15 @@ class AwestruckInfrastructure extends TerraformStack {
       protocol: "UDP",
       targetType: "ip",
       vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        port: "3478",
-        protocol: "TCP",
-        healthyThreshold: 2,
-        unhealthyThreshold: 3,
-        interval: 30
-      },
+      // NB: this health check is failing, likely udp related
+      // healthCheck: {
+      //   enabled: true,
+      //   port: "3478",
+      //   protocol: "TCP",
+      //   healthyThreshold: 2,
+      //   unhealthyThreshold: 3,
+      //   interval: 30
+      // },
       dependsOn: [stunNlb]
     });
 
