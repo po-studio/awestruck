@@ -125,7 +125,7 @@ class AwestruckInfrastructure extends TerraformStack {
         {
           // WebRTC media ports
           fromPort: 10000,
-          toPort: 65535,
+          toPort: 10100,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
