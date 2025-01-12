@@ -19,7 +19,6 @@ import { IamRolePolicyAttachment } from "@cdktf/provider-aws/lib/iam-role-policy
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
 import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
-import { EcrRepository } from "@cdktf/provider-aws/lib/ecr-repository";
 import * as dotenv from "dotenv";
 
 dotenv.config();

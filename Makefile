@@ -74,8 +74,10 @@ aws-login:
 	aws ecr get-login-password --region $(AWS_REGION) | \
 		docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 	# Create ECR repositories if they don't exist
-	aws ecr create-repository --repository-name $(ECR_WEBRTC_REPO) --force-delete || true
-	aws ecr create-repository --repository-name $(ECR_STUN_REPO) --force-delete || true
+	aws ecr describe-repositories --repository-names $(ECR_WEBRTC_REPO) || \
+		aws ecr create-repository --repository-name $(ECR_WEBRTC_REPO)
+	aws ecr describe-repositories --repository-names $(ECR_STUN_REPO) || \
+		aws ecr create-repository --repository-name $(ECR_STUN_REPO)
 
 aws-push: aws-login
 	# Pull the latest image from ECR to use as cache
