@@ -309,11 +309,6 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
-            linuxParameters: {
-              capabilities: {
-                add: ["IPC_LOCK"]
-              }
-            },
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
               { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
