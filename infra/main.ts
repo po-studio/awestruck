@@ -159,8 +159,8 @@ class AwestruckInfrastructure extends TerraformStack {
         path: "/",
         port: "8080",
         protocol: "HTTP",
-        healthyThreshold: 1,
-        unhealthyThreshold: 2,
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
         interval: 5,
         timeout: 2,
         matcher: "200-299"
