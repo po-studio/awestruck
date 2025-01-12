@@ -100,7 +100,7 @@ function waitForICEConnection(pc) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             reject(new Error('ICE connection timeout'));
-        }, 10000); // 10 second timeout
+        }, 3000); // Further reduced from 5s to 3s
 
         function checkState() {
             if (pc.iceConnectionState === 'connected' || 
@@ -116,7 +116,7 @@ function waitForICEConnection(pc) {
         }
 
         pc.addEventListener('iceconnectionstatechange', checkState);
-        checkState(); // Check current state immediately
+        checkState();
     });
 }
 
@@ -133,12 +133,30 @@ const ICE_CONFIG = {
                 ]
             }
         ],
-        iceCandidatePoolSize: 2,
+        iceCandidatePoolSize: 0, // Reduced to 0 since we're using a single STUN server
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all'  // Allow all candidate types for better connectivity
+        iceTransportPolicy: 'all',
+        // Add aggressive timing options
+        iceTransportPolicy: 'all',
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        // Add optional configuration for faster gathering
+        sdpSemantics: 'unified-plan',
+        // Aggressive timeouts
+        iceCandidatePoolSize: 0,
+        iceServers: [
+            {
+                urls: [
+                    window.STUN_SERVER ? `stun:${window.STUN_SERVER}` : "stun:localhost:3478"
+                ],
+                // Add aggressive timeouts for STUN
+                iceTransportPolicy: 'all'
+            }
+        ]
     },
     production: {
+        // Mirror development config for production
         iceServers: [
             {
                 urls: [
@@ -146,10 +164,11 @@ const ICE_CONFIG = {
                 ]
             }
         ],
-        iceCandidatePoolSize: 2,
+        iceCandidatePoolSize: 0,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all'  // Allow all candidate types for better connectivity
+        iceTransportPolicy: 'all',
+        sdpSemantics: 'unified-plan'
     }
 };
 
@@ -263,9 +282,38 @@ async function setupWebRTC(config) {
         throw new Error('Invalid ICE configuration');
     }
 
-    // Create peer connection
+    console.log('[ICE] Using STUN servers:', config.iceServers.map(server => server.urls));
+
     pc = new RTCPeerConnection(config);
     console.log('[WebRTC] Created peer connection with config:', config);
+
+    // Add early media handling
+    let audioTransceiver = pc.addTransceiver('audio', {
+        direction: 'recvonly',
+        streams: [new MediaStream()]
+    });
+    console.log('[WebRTC] Added audio transceiver:', audioTransceiver);
+
+    // Optimize ICE gathering
+    pc.onicegatheringstatechange = () => {
+        console.log('[ICE] Gathering state:', pc.iceGatheringState);
+        // Start connection as soon as we have a viable candidate
+        if (pc.iceGatheringState !== 'new') {
+            pc.getStats().then(stats => {
+                let hasViableCandidate = false;
+                stats.forEach(stat => {
+                    if (stat.type === 'local-candidate' && 
+                        (stat.candidateType === 'host' || stat.candidateType === 'srflx')) {
+                        hasViableCandidate = true;
+                    }
+                });
+                if (hasViableCandidate && !pc.remoteDescription) {
+                    console.log('[ICE] Have viable candidate, proceeding with connection');
+                    createAndSendOffer();
+                }
+            });
+        }
+    };
 
     // Set up connection state monitoring
     pc.onconnectionstatechange = onConnectionStateChange;
@@ -312,7 +360,7 @@ async function setupWebRTC(config) {
                 // Monitor audio levels using analyser
                 const dataArray = new Float32Array(analyser.frequencyBinCount);
                 const checkAudioLevels = () => {
-                    if (audioContext.state === 'running') {
+                    if (audioContext && audioContext.state === 'running') {
                         analyser.getFloatTimeDomainData(dataArray);
                         let maxLevel = 0;
                         for (let i = 0; i < dataArray.length; i++) {
@@ -321,7 +369,7 @@ async function setupWebRTC(config) {
                         console.log('[AUDIO] Current level:', maxLevel.toFixed(4));
                     }
                 };
-                setInterval(checkAudioLevels, 1000);
+                audioLevelsInterval = setInterval(checkAudioLevels, 500); // Reduced from 1s to 500ms for more responsive level monitoring
             } catch (error) {
                 console.error('[AUDIO] Failed to setup audio processing:', error);
             }
@@ -332,6 +380,14 @@ async function setupWebRTC(config) {
         if (event.candidate) {
             iceProgress.trackCandidate();
             console.log('[ICE] New candidate:', event.candidate);
+            
+            // Only send candidates after remote description is set
+            if (!pc.remoteDescription) {
+                console.log('[ICE] Waiting for remote description before sending candidate');
+                pendingCandidates.push(event.candidate);
+                return;
+            }
+
             fetch('/ice-candidate', {
                 method: 'POST',
                 headers: {
@@ -399,6 +455,15 @@ async function sendOffer(offer) {
         
         await pc.setRemoteDescription(answer);
         console.log('[WebRTC] Set remote description');
+
+        // Send any pending candidates
+        if (pendingCandidates.length > 0) {
+            console.log('[ICE] Sending pending candidates:', pendingCandidates.length);
+            for (const candidate of pendingCandidates) {
+                pc.onicecandidate({ candidate });
+            }
+            pendingCandidates = [];
+        }
 
         // Wait for ICE connection
         await waitForICEConnection(pc);
@@ -563,7 +628,7 @@ function startConnectionMonitoring() {
                 }
             });
         });
-    }, 5000);
+    }, 2000); // Reduced from 5s to 2s for faster feedback
 }
 
 function startAudioStatsMonitoring() {
@@ -601,7 +666,7 @@ function startAudioStatsMonitoring() {
                 }
             });
         });
-    }, 5000);
+    }, 2000); // Reduced from 5s to 2s for faster feedback
 }
 
 // why we need proper cleanup:
@@ -611,10 +676,13 @@ function startAudioStatsMonitoring() {
 async function cleanupConnection() {
     console.log('Cleaning up connection...');
 
-    // Clear all intervals
+    // Clear all intervals first
     [qualityMonitorInterval, audioStatsInterval, audioLevelsInterval, 
      trackStatsInterval, codePollingInterval].forEach(interval => {
-        if (interval) clearInterval(interval);
+        if (interval) {
+            clearInterval(interval);
+            interval = null;
+        }
     });
 
     // Stop audio context and clear element
@@ -726,18 +794,38 @@ function setupAudioElement(track) {
     audioElement.addEventListener('ended', () => console.log('[AUDIO] Audio element ended'));
     audioElement.addEventListener('error', (e) => console.error('[AUDIO] Audio element error:', e));
     
-    // Monitor audio levels
-    audioLevelsInterval = setInterval(() => {
-        if (audioElement && !audioElement.paused) {
-            console.log('[AUDIO] Playback state:', {
-                currentTime: audioElement.currentTime,
-                volume: audioElement.volume,
-                muted: audioElement.muted,
-                readyState: audioElement.readyState,
-                networkState: audioElement.networkState
-            });
-        }
-    }, 5000);
+    // Set up audio processing and monitoring
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        console.log('[AUDIO] Created AudioContext:', {
+            sampleRate: audioContext.sampleRate,
+            state: audioContext.state,
+            baseLatency: audioContext.baseLatency,
+            outputLatency: audioContext.outputLatency
+        });
+        
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        
+        // Create data array for monitoring
+        const dataArray = new Float32Array(analyser.frequencyBinCount);
+        
+        // Monitor audio levels
+        audioLevelsInterval = setInterval(() => {
+            if (audioContext && audioContext.state === 'running') {
+                analyser.getFloatTimeDomainData(dataArray);
+                let maxLevel = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    maxLevel = Math.max(maxLevel, Math.abs(dataArray[i]));
+                }
+                console.log('[AUDIO] Current level:', maxLevel.toFixed(4));
+            }
+        }, 500); // Monitor every 500ms
+    } catch (error) {
+        console.error('[AUDIO] Failed to setup audio processing:', error);
+    }
 
     const playPromise = audioElement.play();
     if (playPromise !== undefined) {

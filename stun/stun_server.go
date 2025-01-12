@@ -1,12 +1,23 @@
 package stun
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"strings"
+	"time"
 
 	"github.com/pion/stun/v2"
 )
+
+// helper function to get minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // why we need a custom stun server:
 // - reduces dependency on external services
@@ -34,77 +45,173 @@ func NewStunServer(port int) (*StunServer, error) {
 	}, nil
 }
 
+// why we need structured logging:
+// - easier to parse and analyze in cloudwatch
+// - consistent format for all log entries
+// - better debugging and monitoring
+type logEntry struct {
+	Timestamp   string      `json:"timestamp"`
+	Level       string      `json:"level"`
+	Message     string      `json:"message"`
+	SessionID   string      `json:"session_id,omitempty"`
+	RemoteAddr  string      `json:"remote_addr,omitempty"`
+	PacketSize  int         `json:"packet_size,omitempty"`
+	MessageType string      `json:"message_type,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	Details     interface{} `json:"details,omitempty"`
+}
+
+func logWithTime(level string, format string, v ...interface{}) {
+	entry := logEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Level:     level,
+		Message:   fmt.Sprintf(format, v...),
+	}
+
+	jsonBytes, err := json.Marshal(entry)
+	if err != nil {
+		log.Printf("[ERROR] Failed to marshal log entry: %v", err)
+		return
+	}
+
+	log.Println(string(jsonBytes))
+}
+
+func logWithContext(level string, msg string, ctx map[string]interface{}) {
+	entry := logEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Level:     level,
+		Message:   msg,
+	}
+
+	for k, v := range ctx {
+		switch k {
+		case "session_id":
+			entry.SessionID = v.(string)
+		case "remote_addr":
+			entry.RemoteAddr = v.(string)
+		case "packet_size":
+			entry.PacketSize = v.(int)
+		case "message_type":
+			entry.MessageType = v.(string)
+		case "error":
+			entry.Error = v.(string)
+		default:
+			if entry.Details == nil {
+				entry.Details = make(map[string]interface{})
+			}
+			entry.Details.(map[string]interface{})[k] = v
+		}
+	}
+
+	jsonBytes, err := json.Marshal(entry)
+	if err != nil {
+		log.Printf("[ERROR] Failed to marshal log entry: %v", err)
+		return
+	}
+
+	log.Println(string(jsonBytes))
+}
+
 func (s *StunServer) Start() error {
-	log.Printf("[STUN] Starting STUN server on port %d", s.port)
+	logWithTime("INFO", "Starting STUN server on port %d", s.port)
 
-	buffer := make([]byte, 1024)
+	if s.listener == nil {
+		return fmt.Errorf("STUN server not properly initialized: nil listener")
+	}
 
-	for {
-		n, remoteAddr, err := s.listener.ReadFromUDP(buffer)
-		if err != nil {
-			log.Printf("[STUN] Error reading from UDP: %v", err)
-			continue
+	logWithTime("INFO", "UDP listener started successfully")
+
+	go func() {
+		buffer := make([]byte, 1024)
+		for {
+			n, remoteAddr, err := s.listener.ReadFromUDP(buffer)
+			if err != nil {
+				if strings.Contains(err.Error(), "use of closed network connection") {
+					logWithTime("INFO", "UDP listener closed")
+					return
+				}
+				logWithTime("ERROR", "Failed to read UDP packet: %v", err)
+				continue
+			}
+
+			logWithTime("DEBUG", "Received %d bytes from %s", n, remoteAddr.String())
+
+			go s.handleStunRequest(s.listener, buffer[:n], remoteAddr)
+		}
+	}()
+
+	return nil
+}
+
+func (s *StunServer) handleStunRequest(conn *net.UDPConn, packet []byte, addr *net.UDPAddr) {
+	ctx := map[string]interface{}{
+		"remote_addr": addr.String(),
+		"packet_size": len(packet),
+	}
+
+	logWithContext("DEBUG", "Received STUN packet", ctx)
+
+	m := &stun.Message{
+		Raw: packet,
+	}
+
+	if err := m.Decode(); err != nil {
+		ctx["error"] = err.Error()
+		logWithContext("ERROR", "Failed to decode STUN message", ctx)
+		return
+	}
+
+	ctx["message_type"] = m.Type.String()
+	ctx["transaction_id"] = fmt.Sprintf("%x", m.TransactionID)
+	logWithContext("DEBUG", "Decoded STUN message", ctx)
+
+	if m.Type == stun.BindingRequest {
+		logWithContext("INFO", "Processing binding request", ctx)
+
+		resp := &stun.Message{
+			Type: stun.BindingSuccess,
 		}
 
-		go s.handleStunRequest(buffer[:n], remoteAddr)
+		xorAddr := &stun.XORMappedAddress{
+			IP:   addr.IP,
+			Port: addr.Port,
+		}
+
+		ctx["xor_mapped_address"] = fmt.Sprintf("%s:%d", addr.IP.String(), addr.Port)
+		logWithContext("DEBUG", "Adding XOR-MAPPED-ADDRESS", ctx)
+
+		if err := resp.Build(
+			stun.BindingSuccess,
+			stun.NewTransactionIDSetter(m.TransactionID),
+			xorAddr,
+			stun.NewSoftware("po-studio/stun-server"),
+			stun.Fingerprint,
+		); err != nil {
+			ctx["error"] = err.Error()
+			logWithContext("ERROR", "Failed to build STUN response", ctx)
+			return
+		}
+
+		if _, err := conn.WriteToUDP(resp.Raw, addr); err != nil {
+			ctx["error"] = err.Error()
+			logWithContext("ERROR", "Failed to send STUN response", ctx)
+			return
+		}
+
+		logWithContext("INFO", "Successfully sent binding response", ctx)
+	} else {
+		ctx["unsupported_type"] = m.Type.String()
+		logWithContext("WARN", "Received unsupported STUN message type", ctx)
 	}
 }
 
-func (s *StunServer) handleStunRequest(data []byte, remoteAddr *net.UDPAddr) {
-	message := &stun.Message{
-		Raw: make([]byte, len(data)),
-	}
-	copy(message.Raw, data)
-
-	if !stun.IsMessage(message.Raw) {
-		return // Not a STUN message
-	}
-
-	if err := message.Decode(); err != nil {
-		log.Printf("[STUN] Failed to decode message: %v", err)
-		return
-	}
-
-	// Create response message
-	response := &stun.Message{}
-	response.TransactionID = message.TransactionID
-	response.Type = stun.MessageType{Method: stun.MethodBinding, Class: stun.ClassSuccessResponse}
-
-	// Add XOR-MAPPED-ADDRESS
-	xorAddr := &stun.XORMappedAddress{
-		IP:   remoteAddr.IP,
-		Port: remoteAddr.Port,
-	}
-	if err := xorAddr.AddTo(response); err != nil {
-		log.Printf("[STUN] Failed to add XOR-MAPPED-ADDRESS: %v", err)
-		return
-	}
-
-	// Add SOFTWARE attribute
-	software := stun.NewSoftware("pion-stun-server")
-	if err := software.AddTo(response); err != nil {
-		log.Printf("[STUN] Failed to add SOFTWARE: %v", err)
-		return
-	}
-
-	// Add FINGERPRINT
-	if err := stun.Fingerprint.AddTo(response); err != nil {
-		log.Printf("[STUN] Failed to add FINGERPRINT: %v", err)
-		return
-	}
-
-	// Send response
-	if _, err := s.listener.WriteToUDP(response.Raw, remoteAddr); err != nil {
-		log.Printf("[STUN] Failed to send response: %v", err)
-		return
-	}
-
-	log.Printf("[STUN] Sent response to %s:%d", remoteAddr.IP, remoteAddr.Port)
-}
-
-func (s *StunServer) Stop() error {
+func (s *StunServer) Stop() {
+	logWithTime("INFO", "Stopping STUN server")
 	if s.listener != nil {
-		return s.listener.Close()
+		if err := s.listener.Close(); err != nil {
+			logWithTime("ERROR", "Error closing UDP listener: %v", err)
+		}
 	}
-	return nil
+	logWithTime("INFO", "STUN server stopped")
 }

@@ -65,10 +65,7 @@ func (m *StunManager) Stop() error {
 	defer m.mu.Unlock()
 
 	if m.server != nil {
-		if err := m.server.Stop(); err != nil {
-			return fmt.Errorf("failed to stop STUN server: %v", err)
-		}
-		m.server = nil
+		m.server.Stop()
 	}
 	return nil
 }

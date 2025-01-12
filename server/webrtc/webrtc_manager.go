@@ -122,35 +122,48 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
-// why we need longer ice timeouts:
-// - clients may take up to 45 seconds to gather all candidates
-// - some networks require multiple connection attempts
-// - mobile clients often need more time for candidate gathering
+// why we need ice timeouts:
+// - shorter timeouts for faster connection establishment
+// - quick failure detection for better user experience
+// - balanced between reliability and speed
 const (
-	iceGatheringTimeout = 45 * time.Second
-	iceConnectTimeout   = 60 * time.Second
+	iceGatheringTimeout = 15 * time.Second
+	iceConnectTimeout   = 20 * time.Second
 )
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
-	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
+	// Start media pipeline and synth engine in parallel with ICE gathering
+	errChan := make(chan error, 2)
 
+	// Start media pipeline async
+	go func() {
+		log.Println("Starting media pipeline")
+		if err := startMediaPipeline(appSession, audioTrack); err != nil {
+			errChan <- fmt.Errorf("media pipeline error: %v", err)
+			return
+		}
+		errChan <- nil
+	}()
+
+	// Start synth engine async
+	go func() {
+		log.Println("Starting synth engine")
+		if err := startSynthEngine(appSession); err != nil {
+			errChan <- fmt.Errorf("synth engine error: %v", err)
+			return
+		}
+		errChan <- nil
+	}()
+
+	// Set local description (this needs to happen before ICE gathering)
 	log.Println("Setting local description")
 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
 		log.Println("Error setting local description:", err)
 		return fmt.Errorf("failed to set local description: %v", err)
 	}
 
-	log.Println("Starting media pipeline")
-	if err := startMediaPipeline(appSession, audioTrack); err != nil {
-		return err
-	}
-
-	log.Println("Starting synth engine")
-	if err := startSynthEngine(appSession); err != nil {
-		return err
-	}
-
-	// Add longer timeout for ICE gathering with candidate monitoring
+	// Wait for ICE gathering with early success detection
+	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
 	log.Println("Waiting for ICE gathering to complete (with timeout)")
 
 	// Track successful candidate pairs
@@ -162,28 +175,30 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 			for _, stat := range stats {
 				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.State == "succeeded" {
 					successfulPairs++
+					if successfulPairs == 1 {
+						log.Printf("[ICE] Found first successful candidate pair, proceeding with connection")
+					}
 					log.Printf("[ICE] Found successful candidate pair: local=%s, remote=%s", s.LocalCandidateID, s.RemoteCandidateID)
 				}
 			}
 		}
 	})
 
+	// Wait for pipeline and synth engine initialization
+	for i := 0; i < 2; i++ {
+		if err := <-errChan; err != nil {
+			return err
+		}
+	}
+
+	// Send play message immediately after synth is ready
+	appSession.Synth.SendPlayMessage()
+
 	select {
 	case <-gatherComplete:
 		log.Printf("[ICE] Gathering completed successfully")
-		stats := appSession.PeerConnection.GetStats()
-		var candidateCount int
-		for _, stat := range stats {
-			if s, ok := stat.(*webrtc.ICECandidatePairStats); ok {
-				candidateCount++
-				log.Printf("[ICE] Found candidate pair: %+v", s)
-			}
-		}
-		log.Printf("[ICE] Found %d successful candidate pairs", successfulPairs)
 		return nil
-
 	case <-time.After(iceGatheringTimeout):
-		// Check if we have any valid candidates before timing out
 		stats := appSession.PeerConnection.GetStats()
 		var candidateCount int
 		for _, stat := range stats {
@@ -245,23 +260,28 @@ func startSynthEngine(appSession *session.AppSession) error {
 func MonitorAudioPipeline(appSession *session.AppSession) {
 	appSession.MonitorDone = make(chan struct{})
 
-	// Monitor JACK connections
+	// Monitor JACK connections with faster initial checks
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
+		// Start with fast checks for the first few seconds
+		fastTicker := time.NewTicker(500 * time.Millisecond)
+		defer fastTicker.Stop()
+
+		// After 5 seconds, switch to slower checks
+		time.AfterFunc(5*time.Second, func() {
+			fastTicker.Stop()
+		})
+
+		slowTicker := time.NewTicker(5 * time.Second)
+		defer slowTicker.Stop()
 
 		for {
 			select {
 			case <-appSession.MonitorDone:
 				return
-			case <-ticker.C:
-				cmd := exec.Command("jack_lsp", "-c")
-				output, err := cmd.CombinedOutput()
-				if err != nil {
-					log.Printf("[%s] Error monitoring JACK: %v", appSession.Id, err)
-					continue
-				}
-				log.Printf("[%s] JACK Connections:\n%s", appSession.Id, string(output))
+			case <-fastTicker.C:
+				checkJACKConnections(appSession)
+			case <-slowTicker.C:
+				checkJACKConnections(appSession)
 			}
 		}
 	}()
@@ -287,6 +307,16 @@ func MonitorAudioPipeline(appSession *session.AppSession) {
 			}
 		}
 	}()
+}
+
+func checkJACKConnections(appSession *session.AppSession) {
+	cmd := exec.Command("jack_lsp", "-c")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("[%s] Error monitoring JACK: %v", appSession.Id, err)
+		return
+	}
+	log.Printf("[%s] JACK Connections:\n%s", appSession.Id, string(output))
 }
 
 func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServer, error) {
@@ -400,27 +430,41 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 // - ensures STUN servers are properly configured
 // - validates URL format
 // - verifies required parameters are present
+// - checks for TURN server availability
 func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 	if len(iceServers) == 0 {
 		return fmt.Errorf("no ICE servers provided")
 	}
 
+	hasSTUN := false
+	hasTURN := false
+
 	for i, server := range iceServers {
 		log.Printf("[ICE] Server %d configuration:", i)
 		log.Printf("  - URLs: %v", server.URLs)
+		log.Printf("  - Username: %v", server.Username != "")
+		log.Printf("  - Credential: %v", server.Credential != nil)
 
-		// Verify STUN URLs are present and valid
-		hasSTUN := false
 		for _, url := range server.URLs {
 			if strings.HasPrefix(url, "stun:") {
 				hasSTUN = true
 				log.Printf("[ICE] Found valid STUN URL: %s", url)
+			} else if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
+				hasTURN = true
+				log.Printf("[ICE] Found valid TURN URL: %s", url)
+				if server.Username == "" || server.Credential == nil {
+					log.Printf("[ICE][WARN] TURN server missing credentials")
+				}
 			}
 		}
+	}
 
-		if !hasSTUN {
-			return fmt.Errorf("no valid STUN URLs found in ICE server configuration")
-		}
+	if !hasSTUN {
+		return fmt.Errorf("no valid STUN URLs found in ICE server configuration")
+	}
+
+	if !hasTURN {
+		log.Printf("[ICE][WARN] No TURN servers configured. This may cause connectivity issues for clients behind symmetric NATs")
 	}
 
 	return nil
@@ -436,17 +480,17 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	// - failedTimeout: time to wait before giving up on reconnection
 	// - keepAliveInterval: how often to send keepalive packets
 	s.SetICETimeouts(
-		10*time.Second,       // disconnectedTimeout (increased for STUN)
-		15*time.Second,       // failedTimeout (increased for STUN)
-		500*time.Millisecond, // keepAliveInterval
+		5*time.Second,        // disconnectedTimeout (reduced from 10s)
+		7*time.Second,        // failedTimeout (reduced from 15s)
+		250*time.Millisecond, // keepAliveInterval (reduced from 500ms)
 	)
 
 	// candidate gathering timeouts:
-	// - host candidates can be gathered quickly
-	// - srflx (STUN) candidates need more time
-	s.SetHostAcceptanceMinWait(500 * time.Millisecond)
-	s.SetSrflxAcceptanceMinWait(2000 * time.Millisecond) // Increased for STUN
-	s.SetPrflxAcceptanceMinWait(500 * time.Millisecond)
+	// - reduced timeouts for faster connection establishment
+	// - still allowing enough time for STUN candidates
+	s.SetHostAcceptanceMinWait(250 * time.Millisecond)   // reduced from 500ms
+	s.SetSrflxAcceptanceMinWait(1000 * time.Millisecond) // reduced from 2000ms
+	s.SetPrflxAcceptanceMinWait(250 * time.Millisecond)  // reduced from 500ms
 
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
@@ -591,6 +635,27 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	logWithTime("[ICE] Received candidate for session: %s", sessionID)
 
+	appSession, err := session.GetOrCreateSession(r, w)
+	if err != nil {
+		log.Printf("[ICE][ERROR] Failed to get/create session %s: %v", sessionID, err)
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	if appSession.PeerConnection == nil {
+		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
+		http.Error(w, "No peer connection", http.StatusBadRequest)
+		return
+	}
+
+	// check connection state before processing candidate
+	if appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateConnected ||
+		appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateCompleted {
+		log.Printf("[ICE] Session %s already connected, ignoring late candidate", sessionID)
+		w.WriteHeader(http.StatusOK) // return success to avoid 400 errors
+		return
+	}
+
 	var candidateRequest ICECandidateRequest
 	if err := json.NewDecoder(r.Body).Decode(&candidateRequest); err != nil {
 		log.Printf("[ICE][ERROR] Failed to decode candidate: %v", err)
@@ -598,11 +663,9 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appSession, err := session.GetOrCreateSession(r, w)
-	if err != nil {
-		log.Printf("[ICE][ERROR] Failed to get/create session %s: %v",
-			sessionID, err)
-		http.Error(w, "Session not found", http.StatusNotFound)
+	if candidateRequest.Candidate.Candidate == "" {
+		log.Printf("[ICE][ERROR] Empty candidate received for session %s", sessionID)
+		http.Error(w, "Empty ICE candidate", http.StatusBadRequest)
 		return
 	}
 

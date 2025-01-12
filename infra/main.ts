@@ -21,6 +21,7 @@ import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
 import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
+import { CloudwatchDashboard } from "@cdktf/provider-aws/lib/cloudwatch-dashboard";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -229,8 +230,13 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
     });
 
-    const logGroup = new CloudwatchLogGroup(this, "awestruck-log-group", {
-      name: `/ecs/${this.node.tryGetContext("taskDefinitionFamily")}`,
+    const webrtcLogGroup = new CloudwatchLogGroup(this, "webrtc-log-group", {
+      name: `/ecs/webrtc-server`,
+      retentionInDays: 30,
+    });
+
+    const stunLogGroup = new CloudwatchLogGroup(this, "stun-log-group", {
+      name: `/ecs/stun-server`,
       retentionInDays: 30,
     });
 
@@ -317,9 +323,9 @@ class AwestruckInfrastructure extends TerraformStack {
             logConfiguration: {
               logDriver: "awslogs",
               options: {
-                "awslogs-group": logGroup.name,
+                "awslogs-group": webrtcLogGroup.name,
                 "awslogs-region": awsRegion,
-                "awslogs-stream-prefix": "ecs",
+                "awslogs-stream-prefix": "webrtc",
               },
             }
           }
@@ -394,10 +400,17 @@ class AwestruckInfrastructure extends TerraformStack {
             logConfiguration: {
               logDriver: "awslogs",
               options: {
-                "awslogs-group": logGroup.name,
+                "awslogs-group": stunLogGroup.name,
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "stun",
               },
+            },
+            healthCheck: {
+              command: ["CMD-SHELL", "nc -zu localhost 3478 || exit 1"],
+              interval: 30,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 60,
             }
           }
         ]),
@@ -432,6 +445,62 @@ class AwestruckInfrastructure extends TerraformStack {
     new IamRolePolicyAttachment(this, "ecs-ecr-policy", {
       role: ecsTaskExecutionRole.name,
       policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    });
+
+    // Add CloudWatch metrics permissions to task role
+    new IamRolePolicyAttachment(this, "cloudwatch-metrics-policy", {
+      role: ecsTaskRole.name,
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+    });
+
+    // Add CloudWatch dashboard for monitoring both services
+    new CloudwatchDashboard(this, "awestruck-dashboard", {
+      dashboardName: "awestruck-services",
+      dashboardBody: JSON.stringify({
+        widgets: [
+          {
+            type: "log",
+            x: 0,
+            y: 0,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | fields @timestamp, @message | sort @timestamp desc | limit 100`,
+              region: awsRegion,
+              title: "WebRTC Server Logs",
+            },
+          },
+          {
+            type: "log",
+            x: 12,
+            y: 0,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${stunLogGroup.name}' | fields @timestamp, @message | sort @timestamp desc | limit 100`,
+              region: awsRegion,
+              title: "STUN Server Logs",
+            },
+          },
+          {
+            type: "metric",
+            x: 0,
+            y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              metrics: [
+                ["AWS/ECS", "CPUUtilization", "ServiceName", "stun-service", "ClusterName", "awestruck"],
+                [".", "MemoryUtilization", ".", ".", ".", "."]
+              ],
+              region: awsRegion,
+              title: "STUN Server Resources",
+              period: 300,
+              stat: "Average",
+            },
+          },
+        ],
+      }),
     });
   }
 }
