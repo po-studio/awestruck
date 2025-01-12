@@ -20,6 +20,7 @@ import { Lb as AlbLoadBalancer } from "@cdktf/provider-aws/lib/lb";
 import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
 import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
+import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -238,6 +239,20 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess",
     });
 
+    new SsmParameter(this, "openai-api-key", {
+      name: "/awestruck/openai_api_key",
+      type: "SecureString",
+      value: process.env.OPENAI_API_KEY || this.node.tryGetContext("openaiApiKey"),
+      description: "OpenAI API key for AI services",
+    });
+
+    new SsmParameter(this, "awestruck-api-key", {
+      name: "/awestruck/awestruck_api_key",
+      type: "SecureString",
+      value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
+      description: "Awestruck API key for authentication",
+    });
+
     const taskDefinition = new EcsTaskDefinition(
       this,
       "awestruck-task-definition",
@@ -274,7 +289,9 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "GST_DEBUG", value: "2" },
               { name: "JACK_BUFFER_SIZE", value: "2048" },
               { name: "JACK_PERIODS", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "4194304" }
+              { name: "GST_BUFFER_SIZE", value: "4194304" },
+              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
+              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
