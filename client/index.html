@@ -44,7 +44,12 @@
         <a href="/contact">contact</a>
     </nav>
     <script>
-        window.STUN_SERVER = window.location.hostname === 'localhost' ? 'localhost:3478' : 'stun.awestruck.io:3478';
+        window.STUN_SERVERS = window.location.hostname === 'localhost' 
+            ? ['localhost:3478']  // local development
+            : [
+                'stun.awestruck.io:3478',  // UDP primary
+                'stun.awestruck.io:3479'   // TCP fallback
+            ];
     </script>
     <script src="script.js"></script>
 </body>

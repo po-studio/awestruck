@@ -131,16 +131,16 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // STUN server port
+          // STUN server UDP port
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // STUN server port (TCP fallback)
+          // STUN server TCP ports
           fromPort: 3478,
-          toPort: 3478,
+          toPort: 3479,
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
         }
@@ -392,7 +392,8 @@ class AwestruckInfrastructure extends TerraformStack {
             name: "stun-server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/stun:latest`,
             portMappings: [
-              { containerPort: 3478, hostPort: 3478, protocol: "udp" }
+              { containerPort: 3478, hostPort: 3478, protocol: "udp" },
+              { containerPort: 3478, hostPort: 3478, protocol: "tcp" }
             ],
             environment: [
               { name: "STUN_PORT", value: "3478" }
@@ -447,7 +448,8 @@ class AwestruckInfrastructure extends TerraformStack {
         healthyThreshold: 2,
         unhealthyThreshold: 3,
         interval: 30
-      }
+      },
+      dependsOn: [stunNlb]
     });
 
     const stunTcpTargetGroup = new LbTargetGroup(this, "awestruck-stun-tcp-tg", {
@@ -463,7 +465,8 @@ class AwestruckInfrastructure extends TerraformStack {
         healthyThreshold: 2,
         unhealthyThreshold: 3,
         interval: 30
-      }
+      },
+      dependsOn: [stunNlb]
     });
 
     // why we need dns records for the stun server:
@@ -486,7 +489,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - udp is primary protocol for stun
     // - tcp provides fallback for restricted networks
     // - improves overall connection reliability
-    new LbListener(this, "stun-udp-listener", {
+    const stunUdpListener = new LbListener(this, "stun-udp-listener", {
       loadBalancerArn: stunNlb.arn,
       port: 3478,
       protocol: "UDP",
@@ -496,9 +499,9 @@ class AwestruckInfrastructure extends TerraformStack {
       }],
     });
 
-    new LbListener(this, "stun-tcp-listener", {
+    const stunTcpListener = new LbListener(this, "stun-tcp-listener", {
       loadBalancerArn: stunNlb.arn,
-      port: 3478,
+      port: 3479,  // Using a different port for TCP
       protocol: "TCP",
       defaultAction: [{
         type: "forward",
@@ -531,6 +534,7 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 3478,
         }
       ],
+      dependsOn: [stunUdpListener, stunTcpListener]
     });
 
     // Attach ECR read policy to allow pulling images

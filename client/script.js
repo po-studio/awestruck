@@ -128,9 +128,9 @@ const ICE_CONFIG = {
     development: {
         iceServers: [
             {
-                urls: [
-                    window.STUN_SERVER ? `stun:${window.STUN_SERVER}` : "stun:localhost:3478"
-                ]
+                urls: window.STUN_SERVERS 
+                    ? window.STUN_SERVERS.map(server => `stun:${server}`)
+                    : ["stun:localhost:3478"]
             }
         ],
         iceCandidatePoolSize: 0,
@@ -143,7 +143,10 @@ const ICE_CONFIG = {
         iceServers: [
             {
                 urls: [
+                    // primary UDP STUN server
                     "stun:stun.awestruck.io:3478",
+                    // TCP fallback STUN server
+                    "stun:stun.awestruck.io:3479"
                 ]
             }
         ],
