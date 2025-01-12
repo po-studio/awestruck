@@ -429,7 +429,7 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a udp target group:
     // - stun primarily operates over udp
-    // - enables health checks and monitoring
+    // - enables health checks over tcp (udp health checks not supported)
     // - allows for scaling and high availability
     const stunUdpTargetGroup = new LbTargetGroup(this, "awestruck-stun-udp-tg", {
       name: "awestruck-stun-udp-tg",
@@ -440,7 +440,7 @@ class AwestruckInfrastructure extends TerraformStack {
       healthCheck: {
         enabled: true,
         port: "3478",
-        protocol: "UDP",
+        protocol: "TCP",
         healthyThreshold: 2,
         unhealthyThreshold: 3,
         interval: 30
