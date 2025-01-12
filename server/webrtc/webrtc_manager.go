@@ -631,59 +631,70 @@ func closePeerConnection(pc *webrtc.PeerConnection) error {
 	return pc.Close()
 }
 
+// why we need robust ice candidate handling:
+// - ensures reliable peer connections
+// - handles network changes gracefully
+// - improves connection stability
 func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	logWithTime("[ICE] Received candidate for session: %s", sessionID)
 
+	// Read and validate request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logWithTime("[ICE][ERROR] Failed to read request body: %v", err)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	logWithTime("[ICE] Raw request body: %s", string(body))
+
+	// Parse ICE candidate
+	var candidateReq ICECandidateRequest
+	if err := json.Unmarshal(body, &candidateReq); err != nil {
+		logWithTime("[ICE][ERROR] Failed to parse ICE candidate: %v", err)
+		http.Error(w, "Invalid ICE candidate format", http.StatusBadRequest)
+		return
+	}
+
+	// Get the session
 	appSession, err := session.GetOrCreateSession(r, w)
 	if err != nil {
-		log.Printf("[ICE][ERROR] Failed to get/create session %s: %v", sessionID, err)
+		logWithTime("[ICE][ERROR] Session not found: %s", sessionID)
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
+	// Validate peer connection
 	if appSession.PeerConnection == nil {
-		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
+		logWithTime("[ICE][ERROR] No peer connection for session: %s", sessionID)
 		http.Error(w, "No peer connection", http.StatusBadRequest)
 		return
 	}
 
-	// check connection state before processing candidate
-	if appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateConnected ||
-		appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateCompleted {
-		log.Printf("[ICE] Session %s already connected, ignoring late candidate", sessionID)
-		w.WriteHeader(http.StatusOK) // return success to avoid 400 errors
-		return
-	}
-
-	var candidateRequest ICECandidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&candidateRequest); err != nil {
-		log.Printf("[ICE][ERROR] Failed to decode candidate: %v", err)
-		http.Error(w, "Invalid ICE candidate", http.StatusBadRequest)
-		return
-	}
-
-	if candidateRequest.Candidate.Candidate == "" {
-		log.Printf("[ICE][ERROR] Empty candidate received for session %s", sessionID)
-		http.Error(w, "Empty ICE candidate", http.StatusBadRequest)
-		return
-	}
-
+	// Create ICE candidate
+	usernameFragment := candidateReq.Candidate.UsernameFragment
 	candidate := webrtc.ICECandidateInit{
-		Candidate:        candidateRequest.Candidate.Candidate,
-		SDPMid:           &candidateRequest.Candidate.SDPMid,
-		SDPMLineIndex:    &candidateRequest.Candidate.SDPMLineIndex,
-		UsernameFragment: &candidateRequest.Candidate.UsernameFragment,
+		Candidate:        candidateReq.Candidate.Candidate,
+		SDPMid:           &candidateReq.Candidate.SDPMid,
+		SDPMLineIndex:    &candidateReq.Candidate.SDPMLineIndex,
+		UsernameFragment: &usernameFragment,
 	}
 
-	logWithTime("[ICE] Adding candidate for session %s: %+v", sessionID, candidate)
-	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
-		log.Printf("[ICE][ERROR] Failed to add ICE candidate: %v", err)
-		http.Error(w, "Failed to add ICE candidate", http.StatusInternalServerError)
-		return
+	// Add ICE candidate with retry
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		err = appSession.PeerConnection.AddICECandidate(candidate)
+		if err == nil {
+			logWithTime("[ICE] Successfully added candidate for session %s", sessionID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		logWithTime("[ICE][WARN] Failed to add candidate (attempt %d/%d): %v", i+1, maxRetries, err)
+		time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
 	}
 
-	w.WriteHeader(http.StatusOK)
+	logWithTime("[ICE][ERROR] Failed to add candidate after %d retries: %v", maxRetries, err)
+	http.Error(w, fmt.Sprintf("Failed to add ICE candidate: %v", err), http.StatusInternalServerError)
 }
 
 func getTimestamp() string {

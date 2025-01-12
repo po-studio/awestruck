@@ -417,7 +417,96 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // STUN server service with public IP
+    // why we need a network load balancer for stun:
+    // - supports layer 4 protocols (tcp/udp) unlike application load balancer (layer 7 http/https only)
+    // - preserves client source ip addresses which is crucial for stun/ice
+    // - provides lower latency by operating at transport layer
+    // - enables cross-zone load balancing for high availability
+    const stunNlb = new AlbLoadBalancer(this, "awestruck-stun-nlb", {
+      name: "awestruck-stun-nlb",
+      internal: false,
+      loadBalancerType: "network",
+      subnets: [subnet1.id, subnet2.id],
+      enableCrossZoneLoadBalancing: true,
+    });
+
+    // why we need separate target groups for udp and tcp:
+    // - stun requires both protocols for reliability
+    // - allows independent health checks per protocol
+    // - enables protocol-specific monitoring
+    const stunUdpTargetGroup = new LbTargetGroup(this, "awestruck-stun-udp-tg", {
+      name: "awestruck-stun-udp-tg",
+      port: 3478,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "3478",
+        protocol: "TCP",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 30
+      }
+    });
+
+    const stunTcpTargetGroup = new LbTargetGroup(this, "awestruck-stun-tcp-tg", {
+      name: "awestruck-stun-tcp-tg",
+      port: 3478,
+      protocol: "TCP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "3478",
+        protocol: "TCP",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 30
+      }
+    });
+
+    // why we need dns records for the stun server:
+    // - enables client discovery of stun services
+    // - allows for future ip changes without client updates
+    // - supports geographic dns routing if needed
+    new Route53Record(this, "stun-dns", {
+      zoneId: hostedZone.zoneId,
+      name: "stun.awestruck.io",
+      type: "A",
+      allowOverwrite: true,
+      alias: {
+        name: stunNlb.dnsName,
+        zoneId: stunNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
+    });
+
+    // why we need both udp and tcp listeners:
+    // - udp is primary protocol for stun
+    // - tcp provides fallback for restricted networks
+    // - improves overall connection reliability
+    new LbListener(this, "stun-udp-listener", {
+      loadBalancerArn: stunNlb.arn,
+      port: 3478,
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: stunUdpTargetGroup.arn,
+      }],
+    });
+
+    new LbListener(this, "stun-tcp-listener", {
+      loadBalancerArn: stunNlb.arn,
+      port: 3478,
+      protocol: "TCP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: stunTcpTargetGroup.arn,
+      }],
+    });
+
+    // Update STUN service to use both target groups
     new EcsService(this, "stun-service", {
       name: "stun-service",
       cluster: ecsCluster.arn,
@@ -429,16 +518,19 @@ class AwestruckInfrastructure extends TerraformStack {
         assignPublicIp: true,
         subnets: [subnet1.id, subnet2.id],
         securityGroups: [securityGroup.id],
-      }
-    });
-
-    // Simple DNS record for STUN server using service discovery
-    new Route53Record(this, "stun-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "stun.awestruck.io",
-      type: "A",
-      ttl: 60,
-      records: ["0.0.0.0"], // This will be updated with the actual IP once the service is running
+      },
+      loadBalancer: [
+        {
+          targetGroupArn: stunUdpTargetGroup.arn,
+          containerName: "stun-server-arm64",
+          containerPort: 3478,
+        },
+        {
+          targetGroupArn: stunTcpTargetGroup.arn,
+          containerName: "stun-server-arm64",
+          containerPort: 3478,
+        }
+      ],
     });
 
     // Attach ECR read policy to allow pulling images

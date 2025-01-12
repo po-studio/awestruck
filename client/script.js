@@ -100,7 +100,7 @@ function waitForICEConnection(pc) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             reject(new Error('ICE connection timeout'));
-        }, 3000); // Further reduced from 5s to 3s
+        }, 10000); // Increased to 10 seconds for production
 
         function checkState() {
             if (pc.iceConnectionState === 'connected' || 
@@ -133,38 +133,21 @@ const ICE_CONFIG = {
                 ]
             }
         ],
-        iceCandidatePoolSize: 0, // Reduced to 0 since we're using a single STUN server
-        rtcpMuxPolicy: 'require',
-        bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all',
-        // Add aggressive timing options
-        iceTransportPolicy: 'all',
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        // Add optional configuration for faster gathering
-        sdpSemantics: 'unified-plan',
-        // Aggressive timeouts
         iceCandidatePoolSize: 0,
-        iceServers: [
-            {
-                urls: [
-                    window.STUN_SERVER ? `stun:${window.STUN_SERVER}` : "stun:localhost:3478"
-                ],
-                // Add aggressive timeouts for STUN
-                iceTransportPolicy: 'all'
-            }
-        ]
+        rtcpMuxPolicy: 'require',
+        bundlePolicy: 'max-bundle',
+        iceTransportPolicy: 'all',
+        sdpSemantics: 'unified-plan'
     },
     production: {
-        // Mirror development config for production
         iceServers: [
             {
                 urls: [
-                    "stun:stun.awestruck.io:3478"
+                    "stun:stun.awestruck.io:3478",
                 ]
             }
         ],
-        iceCandidatePoolSize: 0,
+        iceCandidatePoolSize: 1,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
         iceTransportPolicy: 'all',
