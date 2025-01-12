@@ -123,15 +123,24 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
+          // WebRTC media ports
           fromPort: 10000,
           toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
+          // STUN server port
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          // STUN server port (TCP fallback)
+          fromPort: 3478,
+          toPort: 3478,
+          protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
         }
       ],
@@ -152,8 +161,15 @@ class AwestruckInfrastructure extends TerraformStack {
       targetType: "ip",
       vpcId: vpc.id,
       healthCheck: {
+        enabled: true,
         path: "/",
-        interval: 30,
+        port: "8080",
+        protocol: "HTTP",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 15,
+        timeout: 5,
+        matcher: "200-299"
       },
     });
 
@@ -293,9 +309,15 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
+            linuxParameters: {
+              capabilities: {
+                add: ["SYS_NICE", "IPC_LOCK"]
+              }
+            },
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
-              { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
+              { name: "rtprio", softLimit: 99, hardLimit: 99 }
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -324,6 +346,8 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
+    // TODO: rename to webrtc-service
+    // we can later have separate services for supercollider, jack, etc.
     new EcsService(this, "awestruck-service", {
       name: "awestruck-service",
       cluster: ecsCluster.arn,
@@ -385,7 +409,7 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // STUN server service
+    // STUN server service with public IP
     new EcsService(this, "stun-service", {
       name: "stun-service",
       cluster: ecsCluster.arn,
@@ -400,17 +424,13 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // Add STUN DNS record
+    // Simple DNS record for STUN server using service discovery
     new Route53Record(this, "stun-dns", {
       zoneId: hostedZone.zoneId,
       name: "stun.awestruck.io",
       type: "A",
-      allowOverwrite: true,
-      alias: {
-        name: alb.dnsName,
-        zoneId: alb.zoneId,
-        evaluateTargetHealth: true,
-      },
+      ttl: 60,
+      records: ["0.0.0.0"], // This will be updated with the actual IP once the service is running
     });
 
     // Attach ECR read policy to allow pulling images
