@@ -19,6 +19,7 @@ import { IamRolePolicyAttachment } from "@cdktf/provider-aws/lib/iam-role-policy
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
 import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
+import { EcrRepository } from "@cdktf/provider-aws/lib/ecr-repository";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -254,7 +255,7 @@ class AwestruckInfrastructure extends TerraformStack {
         containerDefinitions: JSON.stringify([
           {
             name: "server-arm64",
-            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
               ...Array.from({ length: 101 }, (_, i) => ({
@@ -346,7 +347,7 @@ class AwestruckInfrastructure extends TerraformStack {
         containerDefinitions: JSON.stringify([
           {
             name: "stun-server-arm64",
-            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/stun-server:latest`,
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/stun:latest`,
             portMappings: [
               { containerPort: 3478, hostPort: 3478, protocol: "udp" }
             ],
@@ -392,6 +393,12 @@ class AwestruckInfrastructure extends TerraformStack {
         zoneId: alb.zoneId,
         evaluateTargetHealth: true,
       },
+    });
+
+    // Allow ECS to pull from ECR
+    new IamRolePolicyAttachment(this, "ecs-ecr-policy", {
+      role: ecsTaskExecutionRole.name,
+      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
     });
   }
 }

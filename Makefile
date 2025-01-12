@@ -10,9 +10,10 @@ STUN_IMAGE_NAME = stun-server-$(subst /,-,$(PLATFORM))
 # AWS Configuration
 AWS_REGION ?= us-east-1
 AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output text)
-ECR_REPO = po-studio/awestruck
-STUN_ECR_REPO = po-studio/stun-server
-ECR_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+ECR_WEBRTC_REPO = po-studio/awestruck/services/webrtc
+ECR_STUN_REPO = po-studio/awestruck/services/stun
+ECR_WEBRTC_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_WEBRTC_REPO)
+ECR_STUN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_STUN_REPO)
 
 .PHONY: build build-stun up down test-generate-synth aws-login aws-push aws-push-stun deploy-all
 
@@ -71,24 +72,27 @@ build-stun:
 
 aws-login:
 	aws ecr get-login-password --region $(AWS_REGION) | \
-	docker login --username AWS --password-stdin $(ECR_URL)
+		docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+	# Create ECR repositories if they don't exist
+	aws ecr create-repository --repository-name $(ECR_WEBRTC_REPO) --force-delete || true
+	aws ecr create-repository --repository-name $(ECR_STUN_REPO) --force-delete || true
 
 aws-push: aws-login
 	# Pull the latest image from ECR to use as cache
-	docker pull $(ECR_URL)/$(ECR_REPO):latest || true
+	docker pull $(ECR_WEBRTC_URL):latest || true
 	
 	# Build with cache from both local and ECR
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--platform $(PLATFORM) \
 		--cache-from type=local,src=/tmp/.buildx-cache \
-		--cache-from $(ECR_URL)/$(ECR_REPO):latest \
+		--cache-from $(ECR_WEBRTC_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-new \
 		-t $(IMAGE_NAME):latest \
-		-t $(ECR_URL)/$(ECR_REPO):latest \
+		-t $(ECR_WEBRTC_URL):latest \
 		--load .
 	
 	# Push to ECR with all layers
-	docker push $(ECR_URL)/$(ECR_REPO):latest
+	docker push $(ECR_WEBRTC_URL):latest
 	
 	# Move the new cache
 	rm -rf /tmp/.buildx-cache
@@ -96,21 +100,21 @@ aws-push: aws-login
 
 aws-push-stun: aws-login
 	# Pull the latest image from ECR to use as cache
-	docker pull $(ECR_URL)/$(STUN_ECR_REPO):latest || true
+	docker pull $(ECR_STUN_URL):latest || true
 	
 	# Build with cache from both local and ECR
 	DOCKER_BUILDKIT=1 docker buildx build \
 		--platform $(PLATFORM) \
 		--cache-from type=local,src=/tmp/.buildx-cache-stun \
-		--cache-from $(ECR_URL)/$(STUN_ECR_REPO):latest \
+		--cache-from $(ECR_STUN_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-stun-new \
 		-t $(STUN_IMAGE_NAME):latest \
-		-t $(ECR_URL)/$(STUN_ECR_REPO):latest \
+		-t $(ECR_STUN_URL):latest \
 		-f Dockerfile.stun \
 		--load .
 	
 	# Push to ECR with all layers
-	docker push $(ECR_URL)/$(STUN_ECR_REPO):latest
+	docker push $(ECR_STUN_URL):latest
 	
 	# Move the new cache
 	rm -rf /tmp/.buildx-cache-stun
@@ -118,14 +122,14 @@ aws-push-stun: aws-login
 
 deploy-all: build build-stun aws-login
 	# Tag WebRTC server image for ECR
-	docker tag $(IMAGE_NAME) $(ECR_URL)/$(ECR_REPO):latest
+	docker tag $(IMAGE_NAME) $(ECR_WEBRTC_URL):latest
 	# Push WebRTC server to ECR
-	docker push $(ECR_URL)/$(ECR_REPO):latest
+	docker push $(ECR_WEBRTC_URL):latest
 	
 	# Tag STUN server image for ECR
-	docker tag $(STUN_IMAGE_NAME) $(ECR_URL)/$(STUN_ECR_REPO):latest
+	docker tag $(STUN_IMAGE_NAME) $(ECR_STUN_URL):latest
 	# Push STUN server to ECR
-	docker push $(ECR_URL)/$(STUN_ECR_REPO):latest
+	docker push $(ECR_STUN_URL):latest
 	
 	# Deploy infrastructure
 	cd infra && npm install && cdktf deploy --auto-approve

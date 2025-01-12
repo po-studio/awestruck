@@ -28,7 +28,7 @@ const iceProgress = monitorIceProgress();
 function getSessionID() {
   let sessionID = sessionStorage.getItem('sessionID');
   if (!sessionID) {
-      sessionID = `sid_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+      sessionID = `sid_${Math.random().toString(36).slice(2, 11)}_${Date.now()}`;
       sessionStorage.setItem('sessionID', sessionID);
   }
   return sessionID;
