@@ -300,7 +300,7 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "ENVIRONMENT", value: "production" },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-R -d dummy" },
+              { name: "JACK_OPTIONS", value: "-r -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
               { name: "GST_DEBUG", value: "2" },
               { name: "JACK_BUFFER_SIZE", value: "2048" },
@@ -311,7 +311,7 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             linuxParameters: {
               capabilities: {
-                add: ["SYS_NICE", "IPC_LOCK"]
+                add: ["IPC_LOCK"]
               }
             },
             ulimits: [
