@@ -1,24 +1,25 @@
+import { App } from "cdktf";
 import { Construct } from "constructs";
-import { App, TerraformStack } from "cdktf";
+import { TerraformStack } from "cdktf";
 import { AwsProvider } from "@cdktf/provider-aws/lib/provider";
 import { Vpc } from "@cdktf/provider-aws/lib/vpc";
-import { InternetGateway } from "@cdktf/provider-aws/lib/internet-gateway";
-import { Subnet } from "@cdktf/provider-aws/lib/subnet";
-import { RouteTable } from "@cdktf/provider-aws/lib/route-table";
-import { Route } from "@cdktf/provider-aws/lib/route";
-import { RouteTableAssociation } from "@cdktf/provider-aws/lib/route-table-association";
 import { SecurityGroup } from "@cdktf/provider-aws/lib/security-group";
-import { Lb as AlbLoadBalancer } from "@cdktf/provider-aws/lib/lb";
-import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
-import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
+import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
+import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
 import { EcsCluster } from "@cdktf/provider-aws/lib/ecs-cluster";
 import { EcsService } from "@cdktf/provider-aws/lib/ecs-service";
 import { EcsTaskDefinition } from "@cdktf/provider-aws/lib/ecs-task-definition";
 import { IamRole } from "@cdktf/provider-aws/lib/iam-role";
 import { IamRolePolicyAttachment } from "@cdktf/provider-aws/lib/iam-role-policy-attachment";
+import { Subnet } from "@cdktf/provider-aws/lib/subnet";
+import { InternetGateway } from "@cdktf/provider-aws/lib/internet-gateway";
+import { RouteTable } from "@cdktf/provider-aws/lib/route-table";
+import { RouteTableAssociation } from "@cdktf/provider-aws/lib/route-table-association";
+import { Route } from "@cdktf/provider-aws/lib/route";
+import { Lb as AlbLoadBalancer } from "@cdktf/provider-aws/lib/lb";
+import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
+import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
-import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
-import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -47,6 +48,7 @@ class AwestruckInfrastructure extends TerraformStack {
     const vpc = new Vpc(this, "awestruck-vpc", {
       cidrBlock: "10.0.0.0/16",
       enableDnsHostnames: true,
+      enableDnsSupport: true,
       tags: {
         Name: "awestruck-vpc",
       },
@@ -189,11 +191,11 @@ class AwestruckInfrastructure extends TerraformStack {
         Version: "2012-10-17",
         Statement: [
           {
+            Action: "sts:AssumeRole",
             Effect: "Allow",
             Principal: {
               Service: "ecs-tasks.amazonaws.com",
             },
-            Action: "sts:AssumeRole",
           },
         ],
       }),
@@ -394,10 +396,10 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    // Allow ECS to pull from ECR
+    // Attach ECR read policy to allow pulling images
     new IamRolePolicyAttachment(this, "ecs-ecr-policy", {
       role: ecsTaskExecutionRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
     });
   }
 }
