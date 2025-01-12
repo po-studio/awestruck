@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/po-studio/go-webrtc-server/config"
-	"github.com/po-studio/go-webrtc-server/routes"
+	"github.com/po-studio/server/config"
+	"github.com/po-studio/server/routes"
 )
 
 var (

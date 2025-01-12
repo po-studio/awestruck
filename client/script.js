@@ -1,9 +1,34 @@
+// why we need ice progress monitoring:
+// - tracks candidate gathering and validation
+// - helps diagnose connection issues
+// - provides feedback for debugging
+function monitorIceProgress() {
+    let candidatesSent = 0;
+    let candidatesAcknowledged = 0;
+    
+    return {
+        trackCandidate: () => {
+            candidatesSent++;
+            console.log(`[ICE] Candidates tracked: ${candidatesSent} sent, ${candidatesAcknowledged} acknowledged`);
+        },
+        trackAcknowledgement: () => {
+            candidatesAcknowledged++;
+            console.log(`[ICE] Candidates tracked: ${candidatesSent} sent, ${candidatesAcknowledged} acknowledged`);
+        },
+        getStats: () => ({
+            sent: candidatesSent,
+            acknowledged: candidatesAcknowledged
+        })
+    };
+}
+
 const iceProgress = monitorIceProgress();
+
 // Generate or retrieve session ID once
 function getSessionID() {
   let sessionID = sessionStorage.getItem('sessionID');
   if (!sessionID) {
-      sessionID = `sid_${Math.random().toString(36).substr(2, 9)}`;
+      sessionID = `sid_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
       sessionStorage.setItem('sessionID', sessionID);
   }
   return sessionID;
@@ -21,6 +46,8 @@ let audioStatsInterval = null;
 let audioLevelsInterval = null;
 let trackStatsInterval = null;
 let lastConnectionState = null;
+let pendingCandidates = [];
+let remoteDescriptionSet = false;
 
 // Add session ID to all HTMX requests
 document.body.addEventListener('htmx:configRequest', evt => {
@@ -48,398 +75,9 @@ async function handleSynthResponse(event) {
   button.disabled = true;
 
   try {
-      const turnResponse = await fetch('/turn-credentials', {
-          headers: { 'X-Session-ID': sessionID }
-      });
-      const fetchedTurnConfig = await turnResponse.json();
-
-      await setupWebRTC(fetchedTurnConfig);
-
-      button.textContent = 'Stop Synth';
-      button.classList.add('button-disconnect');
-      button.disabled = false;
-  } catch (error) {
-      console.error('Connection failed:', error);
-      button.textContent = 'Error - Try Again';
-      button.disabled = false;
-  }
-}
-
-async function setupWebRTC(config) {
-    try {
-        if (!validateTurnConfig(config)) {
-            throw new Error('Invalid TURN configuration');
-        }
-
-        const turnTest = await testTurnBeforeConnect(config);
-        if (!turnTest.gatheredCandidates.length) {
-            throw new Error('TURN connectivity test failed');
-        }
-
-        console.log('Starting WebRTC setup with config:', {
-            iceTransportPolicy: config.iceTransportPolicy,
-            iceServers: config.iceServers.map(s => ({
-                urls: s.urls,
-                hasCredentials: !!(s.username && s.credential)
-            }))
-        });
-
-        pc = new RTCPeerConnection(config);
-
-        pc.onconnectionstatechange = onConnectionStateChange;
-        // pc.onicecandidate = handleICECandidate;
-        pc.oniceconnectionstatechange = onIceConnectionStateChange;
-        pc.onicegatheringstatechange = onIceGatheringStateChange;
-        pc.ontrack = handleTrack;
-
-        pc.addTransceiver('audio', { direction: 'recvonly' });
-
-        const checkIceCandidates = monitorIceCandidates(pc);
-        pc.onicecandidate = (event) => {
-            handleICECandidate(event);  // Your existing handler
-            if (event.candidate) {
-                checkIceCandidates(event.candidate);  // Additional monitoring
-            }
-        };
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        const browserOffer = {
-            sdp: btoa(JSON.stringify({
-                type: offer.type,
-                sdp: offer.sdp
-            })),
-            type: offer.type,
-            iceServers: config.iceServers
-        };
-
-        const response = await fetch('/offer', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-ID': sessionID
-            },
-            body: JSON.stringify(browserOffer)
-        });
-
-        if (!response.ok) {
-            throw new Error(`Server returned ${response.status}`);
-        }
-
-        const answer = await response.json();
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-
-        // (Optional) If you need to send any ICE candidates stored before remote desc:
-        // pendingCandidates.forEach(candidate => sendIceCandidate(candidate));
-        // pendingCandidates = [];
-    } catch (error) {
-        console.error('[WebRTC] Setup failed:', error);
-        await cleanupConnection();
-        throw error;
-    }
-}
-
-function handleTrack(event) {
-  if (!audioElement) {
-      audioElement = new Audio();
-      audioElement.autoplay = true;
-  }
-  audioElement.srcObject = event.streams[0];
-}
-
-// Store pending ICE candidates to send when remote desc is ready
-let pendingCandidates = [];
-
-async function handleICECandidate(event) {
-    if (!event.candidate) return;
-    
-    const candidateStr = event.candidate.candidate;
-    const parts = candidateStr.split(' ');
-    const type = parts[7];
-    const protocol = parts[2];
-    const ip = parts[4];
-    const port = parts[5];
-    const isProduction = window.location.hostname !== 'localhost';
-    
-    console.log("[ICE] Candidate details:", {
-        type,
-        protocol,
-        ip,
-        port,
-        isProduction,
-        isRelay: type === 'relay',
-        fullCandidate: candidateStr,
-        timestamp: new Date().toISOString()
-    });
-    
-    if (isProduction && type !== 'relay') {
-        console.warn('Filtered non-relay candidate');
-        return;
-    }
-
-    const candidateObj = {
-        candidate: {
-            candidate: event.candidate.candidate,
-            sdpMid: event.candidate.sdpMid,
-            sdpMLineIndex: event.candidate.sdpMLineIndex,
-            usernameFragment: event.candidate.usernameFragment
-        }
-    };
-
-    try {
-        iceProgress.trackCandidate();
-        const response = await fetch('/ice-candidate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-ID': sessionID
-            },
-            body: JSON.stringify(candidateObj)
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Server returned ${response.status}`);
-        }
-        
-        iceProgress.trackAcknowledgement();
-        console.log('[ICE] Successfully sent candidate to server');
-    } catch (error) {
-        console.error('[ICE] Failed to send candidate:', error);
-    }
-}
-
-function onConnectionStateChange() {
-  if (!pc) {
-    console.log('Connection state change called but pc is null');
-    return;
-  }
-
-  const currentState = {
-    connectionState: pc.connectionState,
-    iceConnectionState: pc.iceConnectionState,
-    iceGatheringState: pc.iceGatheringState,
-    signalingState: pc.signalingState,
-  };
-  
-  if (JSON.stringify(currentState) === JSON.stringify(lastConnectionState)) {
-    return;
-  }
-  lastConnectionState = currentState;
-
-  console.log('Connection state change:', currentState);
-
-  switch (pc.connectionState) {
-    case 'connected':
-      console.log('Connection established, checking media tracks...');
-      pc.getReceivers().forEach((receiver) => {
-        console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
-      });
-
-      startConnectionMonitoring();
-      startAudioStatsMonitoring();
-
-      // updateToggleButton({ text: 'Disconnect', disconnectStyle: true, disabled: false });
-      
-      // Fetch and display the synth code
-      console.log('Fetching synth code...');
-      fetch('/synth-code', {
-        headers: {
-          'X-Session-ID': sessionID
-        }
-      })
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`Failed to fetch synth code: ${response.status}`);
-          }
-          return response.text();
-        })
-        .then(code => {
-          console.log('Code fetched, length:', code.length);
-          return typeCode(code);
-        })
-        .catch(error => console.error('Failed to fetch synth code:', error));
-      break;
-
-    case 'disconnected':
-    case 'failed':
-    case 'closed':
-      console.log('Connection ended:', currentState);
-      clearCode();
-      break;
-  }
-}
-
-async function cleanupConnection() {
-  const sessionInfo = {
-      sessionId: sessionID,
-      lastConnectionState: pc ? pc.connectionState : 'none',
-      lastIceState: pc ? pc.iceConnectionState : 'none',
-      timeStamp: new Date().toISOString()
-  };
-
-  console.log('Cleaning up session:', sessionInfo);
-
-  // Clear monitoring intervals
-  clearInterval(qualityMonitorInterval);
-  clearInterval(codePollingInterval);
-  clearInterval(audioStatsInterval);
-  clearInterval(audioLevelsInterval);
-  clearInterval(trackStatsInterval);
-  clearTimeout(iceCheckingTimeout);
-  
-  // Reset all interval variables
-  qualityMonitorInterval = null;
-  codePollingInterval = null;
-  audioStatsInterval = null;
-  audioLevelsInterval = null;
-  trackStatsInterval = null;
-  iceCheckingTimeout = null;
-  
-  // ... rest of the cleanup code
-
-  // Remove audio element
-  if (audioElement) {
-      audioElement.srcObject = null;
-      audioElement.remove();
-      audioElement = null;
-  }
-
-  // Close audio context
-  if (audioContext) {
-      await audioContext.close();
-      audioContext = null;
-      console.log('Audio context closed successfully');
-  }
-
-  // Close peer connection
-  if (pc) {
-      logLastKnownGoodConnection();
-      pc.close();
-      pc = null;
-  }
-
-  // Tell server to stop
-  try {
-      const response = await fetch('/stop', {
-          method: 'POST',
-          headers: {
-              'Content-Type': 'application/json',
-              'X-Session-ID': sessionID
-          }
-      });
-      if (!response.ok) {
-          console.error('Failed to stop server session:', response.status);
-      }
-  } catch (error) {
-      console.error('Error stopping server session:', error);
-  }
-
-  // Fade out and clear code
-  const codeDisplay = document.getElementById('codeDisplay');
-  codeDisplay.style.transition = 'opacity 0.3s ease-out';
-  codeDisplay.style.opacity = '0';
-  setTimeout(() => {
-      clearCode();
-  }, 300);
-
-  console.log('Session cleanup completed:', {
-      ...sessionInfo,
-      intervalsCleared: true,
-      peerConnectionClosed: true
-  });
-}
-
-async function typeCode(code) {
-    const codeDisplay = document.getElementById('codeDisplay');
-    if (!codeDisplay) return;
-
-    clearCode();
-    codeDisplay.classList.add('visible');
-    
-    // Ensure language class is added before content
-    codeDisplay.classList.add('language-supercollider');
-    
-    const chars = code.split('');
-    let currentText = '';
-
-    for (const char of chars) {
-        currentText += char;
-        codeDisplay.textContent = currentText;
-        if (window.Prism) {
-            Prism.highlightElement(codeDisplay);
-        }
-        await new Promise(resolve => setTimeout(resolve, Math.random() * 4 + 1));
-    }
-}
-
-function clearCode() {
-  const codeDisplay = document.getElementById('codeDisplay');
-  if (codeDisplay) {
-      codeDisplay.textContent = '';
-      codeDisplay.style.opacity = '1';
-      codeDisplay.style.transition = '';
-      codeDisplay.classList.remove('visible', 'language-supercollider');
-  }
-}
-
-// Connection quality monitoring
-function startConnectionMonitoring() {
-  clearInterval(qualityMonitorInterval);
-  qualityMonitorInterval = setInterval(() => {
-      if (!pc) {
-          clearInterval(qualityMonitorInterval);
-          return;
-      }
-      pc.getStats().then(stats => {
-          stats.forEach(report => {
-              switch (report.type) {
-                  case 'candidate-pair':
-                      if (report.state === 'succeeded') {
-                          console.log('Connection Quality:', {
-                              currentRoundTripTime: report.currentRoundTripTime,
-                              availableOutgoingBitrate: report.availableOutgoingBitrate,
-                              bytesReceived: report.bytesReceived,
-                              protocol: report.protocol,
-                              relayProtocol: report.relayProtocol,
-                              localCandidateType: report.localCandidateType,
-                              remoteCandidateType: report.remoteCandidateType
-                          });
-                      }
-                      break;
-                  case 'inbound-rtp':
-                      if (report.kind === 'audio') {
-                          console.log('Audio Stats:', {
-                              packetsReceived: report.packetsReceived,
-                              bytesReceived: report.bytesReceived,
-                              packetsLost: report.packetsLost,
-                              jitter: report.jitter
-                          });
-                      }
-                      break;
-              }
-          });
-      });
-  }, 1000);
-}
-
-// Manual click handler (e.g., if not using HTMX for some flows)
-async function handleSynthClick() {
-  const button = document.querySelector('.connection-button');
-
-  if (pc) {
-      await cleanupConnection();
-      button.textContent = 'Generate Synth';
-      button.classList.remove('button-disconnect');
-      return;
-  }
-
-  button.textContent = 'Connecting...';
-  button.disabled = true;
-
-  try {
       const isProduction = window.location.hostname !== 'localhost';
-      const config = isProduction ? TURN_CONFIG.production : TURN_CONFIG.development;
+      const config = isProduction ? ICE_CONFIG.production : ICE_CONFIG.development;
+      
       console.log('Using WebRTC config:', config);
 
       await setupWebRTC(config);
@@ -454,312 +92,148 @@ async function handleSynthClick() {
   }
 }
 
-// Separate TURN configs for local vs. production
-const TURN_CONFIG = {
-  development: {
-      iceServers: [
-          {
-              urls: [
-                "turn:localhost:3478?transport=udp",
-                "turn:localhost:3478?transport=tcp"
-              ],
-              username: "awestruck",
-              credential: "password",
-              credentialType: "password",
-              realm: "localhost"
-          }
-      ],
-      iceTransportPolicy: 'all',
-      iceCandidatePoolSize: 1
-  },
-  production: {
-      iceServers: [
-          {
-              urls: [
-                "turn:turn.awestruck.io:3478?transport=udp",
-                "turn:turn.awestruck.io:3478?transport=tcp"
-              ],
-              username: "awestruck",
-              credential: "password",
-              credentialType: "password",
-              realm: "awestruck.io"
-          }
-      ],
-      iceTransportPolicy: 'relay',
-      iceCandidatePoolSize: 2,
-      rtcpMuxPolicy: 'require',
-      bundlePolicy: 'max-bundle'
-  }
+// why we need ice connection monitoring:
+// - ensures we wait for successful ICE connection before proceeding
+// - helps diagnose connection failures early
+// - provides timing information for debugging
+function waitForICEConnection(pc) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            reject(new Error('ICE connection timeout'));
+        }, 10000); // 10 second timeout
+
+        function checkState() {
+            if (pc.iceConnectionState === 'connected' || 
+                pc.iceConnectionState === 'completed') {
+                clearTimeout(timeout);
+                resolve();
+            } else if (pc.iceConnectionState === 'failed' ||
+                      pc.iceConnectionState === 'disconnected' ||
+                      pc.iceConnectionState === 'closed') {
+                clearTimeout(timeout);
+                reject(new Error(`ICE connection failed: ${pc.iceConnectionState}`));
+            }
+        }
+
+        pc.addEventListener('iceconnectionstatechange', checkState);
+        checkState(); // Check current state immediately
+    });
+}
+
+// why we need ice configuration:
+// - enables peer discovery through our custom STUN server
+// - allows direct peer connections where possible
+// - falls back to host candidates if STUN fails
+const ICE_CONFIG = {
+    development: {
+        iceServers: [
+            {
+                urls: [
+                    window.STUN_SERVER ? `stun:${window.STUN_SERVER}` : "stun:localhost:3478"
+                ]
+            }
+        ],
+        iceCandidatePoolSize: 2,
+        rtcpMuxPolicy: 'require',
+        bundlePolicy: 'max-bundle',
+        iceTransportPolicy: 'all'  // Allow all candidate types for better connectivity
+    },
+    production: {
+        iceServers: [
+            {
+                urls: [
+                    "stun:stun.awestruck.io:3478"
+                ]
+            }
+        ],
+        iceCandidatePoolSize: 2,
+        rtcpMuxPolicy: 'require',
+        bundlePolicy: 'max-bundle',
+        iceTransportPolicy: 'all'  // Allow all candidate types for better connectivity
+    }
 };
 
-function validateTurnConfig(config) {
-  if (!config || !config.iceServers) {
-      console.error('[TURN] Invalid ICE configuration');
-      return false;
-  }
-
-  const hasTurnServer = config.iceServers.some(server => {
-      console.log('[TURN] Validating server config:', {
-          urls: server.urls,
-          hasUsername: !!server.username,
-          hasCredential: !!server.credential,
-          realm: server.realm
-      });
-      
-      return server.urls.some(url => 
-          url.startsWith('turn:') || url.startsWith('turns:')
-      );
-  });
-
-  if (!hasTurnServer) {
-      console.error('[TURN] No TURN server found in configuration');
-      return false;
-  }
-
-  console.log('[TURN] Configuration validated:', config);
-  return true;
-}
-
-function onIceConnectionStateChange() {
-  console.log('ICE Connection State:', pc.iceConnectionState);
-
-  pc.onconnectionstatechange = () => {
-    console.log('[WebRTC] Connection state changed:', {
-      connectionState: pc.connectionState,
-      iceConnectionState: pc.iceConnectionState,
-      signalingState: pc.signalingState
-    });
-    
-    if (pc.connectionState === 'failed') {
-      pc.getStats().then(stats => {
-        const diagnostics = {
-          timestamp: new Date().toISOString(),
-          candidates: [],
-          transportStats: []
-        };
-        
-        stats.forEach(stat => {
-          if (stat.type === 'candidate-pair') {
-            diagnostics.candidates.push(stat);
-          }
-          if (stat.type === 'transport') {
-            diagnostics.transportStats.push(stat);
-          }
-        });
-        
-        console.error('[WebRTC] Connection failed diagnostics:', diagnostics);
-      });
+// why we need ice configuration validation:
+// - ensures our custom STUN server is properly configured
+// - validates URL format
+// - verifies required parameters are present
+function validateIceConfig(config) {
+    if (!config || !config.iceServers) {
+        console.error('[ICE] Invalid ICE configuration');
+        return false;
     }
-  };
-  
-  if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'connected') {
-      monitorTurnConnectivity(pc);
-  }
 
-  const timestamp = new Date().toISOString();
-  const diagnosticInfo = {
-      timestamp,
-      iceState: pc.iceConnectionState,
-      connectionState: pc.connectionState,
-      signalingState: pc.signalingState,
-      sessionId: sessionID
-  };
-
-  console.log('[ICE] State change diagnostic info:', diagnosticInfo);
-
-  if (['checking', 'failed'].includes(pc.iceConnectionState)) {
-      pc.getStats().then(stats => {
-          const candidatePairs = [];
-          stats.forEach(stat => {
-              if (stat.type === 'candidate-pair') {
-                  candidatePairs.push({
-                      state: stat.state,
-                      nominated: stat.nominated,
-                      priority: stat.priority
-                  });
-              }
-          });
-          console.log('[ICE] Candidate pairs during', pc.iceConnectionState, ':', candidatePairs);
-      });
-  }
-
-  if (iceCheckingTimeout) {
-      clearTimeout(iceCheckingTimeout);
-      iceCheckingTimeout = null;
-  }
-
-  if (pc.iceConnectionState === 'checking') {
-      iceCheckingTimeout = setTimeout(() => {
-          if (pc && pc.iceConnectionState === 'checking') {
-              console.warn('ICE checking timeout - forcing cleanup');
-              cleanupConnection();
-          }
-      }, 30000);
-  }
-  if (pc.iceConnectionState === 'failed') {
-      console.error('ICE Connection failed - gathering diagnostic information');
-      logLastKnownGoodConnection();
-      if (pc) {
-          pc.getStats().then(stats => {
-              console.log('Final ICE stats before failure:', stats);
-          });
-      }
-      const isProduction = window.location.hostname !== 'localhost';
-      if (!isProduction) {
-          console.log('Development environment - immediate cleanup on failure');
-          cleanupConnection();
-          return;
-      }
-      if (pc) {
-          pc.restartIce();
-          setTimeout(() => {
-              if (pc && pc.iceConnectionState === 'failed') {
-                  cleanupConnection();
-              }
-          }, 3000);
-      }
-  }
-}
-
-function onIceGatheringStateChange() {
-  if (!pc) return;
-  console.log(`ICE gathering state: ${pc.iceGatheringState}`);
-
-  const diagnosticInfo = {
-      timestamp: new Date().toISOString(),
-      gatheringState: pc.iceGatheringState,
-      connectionState: pc.connectionState,
-      iceConnectionState: pc.iceConnectionState,
-      signalingState: pc.signalingState
-  };
-
-  console.log('[ICE] Gathering state diagnostic info:', diagnosticInfo);
-
-  if (pc.iceGatheringState === 'complete') {
-      console.log('Final SDP with ICE candidates:', pc.localDescription.sdp);
-      pc.getStats().then(stats => {
-          const localCandidates = [];
-          stats.forEach(stat => {
-              if (stat.type === 'local-candidate') {
-                  localCandidates.push({
-                      type: stat.candidateType,
-                      protocol: stat.protocol,
-                      address: stat.address,
-                      port: stat.port,
-                      priority: stat.priority
-                  });
-              }
-          });
-          console.log('[ICE] Gathered local candidates:', localCandidates);
-      });
-  }
-}
-
-function startAudioStatsMonitoring() {
-  clearInterval(audioStatsInterval);
-  audioStatsInterval = setInterval(() => {
-    if (!pc) {
-      clearInterval(audioStatsInterval);
-      return;
-    }
-    pc.getStats().then((stats) => {
-      stats.forEach((report) => {
-        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-          console.log('Audio Stats:', {
-            packetsReceived: report.packetsReceived,
-            bytesReceived: report.bytesReceived,
-            packetsLost: report.packetsLost,
-            jitter: report.jitter,
-          });
+    const hasStunServer = config.iceServers.some(server => {
+        if (!server.urls) {
+            console.error('[ICE] Missing URLs');
+            return false;
         }
-      });
+
+        // Validate URLs format and ensure they're STUN
+        const validUrls = server.urls.every(url => {
+            const isStun = url.startsWith('stun:');
+            if (!isStun) {
+                console.error('[ICE] URL must be STUN:', url);
+                return false;
+            }
+            return true;
+        });
+
+        if (!validUrls) {
+            console.error('[ICE] Invalid STUN URLs:', server.urls);
+            return false;
+        }
+
+        return true;
     });
-  }, 2000);
-}
 
-function logLastKnownGoodConnection() {
-  if (!pc) return;
-
-  const connectionInfo = {
-      timestamp: new Date().toISOString(),
-      connectionState: pc.connectionState,
-      iceConnectionState: pc.iceConnectionState,
-      iceGatheringState: pc.iceGatheringState,
-      signalingState: pc.signalingState
-  };
-
-  console.log('[CLEANUP] Last known connection state:', connectionInfo);
-
-  pc.getStats().then(stats => {
-      const lastStats = {
-          candidatePairs: [],
-          localCandidates: [],
-          remoteCandidates: [],
-          inboundRTP: []
-      };
-
-      stats.forEach(stat => {
-          switch (stat.type) {
-              case 'candidate-pair':
-                  if (stat.state === 'succeeded') {
-                      lastStats.candidatePairs.push({
-                          state: stat.state,
-                          localCandidateId: stat.localCandidateId,
-                          remoteCandidateId: stat.remoteCandidateId,
-                          bytesReceived: stat.bytesReceived,
-                          roundTripTime: stat.currentRoundTripTime
-                      });
-                  }
-                  break;
-              case 'local-candidate':
-                  lastStats.localCandidates.push({
-                      type: stat.candidateType,
-                      protocol: stat.protocol,
-                      address: stat.address,
-                      port: stat.port
-                  });
-                  break;
-              case 'remote-candidate':
-                  lastStats.remoteCandidates.push({
-                      type: stat.candidateType,
-                      protocol: stat.protocol,
-                      address: stat.address,
-                      port: stat.port
-                  });
-                  break;
-              case 'inbound-rtp':
-                  if (stat.kind === 'audio') {
-                      lastStats.inboundRTP.push({
-                          packetsReceived: stat.packetsReceived,
-                          packetsLost: stat.packetsLost,
-                          jitter: stat.jitter,
-                          bytesReceived: stat.bytesReceived
-                      });
-                  }
-                  break;
-          }
-      });
-
-      console.log('[CLEANUP] Last known connection stats:', lastStats);
-  });
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    const synthButton = document.getElementById('synthButton');
-    if (synthButton) {
-        synthButton.addEventListener('click', handleSynthClick);
+    if (!hasStunServer) {
+        console.error('[ICE] No valid STUN server found in configuration');
+        return false;
     }
-    
-    // Move your existing event listener inside DOMContentLoaded
-    document.body.addEventListener('htmx:configRequest', evt => {
-        evt.detail.headers['X-Session-ID'] = sessionID;
-    });
-});
 
-// register supercollider syntax highlighting
+    return true;
+}
+
+// Manual click handler (e.g., if not using HTMX for some flows)
+async function handleSynthClick() {
+    const button = document.querySelector('.connection-button');
+
+    if (pc) {
+        await cleanupConnection();
+        button.textContent = 'Generate Synth';
+        button.classList.remove('button-disconnect');
+        return;
+    }
+
+    button.textContent = 'Connecting...';
+    button.disabled = true;
+
+    try {
+        const isProduction = window.location.hostname !== 'localhost';
+        const config = isProduction ? ICE_CONFIG.production : ICE_CONFIG.development;
+        
+        console.log('Using WebRTC config:', config);
+
+        await setupWebRTC(config);
+
+        button.textContent = 'Stop Synth';
+        button.classList.add('button-disconnect');
+        button.disabled = false;
+    } catch (error) {
+        console.error('Connection failed:', error);
+        button.textContent = 'Error - Try Again';
+        button.disabled = false;
+    }
+}
+
+// why we need custom syntax highlighting:
+// - improves code readability
+// - helps identify different language elements
+// - matches supercollider conventions
 Prism.languages.supercollider = {
     'comment': {
-        pattern: /\/\/.*|\/\*[\s\S]*?\*\//,
+        pattern: /(\/\/.*)|(\/\*[\s\S]*?\*\/)/,
         greedy: true
     },
     'string': {
@@ -771,169 +245,504 @@ Prism.languages.supercollider = {
         greedy: true
     },
     'function': {
-        pattern: /\b(?:SynthDef|Out|Mix|Pan2|SinOsc|LFNoise1|EnvGen|Env|Array|RLPF|BPF|HPF|GVerb|Splay|Limiter|Saw|WhiteNoise|PinkNoise|BrownNoise|DelayN|LocalIn|LocalOut|Dust|Decay|FreqShift|PitchShift|tanh)\b\.?(?=\()/,
+        pattern: /\b[a-z]\w*(?=\s*\()/,
         greedy: true
     },
+    'keyword': /\b(?:arg|var|if|else|while|do|for|switch|case|return|nil|true|false|inf)\b/,
     'number': /\b-?(?:0x[\da-f]+|\d*\.?\d+(?:e[+-]?\d+)?)\b/i,
-    'keyword': /\b(?:var|arg|kr|ar|mul|add|range|exprange|fill|new)\b/,
-    'operator': /[-+*\/=!<>]=?|[&|^~]|\b(?:and|or|not)\b/,
+    'operator': /[-+*\/%=&|!<>^~?:]+/,
     'punctuation': /[{}[\];(),.:]/
 };
 
-function monitorIceCandidates(pc) {
-  let relayFound = false;
-  
-  pc.addEventListener('icegatheringstatechange', () => {
-      if (pc.iceGatheringState === 'complete' && !relayFound) {
-          console.error('ICE gathering completed without finding relay candidates');
-          pc.getStats().then(stats => {
-              const candidates = [];
-              stats.forEach(stat => {
-                  if (stat.type === 'local-candidate') {
-                      candidates.push({
-                          type: stat.candidateType,
-                          protocol: stat.protocol,
-                          address: stat.address
-                      });
-                  }
-              });
-              console.log('Final ICE candidates:', candidates);
-          });
-      }
-  });
-
-  return (candidate) => {
-      if (candidate.candidate.includes(' relay ')) {
-          relayFound = true;
-          console.log('Relay candidate found:', candidate.candidate);
-      }
-  };
-}
-
-function monitorTurnConnectivity(pc) {
-  pc.getStats().then(stats => {
-      stats.forEach(stat => {
-          if (stat.type === 'remote-candidate') {
-              console.log('TURN Candidate:', {
-                  type: stat.candidateType,
-                  protocol: stat.protocol,
-                  address: stat.address,
-                  port: stat.port,
-                  turnServer: stat.relayProtocol ? {
-                      protocol: stat.relayProtocol,
-                      address: stat.relayAddress,
-                      port: stat.relayPort
-                  } : null
-              });
-          }
-      });
-  });
-}
-
-function testTurnServer(turnConfig) {
-    console.log('[TURN] Testing server connectivity...', {
-        urls: turnConfig.urls,
-        username: turnConfig.username,
-        realm: turnConfig.realm
-    });
-    
-    return new Promise((resolve) => {
-        const pc = new RTCPeerConnection({
-            iceServers: [turnConfig],
-            iceTransportPolicy: 'relay'
-        });
-        
-        pc.onicegatheringstatechange = () => {
-            console.log('[TURN] ICE gathering state:', pc.iceGatheringState);
-        };
-
-        pc.oniceconnectionstatechange = () => {
-            console.log('[TURN] ICE connection state:', pc.iceConnectionState);
-        };
-        
-        const stats = {
-            gatheredCandidates: [],
-            gatheringState: null,
-            connectionState: null,
-            error: null
-        };
-        
-        pc.onicecandidate = (e) => {
-            if (e.candidate) {
-                console.log('[TURN] Raw candidate:', e.candidate.candidate);
-                stats.gatheredCandidates.push({
-                    type: e.candidate.type,
-                    protocol: e.candidate.protocol,
-                    address: e.candidate.address,
-                    port: e.candidate.port,
-                    raw: e.candidate.candidate
-                });
-            }
-        };
-
-        // Increase timeout to 10 seconds for more thorough testing
-        setTimeout(() => {
-            stats.gatheringState = pc.iceGatheringState;
-            stats.connectionState = pc.connectionState;
-            console.log('[TURN] Test completed with stats:', stats);
-            pc.close();
-            resolve(stats);
-        }, 10000);
-
-        pc.createDataChannel('test');
-        pc.createOffer()
-            .then(offer => {
-                console.log('[TURN] Created offer:', offer.sdp);
-                return pc.setLocalDescription(offer);
-            })
-            .catch(err => {
-                console.error('[TURN] Test failed:', err);
-                stats.error = err.message;
-                pc.close();
-                resolve(stats);
-            });
-    });
-}
-
-async function testTurnBeforeConnect(config) {
-    const testResult = await testTurnServer(config.iceServers[0]);
-    if (testResult.gatheredCandidates.length === 0) {
-        throw new Error('TURN server connection test failed - no candidates gathered');
+// why we need webrtc setup:
+// - initializes peer connection with STUN configuration
+// - sets up media tracks and data channels
+// - handles connection state changes
+async function setupWebRTC(config) {
+    if (!validateIceConfig(config)) {
+        throw new Error('Invalid ICE configuration');
     }
-    return testResult;
-}
 
-function monitorIceGatheringTimeout(pc) {
-    return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-            reject(new Error('ICE gathering timed out'));
-        }, 10000); // 10 second timeout
-        
-        pc.onicegatheringstatechange = () => {
-            if (pc.iceGatheringState === 'complete') {
-                clearTimeout(timeout);
-                resolve();
-            }
-        };
-    });
-}
+    // Create peer connection
+    pc = new RTCPeerConnection(config);
+    console.log('[WebRTC] Created peer connection with config:', config);
 
-function monitorIceProgress() {
-    let candidatesSent = 0;
-    let candidatesAcknowledged = 0;
+    // Set up connection state monitoring
+    pc.onconnectionstatechange = onConnectionStateChange;
+    pc.oniceconnectionstatechange = onIceConnectionStateChange;
     
-    return {
-        trackCandidate: () => {
-            candidatesSent++;
-            console.log(`[ICE] Candidates tracked: ${candidatesSent} sent, ${candidatesAcknowledged} acknowledged`);
-        },
-        trackAcknowledgement: () => {
-            candidatesAcknowledged++;
-            console.log(`[ICE] Candidates tracked: ${candidatesSent} sent, ${candidatesAcknowledged} acknowledged`);
-        },
-        getStats: () => ({
-            sent: candidatesSent,
-            acknowledged: candidatesAcknowledged
-        })
+    // why we need audio track handling:
+    // - sets up audio playback when track is received
+    // - monitors track state changes
+    // - provides detailed debugging info
+    pc.ontrack = (event) => {
+        console.log('[AUDIO] Received track:', {
+            kind: event.track.kind,
+            id: event.track.id,
+            enabled: event.track.enabled,
+            muted: event.track.muted,
+            readyState: event.track.readyState,
+            constraints: event.track.getConstraints(),
+            settings: event.track.getSettings()
+        });
+
+        if (event.track.kind === 'audio') {
+            setupAudioElement(event.track);
+            
+            // Monitor track state changes
+            event.track.onended = () => console.log('[AUDIO] Track ended');
+            event.track.onmute = () => console.log('[AUDIO] Track muted');
+            event.track.onunmute = () => console.log('[AUDIO] Track unmuted');
+            
+            // Add audio processing debugging
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('[AUDIO] Created AudioContext:', {
+                    sampleRate: audioContext.sampleRate,
+                    state: audioContext.state,
+                    baseLatency: audioContext.baseLatency,
+                    outputLatency: audioContext.outputLatency
+                });
+                
+                const source = audioContext.createMediaStreamSource(new MediaStream([event.track]));
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+                
+                // Monitor audio levels using analyser
+                const dataArray = new Float32Array(analyser.frequencyBinCount);
+                const checkAudioLevels = () => {
+                    if (audioContext.state === 'running') {
+                        analyser.getFloatTimeDomainData(dataArray);
+                        let maxLevel = 0;
+                        for (let i = 0; i < dataArray.length; i++) {
+                            maxLevel = Math.max(maxLevel, Math.abs(dataArray[i]));
+                        }
+                        console.log('[AUDIO] Current level:', maxLevel.toFixed(4));
+                    }
+                };
+                setInterval(checkAudioLevels, 1000);
+            } catch (error) {
+                console.error('[AUDIO] Failed to setup audio processing:', error);
+            }
+        }
     };
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            iceProgress.trackCandidate();
+            console.log('[ICE] New candidate:', event.candidate);
+            fetch('/ice-candidate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Session-ID': sessionID
+                },
+                body: JSON.stringify({
+                    candidate: btoa(JSON.stringify({
+                        candidate: event.candidate.candidate,
+                        sdpMid: event.candidate.sdpMid,
+                        sdpMLineIndex: event.candidate.sdpMLineIndex,
+                        usernameFragment: event.candidate.usernameFragment
+                    }))
+                })
+            }).then(() => {
+                iceProgress.trackAcknowledgement();
+            }).catch(err => {
+                console.error('[ICE] Failed to send candidate:', err);
+            });
+        }
+    };
+
+    // Create and send offer
+    const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false
+    });
+    
+    await pc.setLocalDescription(offer);
+    console.log('[WebRTC] Created and set local description');
+
+    await sendOffer(offer);
+}
+
+async function sendOffer(offer) {
+    try {
+        const iceServers = pc.getConfiguration().iceServers;
+        console.log('Using WebRTC config:', pc.getConfiguration());
+
+        // Convert the SDP to base64 properly
+        const browserOffer = {
+            sdp: btoa(JSON.stringify({
+                type: offer.type,
+                sdp: offer.sdp
+            })),
+            type: offer.type,
+            iceServers: iceServers
+        };
+
+        const response = await fetch('/offer', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-ID': sessionID
+            },
+            body: JSON.stringify(browserOffer)
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to send offer');
+        }
+
+        const answer = await response.json();
+        console.log('[WebRTC] Received answer:', answer);
+        
+        await pc.setRemoteDescription(answer);
+        console.log('[WebRTC] Set remote description');
+
+        // Wait for ICE connection
+        await waitForICEConnection(pc);
+        console.log('[WebRTC] ICE connection established');
+    } catch (error) {
+        console.error('Connection failed:', error);
+        throw error;
+    }
+}
+
+// why we need connection state monitoring:
+// - tracks overall WebRTC connection health
+// - triggers UI updates based on connection state
+// - helps diagnose connection issues
+function onConnectionStateChange() {
+    if (!pc) {
+        console.log('Connection state change called but pc is null');
+        return;
+    }
+
+    const currentState = {
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+        iceGatheringState: pc.iceGatheringState,
+        signalingState: pc.signalingState,
+    };
+    
+    if (JSON.stringify(currentState) === JSON.stringify(lastConnectionState)) {
+        return;
+    }
+    lastConnectionState = currentState;
+
+    console.log('Connection state change:', currentState);
+
+    switch (pc.connectionState) {
+        case 'connected':
+            console.log('Connection established, checking media tracks...');
+            pc.getReceivers().forEach((receiver) => {
+                console.log('Track:', receiver.track.kind, 'State:', receiver.track.readyState);
+            });
+
+            startConnectionMonitoring();
+            startAudioStatsMonitoring();
+
+            // Fetch and display the synth code
+            console.log('Fetching synth code...');
+            fetch('/synth-code', {
+                headers: {
+                    'X-Session-ID': sessionID
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch synth code: ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(code => {
+                    console.log('Code fetched, length:', code.length);
+                    return typeCode(code);
+                })
+                .catch(error => console.error('Failed to fetch synth code:', error));
+            break;
+
+        case 'disconnected':
+        case 'failed':
+        case 'closed':
+            console.log('Connection ended:', currentState);
+            clearCode();
+            break;
+    }
+}
+
+// why we need ice connection monitoring:
+// - tracks STUN connectivity status
+// - helps identify network issues
+// - provides detailed ICE state information
+function onIceConnectionStateChange() {
+    if (!pc) {
+        console.log('ICE connection state change called but pc is null');
+        return;
+    }
+
+    console.log('ICE Connection State:', pc.iceConnectionState);
+    
+    if (pc.iceConnectionState === 'checking') {
+        console.log('[ICE] Connection checking - gathering candidates...');
+        pc.getStats().then(stats => {
+            let candidateTypes = new Set();
+            stats.forEach(stat => {
+                if (stat.type === 'local-candidate') {
+                    candidateTypes.add(stat.candidateType);
+                    console.log('[ICE] Local candidate:', {
+                        type: stat.candidateType,
+                        protocol: stat.protocol,
+                        address: stat.address,
+                        port: stat.port
+                    });
+                }
+            });
+            console.log('[ICE] Found candidate types:', Array.from(candidateTypes));
+        });
+    }
+
+    if (pc.iceConnectionState === 'failed') {
+        console.error('[ICE] Connection failed - checking stats...');
+        pc.getStats().then(stats => {
+            let diagnostics = {
+                localCandidates: [],
+                remoteCandidates: [],
+                candidatePairs: []
+            };
+            
+            stats.forEach(stat => {
+                if (stat.type === 'local-candidate') {
+                    diagnostics.localCandidates.push({
+                        type: stat.candidateType,
+                        protocol: stat.protocol,
+                        address: stat.address
+                    });
+                } else if (stat.type === 'remote-candidate') {
+                    diagnostics.remoteCandidates.push({
+                        type: stat.candidateType,
+                        protocol: stat.protocol,
+                        address: stat.address
+                    });
+                } else if (stat.type === 'candidate-pair') {
+                    diagnostics.candidatePairs.push({
+                        state: stat.state,
+                        nominated: stat.nominated,
+                        bytesSent: stat.bytesSent,
+                        bytesReceived: stat.bytesReceived
+                    });
+                }
+            });
+            console.error('[ICE] Connection diagnostics:', diagnostics);
+        });
+    }
+}
+
+// why we need connection monitoring:
+// - tracks WebRTC connection quality
+// - monitors audio stats for debugging
+// - helps identify performance issues
+function startConnectionMonitoring() {
+    if (qualityMonitorInterval) {
+        clearInterval(qualityMonitorInterval);
+    }
+
+    qualityMonitorInterval = setInterval(() => {
+        if (!pc) return;
+
+        pc.getStats().then(stats => {
+            stats.forEach(stat => {
+                if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+                    console.log('[STATS] Connection Quality:', {
+                        currentRoundTripTime: stat.currentRoundTripTime,
+                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent
+                    });
+                }
+            });
+        });
+    }, 5000);
+}
+
+function startAudioStatsMonitoring() {
+    if (audioStatsInterval) {
+        clearInterval(audioStatsInterval);
+    }
+
+    audioStatsInterval = setInterval(() => {
+        if (!pc) return;
+
+        pc.getStats().then(stats => {
+            stats.forEach(stat => {
+                if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+                    console.log('[AUDIO] Detailed Stats:', {
+                        packetsReceived: stat.packetsReceived,
+                        packetsLost: stat.packetsLost,
+                        jitter: stat.jitter,
+                        bytesReceived: stat.bytesReceived,
+                        timestamp: stat.timestamp,
+                        audioLevel: stat.audioLevel,
+                        totalSamplesReceived: stat.totalSamplesReceived,
+                        concealedSamples: stat.concealedSamples,
+                        silentConcealedSamples: stat.silentConcealedSamples,
+                        codecId: stat.codecId
+                    });
+                } else if (stat.type === 'track' && stat.kind === 'audio') {
+                    console.log('[AUDIO] Track Stats:', {
+                        audioLevel: stat.audioLevel,
+                        totalAudioEnergy: stat.totalAudioEnergy,
+                        totalSamplesDuration: stat.totalSamplesDuration,
+                        detached: stat.detached,
+                        ended: stat.ended,
+                        remoteSource: stat.remoteSource
+                    });
+                }
+            });
+        });
+    }, 5000);
+}
+
+// why we need proper cleanup:
+// - ensures resources are released
+// - stops all monitoring intervals
+// - closes WebRTC connection properly
+async function cleanupConnection() {
+    console.log('Cleaning up connection...');
+
+    // Clear all intervals
+    [qualityMonitorInterval, audioStatsInterval, audioLevelsInterval, 
+     trackStatsInterval, codePollingInterval].forEach(interval => {
+        if (interval) clearInterval(interval);
+    });
+
+    // Stop audio context and clear element
+    if (audioContext) {
+        await audioContext.close();
+        audioContext = null;
+    }
+    if (audioElement) {
+        audioElement.pause();
+        audioElement.remove();
+        audioElement = null;
+    }
+
+    // Clear code display
+    clearCode();
+
+    // Close peer connection
+    if (pc) {
+        // Send stop signal to server
+        try {
+            await fetch('/stop', {
+                method: 'POST',
+                headers: {
+                    'X-Session-ID': sessionID
+                }
+            });
+        } catch (error) {
+            console.error('Error sending stop signal:', error);
+        }
+
+        pc.close();
+        pc = null;
+    }
+
+    console.log('Cleanup complete');
+}
+
+// why we need code display functions:
+// - provides visual feedback of synth code
+// - handles code highlighting
+// - manages code display state
+function clearCode() {
+    const codeDisplay = document.getElementById('codeDisplay');
+    codeDisplay.textContent = '';
+    codeDisplay.classList.remove('visible');
+}
+
+function typeCode(code) {
+    const codeDisplay = document.getElementById('codeDisplay');
+    codeDisplay.classList.add('language-supercollider');
+    codeDisplay.classList.add('visible');
+    
+    // Set the code and trigger Prism highlighting
+    codeDisplay.textContent = code;
+    Prism.highlightElement(codeDisplay);
+}
+
+// why we need button event listeners:
+// - handles user interaction
+// - triggers WebRTC connection setup
+// - manages connection state changes
+document.addEventListener('DOMContentLoaded', () => {
+    const synthButton = document.getElementById('synthButton');
+    if (synthButton) {
+        synthButton.addEventListener('click', handleSynthClick);
+    }
+
+    // Add HTMX event listener for server responses
+    document.body.addEventListener('htmx:afterRequest', handleSynthResponse);
+});
+
+// why we need audio setup debugging:
+// - tracks audio element creation and state
+// - monitors stream attachment
+// - verifies playback is working
+function setupAudioElement(track) {
+    console.log('[AUDIO] Setting up audio element for track:', {
+        kind: track.kind,
+        id: track.id,
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState
+    });
+
+    const stream = new MediaStream([track]);
+    console.log('[AUDIO] Created MediaStream:', {
+        active: stream.active,
+        id: stream.id
+    });
+
+    audioElement = new Audio();
+    audioElement.autoplay = true;
+    audioElement.controls = true;
+    audioElement.style.display = 'none';
+    document.body.appendChild(audioElement);
+    
+    console.log('[AUDIO] Created audio element:', {
+        autoplay: audioElement.autoplay,
+        controls: audioElement.controls,
+        volume: audioElement.volume,
+        muted: audioElement.muted
+    });
+
+    audioElement.srcObject = stream;
+    
+    // Add event listeners for audio element
+    audioElement.addEventListener('play', () => console.log('[AUDIO] Audio element started playing'));
+    audioElement.addEventListener('pause', () => console.log('[AUDIO] Audio element paused'));
+    audioElement.addEventListener('ended', () => console.log('[AUDIO] Audio element ended'));
+    audioElement.addEventListener('error', (e) => console.error('[AUDIO] Audio element error:', e));
+    
+    // Monitor audio levels
+    audioLevelsInterval = setInterval(() => {
+        if (audioElement && !audioElement.paused) {
+            console.log('[AUDIO] Playback state:', {
+                currentTime: audioElement.currentTime,
+                volume: audioElement.volume,
+                muted: audioElement.muted,
+                readyState: audioElement.readyState,
+                networkState: audioElement.networkState
+            });
+        }
+    }, 5000);
+
+    const playPromise = audioElement.play();
+    if (playPromise !== undefined) {
+        playPromise
+            .then(() => console.log('[AUDIO] Audio playback started successfully'))
+            .catch(error => console.error('[AUDIO] Audio playback failed:', error));
+    }
 }

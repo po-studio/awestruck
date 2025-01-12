@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/po-studio/go-webrtc-server/config"
-	"github.com/po-studio/go-webrtc-server/llm"
-	sc "github.com/po-studio/go-webrtc-server/supercollider"
+	"github.com/po-studio/server/config"
+	"github.com/po-studio/server/llm"
+	sc "github.com/po-studio/server/supercollider"
 )
 
 type Synth interface {

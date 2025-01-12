@@ -7,16 +7,15 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pion/webrtc/v3"
-	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
-	"github.com/po-studio/go-webrtc-server/internal/signal"
-	"github.com/po-studio/go-webrtc-server/session"
+	gst "github.com/po-studio/server/internal/gstreamer-src"
+	"github.com/po-studio/server/internal/signal"
+	"github.com/po-studio/server/session"
 )
 
 // BrowserOffer represents the SDP offer from the browser
@@ -38,8 +37,8 @@ type ICECandidateRequest struct {
 // HandleOffer handles the incoming WebRTC offer
 func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
-	log.Printf("[OFFER] Received offer request from session: %s", sessionID)
-	log.Printf("[OFFER] Request headers: %+v", r.Header)
+	logWithTime("[OFFER] Received offer request from session: %s", sessionID)
+	logWithTime("[OFFER] Request headers: %v", r.Header)
 
 	// Read and log the raw request body
 	body, err := io.ReadAll(r.Body)
@@ -48,7 +47,7 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[OFFER] Raw request body: %s", string(body))
+	logWithTime("[OFFER] Raw request body: %s", string(body))
 
 	// Restore the body for further processing
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -60,8 +59,8 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[OFFER] Processed offer details: Type=%s, ICEServers=%d", offer.Type, len(iceServers))
-	log.Printf("[OFFER] SDP Preview: %.100s...", offer.SDP)
+	logWithTime("[OFFER] Processed offer details: Type=%s, ICEServers=%d", offer.Type, len(iceServers))
+	logWithTime("[OFFER] SDP Preview: %.100s...", offer.SDP)
 
 	if err := verifyICEConfiguration(iceServers); err != nil {
 		log.Printf("[ERROR] Invalid ICE configuration: %v", err)
@@ -123,30 +122,14 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
-// func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
-// 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
-
-// 	log.Println("Setting local description")
-// 	if err := appSession.PeerConnection.SetLocalDescription(answer); err != nil {
-// 		log.Println("Error setting local description:", err)
-// 		return fmt.Errorf("failed to set local description: %v", err)
-// 	}
-
-// 	log.Println("Starting media pipeline")
-// 	if err := startMediaPipeline(appSession, audioTrack); err != nil {
-// 		return err
-// 	}
-
-// 	log.Println("Starting synth engine")
-// 	if err := startSynthEngine(appSession); err != nil {
-// 		return err
-// 	}
-
-// 	log.Println("Waiting for ICE gathering to complete")
-// 	<-gatherComplete
-// 	log.Println("ICE gathering complete")
-// 	return nil
-// }
+// why we need longer ice timeouts:
+// - clients may take up to 45 seconds to gather all candidates
+// - some networks require multiple connection attempts
+// - mobile clients often need more time for candidate gathering
+const (
+	iceGatheringTimeout = 45 * time.Second
+	iceConnectTimeout   = 60 * time.Second
+)
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
@@ -167,16 +150,54 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 		return err
 	}
 
-	// Add timeout for ICE gathering
+	// Add longer timeout for ICE gathering with candidate monitoring
 	log.Println("Waiting for ICE gathering to complete (with timeout)")
+
+	// Track successful candidate pairs
+	var successfulPairs int
+	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("[ICE] Connection state changed to %s for session %s", state.String(), appSession.Id)
+		if state == webrtc.ICEConnectionStateChecking {
+			stats := appSession.PeerConnection.GetStats()
+			for _, stat := range stats {
+				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.State == "succeeded" {
+					successfulPairs++
+					log.Printf("[ICE] Found successful candidate pair: local=%s, remote=%s", s.LocalCandidateID, s.RemoteCandidateID)
+				}
+			}
+		}
+	})
+
 	select {
 	case <-gatherComplete:
-		log.Println("ICE gathering completed successfully")
-	case <-time.After(5 * time.Second):
-		log.Println("ICE gathering timed out after 5 seconds, proceeding with available candidates")
-	}
+		log.Printf("[ICE] Gathering completed successfully")
+		stats := appSession.PeerConnection.GetStats()
+		var candidateCount int
+		for _, stat := range stats {
+			if s, ok := stat.(*webrtc.ICECandidatePairStats); ok {
+				candidateCount++
+				log.Printf("[ICE] Found candidate pair: %+v", s)
+			}
+		}
+		log.Printf("[ICE] Found %d successful candidate pairs", successfulPairs)
+		return nil
 
-	return nil
+	case <-time.After(iceGatheringTimeout):
+		// Check if we have any valid candidates before timing out
+		stats := appSession.PeerConnection.GetStats()
+		var candidateCount int
+		for _, stat := range stats {
+			if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.State == "succeeded" {
+				candidateCount++
+			}
+		}
+		if candidateCount > 0 {
+			log.Printf("[ICE] Gathering partial completion with %d valid candidates", candidateCount)
+			return nil
+		}
+		log.Printf("[ICE] Gathering timed out after %v with no valid candidates", iceGatheringTimeout)
+		return fmt.Errorf("ice gathering timeout with no valid candidates")
+	}
 }
 
 func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample) error {
@@ -375,24 +396,63 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 	return audioTrack, nil
 }
 
+// why we need ice configuration validation:
+// - ensures STUN servers are properly configured
+// - validates URL format
+// - verifies required parameters are present
+func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
+	if len(iceServers) == 0 {
+		return fmt.Errorf("no ICE servers provided")
+	}
+
+	for i, server := range iceServers {
+		log.Printf("[ICE] Server %d configuration:", i)
+		log.Printf("  - URLs: %v", server.URLs)
+
+		// Verify STUN URLs are present and valid
+		hasSTUN := false
+		for _, url := range server.URLs {
+			if strings.HasPrefix(url, "stun:") {
+				hasSTUN = true
+				log.Printf("[ICE] Found valid STUN URL: %s", url)
+			}
+		}
+
+		if !hasSTUN {
+			return fmt.Errorf("no valid STUN URLs found in ICE server configuration")
+		}
+	}
+
+	return nil
+}
+
 // createPeerConnection initializes a new WebRTC peer connection
 func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
-	// Create a SettingEngine and configure timeouts
 	s := webrtc.SettingEngine{}
 	s.SetEphemeralUDPPortRange(10000, 10100)
+
+	// ice timeouts for STUN:
+	// - disconnectedTimeout: time to wait before considering a connection lost
+	// - failedTimeout: time to wait before giving up on reconnection
+	// - keepAliveInterval: how often to send keepalive packets
 	s.SetICETimeouts(
-		5*time.Second,  // disconnectedTimeout
-		10*time.Second, // failedTimeout
-		5*time.Second,  // keepAliveInterval
+		10*time.Second,       // disconnectedTimeout (increased for STUN)
+		15*time.Second,       // failedTimeout (increased for STUN)
+		500*time.Millisecond, // keepAliveInterval
 	)
 
-	// Create MediaEngine
+	// candidate gathering timeouts:
+	// - host candidates can be gathered quickly
+	// - srflx (STUN) candidates need more time
+	s.SetHostAcceptanceMinWait(500 * time.Millisecond)
+	s.SetSrflxAcceptanceMinWait(2000 * time.Millisecond) // Increased for STUN
+	s.SetPrflxAcceptanceMinWait(500 * time.Millisecond)
+
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return nil, fmt.Errorf("failed to register codecs: %v", err)
 	}
 
-	// Create API with our settings
 	api := webrtc.NewAPI(
 		webrtc.WithSettingEngine(s),
 		webrtc.WithMediaEngine(m),
@@ -401,12 +461,8 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	config := webrtc.Configuration{
 		ICEServers:           iceServers,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
-		ICECandidatePoolSize: 1,
-	}
-
-	// Only force TURN relay in production/staging environments
-	if os.Getenv("AWESTRUCK_ENV") != "development" {
-		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+		ICECandidatePoolSize: 2,
+		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
 	}
 
 	pc, err := api.NewPeerConnection(config)
@@ -414,18 +470,37 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		return nil, err
 	}
 
-	// Add logging for ICE connection states
-	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("[ICE] Connection state changed: %s", state.String())
-		if state == webrtc.ICEConnectionStateConnected {
-			log.Printf("[ICE] Connection established successfully")
-			// Log active candidate pair
+	// Add detailed connection state monitoring
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Printf("[WebRTC] Connection state changed to: %s", state.String())
+		if state == webrtc.PeerConnectionStateConnecting {
+			// Log ICE candidates when connecting
 			stats := pc.GetStats()
-			for _, s := range stats {
-				if candidatePair, ok := s.(*webrtc.ICECandidatePairStats); ok && candidatePair.State == "succeeded" {
-					log.Printf("[ICE] Active candidate pair: %+v", candidatePair)
+			for _, stat := range stats {
+				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok {
+					log.Printf("[ICE] Candidate pair: state=%s nominated=%v",
+						candidatePair.State, candidatePair.Nominated)
 				}
 			}
+		}
+	})
+
+	// Monitor ICE gathering state
+	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
+		log.Printf("[ICE] Gathering state changed to: %s", state.String())
+		if state == webrtc.ICEGathererStateComplete {
+			stats := pc.GetStats()
+			var candidateCount int
+			for _, stat := range stats {
+				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok {
+					if candidatePair.State == "succeeded" {
+						candidateCount++
+						log.Printf("[ICE] Successful candidate pair: local=%s remote=%s",
+							candidatePair.LocalCandidateID, candidatePair.RemoteCandidateID)
+					}
+				}
+			}
+			log.Printf("[ICE] Found %d successful candidate pairs", candidateCount)
 		}
 	})
 
@@ -514,7 +589,7 @@ func closePeerConnection(pc *webrtc.PeerConnection) error {
 
 func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
-	log.Printf("[ICE] Received candidate for session: %s", sessionID)
+	logWithTime("[ICE] Received candidate for session: %s", sessionID)
 
 	var candidateRequest ICECandidateRequest
 	if err := json.NewDecoder(r.Body).Decode(&candidateRequest); err != nil {
@@ -538,7 +613,7 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		UsernameFragment: &candidateRequest.Candidate.UsernameFragment,
 	}
 
-	log.Printf("[ICE] Adding candidate for session %s: %+v", sessionID, candidate)
+	logWithTime("[ICE] Adding candidate for session %s: %+v", sessionID, candidate)
 	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
 		log.Printf("[ICE][ERROR] Failed to add ICE candidate: %v", err)
 		http.Error(w, "Failed to add ICE candidate", http.StatusInternalServerError)
@@ -548,40 +623,11 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
-	if len(iceServers) == 0 {
-		return fmt.Errorf("no ICE servers provided")
-	}
-
-	for i, server := range iceServers {
-		log.Printf("[ICE] Server %d full configuration: %+v", i, server)
-
-		log.Printf("[ICE] Server %d configuration:", i)
-		log.Printf("  - URLs: %v", server.URLs)
-		log.Printf("  - Username length: %d", len(server.Username))
-		log.Printf("  - Credential length: %d", len(server.Credential.(string)))
-
-		// Verify TURN URLs are present when in relay-only mode
-		hasTURN := false
-		for _, url := range server.URLs {
-			if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
-				hasTURN = true
-				break
-			}
-		}
-
-		if !hasTURN {
-			return fmt.Errorf("no TURN URLs found in ICE server configuration")
-		}
-	}
-
-	return nil
+func getTimestamp() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
-func verifyTURNConfig(iceServers []webrtc.ICEServer) {
-	for _, server := range iceServers {
-		log.Printf("TURN Server URLs: %v", server.URLs)
-		log.Printf("TURN Server Username length: %d", len(server.Username))
-		log.Printf("TURN Server Credential length: %d", len(server.Credential.(string)))
-	}
+func logWithTime(format string, v ...interface{}) {
+	timestamp := getTimestamp()
+	log.Printf("[%s] %s", timestamp, fmt.Sprintf(format, v...))
 }

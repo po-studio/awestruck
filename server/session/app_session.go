@@ -6,9 +6,8 @@ import (
 
 	"github.com/pion/webrtc/v3"
 
-	gst "github.com/po-studio/go-webrtc-server/internal/gstreamer-src"
-	"github.com/po-studio/go-webrtc-server/synth"
-	"github.com/po-studio/go-webrtc-server/types"
+	gst "github.com/po-studio/server/internal/gstreamer-src"
+	"github.com/po-studio/server/synth"
 )
 
 type AppSession struct {
@@ -18,7 +17,6 @@ type AppSession struct {
 	Synth             synth.Synth
 	AudioSrc          *string
 	SynthPort         int
-	TURNCredentials   *types.TURNCredentials
 	JackClientName    string
 	MonitorDone       chan struct{}
 	monitorClosed     atomic.Value

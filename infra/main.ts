@@ -19,15 +19,7 @@ import { IamRolePolicyAttachment } from "@cdktf/provider-aws/lib/iam-role-policy
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
 import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
-import { Instance } from "@cdktf/provider-aws/lib/instance";
-import { SecurityGroupRule } from "@cdktf/provider-aws/lib/security-group-rule";
-import { TerraformOutput } from "cdktf";
 import * as dotenv from "dotenv";
-import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
-import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile";
-import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
-import { Eip } from "@cdktf/provider-aws/lib/eip";
-import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
 
 dotenv.config();
 
@@ -35,175 +27,18 @@ class AwestruckInfrastructure extends TerraformStack {
   constructor(scope: Construct, id: string) {
     super(scope, id);
 
-    // Provide a fallback for taskDefinitionFamily
-    const taskDefinitionFamily =
-      this.node.tryGetContext("taskDefinitionFamily") || "go-webrtc-server-arm64";
-
     const awsAccountId =
       process.env.AWS_ACCOUNT_ID || this.node.tryGetContext("awsAccountId");
     const sslCertificateArn =
       process.env.SSL_CERTIFICATE_ARN ||
       this.node.tryGetContext("sslCertificateArn");
-    const turnPassword =
-      process.env.TURN_PASSWORD || this.node.tryGetContext("turnPassword");
     const awsRegion = this.node.tryGetContext("awsRegion") || "us-east-1";
 
-    if (!awsAccountId || !sslCertificateArn || !turnPassword) {
+    if (!awsAccountId || !sslCertificateArn) {
       throw new Error(
-        "AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set"
+        "AWS_ACCOUNT_ID and SSL_CERTIFICATE_ARN must be set in environment variables or cdktf.json context"
       );
     }
-
-    // Create EIP for COTURN
-    const coturnElasticIp = new Eip(this, "coturn-eip", {
-      vpc: true,
-      tags: {
-        Name: "coturn-eip",
-      },
-    });
-
-    // Adjust min-port / max-port and use /var/log/messages
-    const userData = `
-#!/bin/bash
-set -e
-exec 1> >(logger -s -t $(basename $0)) 2>&1
-
-yum update -y
-amazon-linux-extras enable epel
-yum install -y epel-release
-yum install -y coturn amazon-cloudwatch-agent rsyslog
-
-# Configure rsyslog for detailed Coturn logging
-cat > /etc/rsyslog.d/49-coturn.conf <<EOF
-# Log everything from Coturn
-local0.*    /var/log/coturn/turnserver.log
-EOF
-
-# Restart rsyslog to apply changes
-systemctl restart rsyslog
-
-mkdir -p /etc/coturn /var/log/coturn /run/coturn
-chmod 755 /etc/coturn /var/log/coturn /run/coturn
-chown turnserver:turnserver /run/coturn /var/log/coturn
-
-LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-ELASTIC_IP=${coturnElasticIp.publicIp}
-
-mkdir -p /etc/systemd/system/coturn.service.d/
-cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
-[Service]
-User=turnserver
-Group=turnserver
-RuntimeDirectory=coturn
-RuntimeDirectoryMode=0755
-PIDFile=/run/coturn/turnserver.pid
-EOF
-
-cat > /etc/coturn/turnserver.conf <<EOF
-# Basic server settings
-listening-port=3478
-listening-ip=$LOCAL_IP
-relay-ip=$LOCAL_IP
-external-ip=$ELASTIC_IP/$LOCAL_IP
-min-port=10000
-max-port=10100
-
-# Authentication
-lt-cred-mech
-user=awestruck:${turnPassword}
-realm=awestruck.io
-
-# Verbose logging configuration
-verbose
-log-file=/var/log/coturn/turnserver.log
-syslog
-log-binding
-log-allocate
-debug
-extra-logging
-trace
-
-# Additional debug options
-full-log-timestamp
-log-mobility
-log-session-lifetime
-log-tcp
-log-tcp-relay
-log-connection-lifetime
-log-relay-lifetime
-
-# Security settings
-no-multicast-peers
-no-cli
-mobility
-fingerprint
-cli-password=${turnPassword}
-total-quota=100
-max-bps=0
-no-auth-pings
-no-tlsv1
-no-tlsv1_1
-stale-nonce=0
-cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
-EOF
-
-chown turnserver:turnserver /etc/coturn/turnserver.conf
-chmod 644 /etc/coturn/turnserver.conf
-
-# Configure CloudWatch agent for detailed logging
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
-{
-  "agent": {
-    "metrics_collection_interval": 30,
-    "run_as_user": "root",
-    "debug": true
-  },
-  "logs": {
-    "logs_collected": {
-      "files": {
-        "collect_list": [
-          {
-            "file_path": "/var/log/coturn/turnserver.log",
-            "log_group_name": "/coturn/turnserver",
-            "log_stream_name": "{instance_id}",
-            "timezone": "UTC",
-            "timestamp_format": "%Y-%m-%d %H:%M:%S",
-            "multi_line_start_pattern": "{timestamp_format}",
-            "encoding": "utf-8",
-            "initial_position": "start_of_file",
-            "buffer_duration": 5000
-          },
-          {
-            "file_path": "/var/log/messages",
-            "log_group_name": "/coturn/system",
-            "log_stream_name": "{instance_id}",
-            "timezone": "UTC",
-            "timestamp_format": "%b %d %H:%M:%S",
-            "multi_line_start_pattern": "{timestamp_format}",
-            "encoding": "utf-8",
-            "initial_position": "start_of_file",
-            "buffer_duration": 5000
-          }
-        ]
-      }
-    },
-    "force_flush_interval": 5,
-    "log_stream_name": "{instance_id}"
-  }
-}
-EOF
-
-touch /var/log/coturn/turnserver.log
-chown turnserver:turnserver /var/log/coturn/turnserver.log
-chmod 644 /var/log/coturn/turnserver.log
-
-# Start services
-systemctl daemon-reload
-systemctl enable amazon-cloudwatch-agent
-systemctl restart amazon-cloudwatch-agent
-systemctl enable coturn
-systemctl restart coturn
-`;
 
     new AwsProvider(this, "AWS", {
       region: awsRegion,
@@ -212,12 +47,16 @@ systemctl restart coturn
     const vpc = new Vpc(this, "awestruck-vpc", {
       cidrBlock: "10.0.0.0/16",
       enableDnsHostnames: true,
-      tags: { Name: "awestruck-vpc" },
+      tags: {
+        Name: "awestruck-vpc",
+      },
     });
 
     const internetGateway = new InternetGateway(this, "awestruck-igw", {
       vpcId: vpc.id,
-      tags: { Name: "awestruck-igw" },
+      tags: {
+        Name: "awestruck-igw",
+      },
     });
 
     const subnet1 = new Subnet(this, "awestruck-subnet-1", {
@@ -225,7 +64,9 @@ systemctl restart coturn
       cidrBlock: "10.0.1.0/24",
       availabilityZone: "us-east-1a",
       mapPublicIpOnLaunch: true,
-      tags: { Name: "awestruck-subnet-1" },
+      tags: {
+        Name: "awestruck-subnet-1",
+      },
     });
 
     const subnet2 = new Subnet(this, "awestruck-subnet-2", {
@@ -233,12 +74,16 @@ systemctl restart coturn
       cidrBlock: "10.0.2.0/24",
       availabilityZone: "us-east-1b",
       mapPublicIpOnLaunch: true,
-      tags: { Name: "awestruck-subnet-2" },
+      tags: {
+        Name: "awestruck-subnet-2",
+      },
     });
 
     const routeTable = new RouteTable(this, "awestruck-route-table", {
       vpcId: vpc.id,
-      tags: { Name: "awestruck-route-table" },
+      tags: {
+        Name: "awestruck-route-table",
+      },
     });
 
     new Route(this, "internet-route", {
@@ -247,23 +92,21 @@ systemctl restart coturn
       gatewayId: internetGateway.id,
     });
 
-    new RouteTableAssociation(this, "subnet1-rta", {
+    new RouteTableAssociation(this, "subnet1-route-table-association", {
       subnetId: subnet1.id,
       routeTableId: routeTable.id,
     });
 
-    new RouteTableAssociation(this, "subnet2-rta", {
+    new RouteTableAssociation(this, "subnet2-route-table-association", {
       subnetId: subnet2.id,
       routeTableId: routeTable.id,
     });
 
-    // ECS Security Group with restricted ephemeral range
     const securityGroup = new SecurityGroup(this, "awestruck-sg", {
       name: "awestruck-sg",
-      description: "Security group for awestruck ECS",
+      description: "Security group for awestruck",
       vpcId: vpc.id,
       ingress: [
-        // 8080, 443
         {
           fromPort: 8080,
           toPort: 8080,
@@ -276,36 +119,20 @@ systemctl restart coturn
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
         },
-        // If ECS app needs UDP from 10000–10100
         {
           fromPort: 10000,
-          toPort: 10100,
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        // STUN/TURN ports if needed here
-        {
-          fromPort: 3478,
-          toPort: 3478,
+          toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
           fromPort: 3478,
           toPort: 3478,
-          protocol: "tcp",
+          protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
-        },
+        }
       ],
       egress: [
-        // ECS egress for ephemeral range
-        {
-          fromPort: 10000,
-          toPort: 10100,
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        // Default all traffic out
         {
           fromPort: 0,
           toPort: 0,
@@ -363,14 +190,15 @@ systemctl restart coturn
         Statement: [
           {
             Effect: "Allow",
-            Principal: { Service: "ecs-tasks.amazonaws.com" },
+            Principal: {
+              Service: "ecs-tasks.amazonaws.com",
+            },
             Action: "sts:AssumeRole",
           },
         ],
       }),
     });
 
-    // Attach ECS Execution Role and CloudWatch logs policy once
     new IamRolePolicyAttachment(this, "ecs-task-execution-role-policy", {
       role: ecsTaskExecutionRole.name,
       policyArn:
@@ -382,9 +210,8 @@ systemctl restart coturn
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
     });
 
-    // For logs
     const logGroup = new CloudwatchLogGroup(this, "awestruck-log-group", {
-      name: `/ecs/${taskDefinitionFamily}`,
+      name: `/ecs/${this.node.tryGetContext("taskDefinitionFamily")}`,
       retentionInDays: 30,
     });
 
@@ -395,7 +222,9 @@ systemctl restart coturn
         Statement: [
           {
             Effect: "Allow",
-            Principal: { Service: "ecs-tasks.amazonaws.com" },
+            Principal: {
+              Service: "ecs-tasks.amazonaws.com",
+            },
             Action: "sts:AssumeRole",
           },
         ],
@@ -411,7 +240,7 @@ systemctl restart coturn
       this,
       "awestruck-task-definition",
       {
-        family: taskDefinitionFamily,
+        family: "server-arm64",
         cpu: "1024",
         memory: "2048",
         networkMode: "awsvpc",
@@ -422,10 +251,9 @@ systemctl restart coturn
           cpuArchitecture: "ARM64",
           operatingSystemFamily: "LINUX",
         },
-        // Container mapping 10000..10100 for UDP
         containerDefinitions: JSON.stringify([
           {
-            name: taskDefinitionFamily,
+            name: "server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
@@ -437,26 +265,18 @@ systemctl restart coturn
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
-              { name: "AWESTRUCK_ENV", value: "production" },
+              { name: "ENVIRONMENT", value: "production" },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-r -d dummy" },
+              { name: "JACK_OPTIONS", value: "-R -d dummy" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
               { name: "GST_DEBUG", value: "2" },
               { name: "JACK_BUFFER_SIZE", value: "2048" },
               { name: "JACK_PERIODS", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "4194304" },
-              {
-                name: "OPENAI_API_KEY",
-                value: "{{resolve:ssm:/awestruck/openai_api_key:1}}",
-              },
-              {
-                name: "AWESTRUCK_API_KEY",
-                value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}",
-              },
+              { name: "GST_BUFFER_SIZE", value: "4194304" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
-              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -465,8 +285,8 @@ systemctl restart coturn
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "ecs",
               },
-            },
-          },
+            }
+          }
         ]),
       }
     );
@@ -500,196 +320,78 @@ systemctl restart coturn
       loadBalancer: [
         {
           targetGroupArn: targetGroup.arn,
-          containerName: taskDefinitionFamily,
+          containerName: "server-arm64",
           containerPort: 8080,
         },
       ],
       dependsOn: [listener],
     });
 
-    // Create dedicated security group for COTURN
-    const coturnSecurityGroup = new SecurityGroup(this, "coturn-security-group", {
-      name: "coturn-security-group",
-      vpcId: vpc.id,
-      description: "Security group for COTURN server",
-      tags: { Name: "coturn-security-group" },
-    });
-
-    // STUN/TURN ports
-    new SecurityGroupRule(this, "coturn-3478-tcp", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "coturn-3478-udp", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    // Relay ports (for media streaming)
-    new SecurityGroupRule(this, "coturn-relay-range", {
-      type: "ingress",
-      fromPort: 10000,
-      toPort: 10100,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    // Allow all outbound
-    new SecurityGroupRule(this, "coturn-egress", {
-      type: "egress",
-      fromPort: 0,
-      toPort: 0,
-      protocol: "-1",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    // IAM + instance profile for COTURN instance
-    const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
-      name: "coturn-instance-role",
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Action: "sts:AssumeRole",
-            Effect: "Allow",
-            Principal: { Service: "ec2.amazonaws.com" },
-          },
-        ],
-      }),
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-ssm-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-acm-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly",
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-ecr-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
-    });
-
-    // Add CloudWatch permissions
-    new IamRolePolicyAttachment(this, "coturn-cloudwatch-agent-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
-    });
-
-    // Create CloudWatch Log Groups with 30 day retention
-    new CloudwatchLogGroup(this, "coturn-turnserver-logs", {
-      name: "/coturn/turnserver",
-      retentionInDays: 30,
-      tags: { Name: "coturn-turnserver-logs" },
-    });
-
-    new CloudwatchLogGroup(this, "coturn-system-logs", {
-      name: "/coturn/system",
-      retentionInDays: 30,
-      tags: { Name: "coturn-system-logs" },
-    });
-
-    const coturnInstanceProfile = new IamInstanceProfile(
+    // STUN server task definition
+    const stunTaskDefinition = new EcsTaskDefinition(
       this,
-      "coturn-instance-profile",
+      "stun-task-definition",
       {
-        name: "coturn-instance-profile",
-        role: coturnInstanceRole.name,
+        family: "stun-server-arm64",
+        cpu: "256",
+        memory: "512",
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        executionRoleArn: ecsTaskExecutionRole.arn,
+        taskRoleArn: ecsTaskRole.arn,
+        runtimePlatform: {
+          cpuArchitecture: "ARM64",
+          operatingSystemFamily: "LINUX",
+        },
+        containerDefinitions: JSON.stringify([
+          {
+            name: "stun-server-arm64",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/stun-server:latest`,
+            portMappings: [
+              { containerPort: 3478, hostPort: 3478, protocol: "udp" }
+            ],
+            environment: [
+              { name: "STUN_PORT", value: "3478" }
+            ],
+            logConfiguration: {
+              logDriver: "awslogs",
+              options: {
+                "awslogs-group": logGroup.name,
+                "awslogs-region": awsRegion,
+                "awslogs-stream-prefix": "stun",
+              },
+            }
+          }
+        ]),
       }
     );
 
-    const amazonLinux2ArmAmi = new DataAwsAmi(this, "amazonLinux2ArmAmi", {
-      owners: ["amazon"],
-      mostRecent: true,
-      filter: [
-        { name: "name", values: ["amzn2-ami-hvm-*-gp2"] },
-        { name: "architecture", values: ["arm64"] },
-      ],
+    // STUN server service
+    new EcsService(this, "stun-service", {
+      name: "stun-service",
+      cluster: ecsCluster.arn,
+      taskDefinition: stunTaskDefinition.arn,
+      desiredCount: 1,
+      launchType: "FARGATE",
+      forceNewDeployment: true,
+      networkConfiguration: {
+        assignPublicIp: true,
+        subnets: [subnet1.id, subnet2.id],
+        securityGroups: [securityGroup.id],
+      }
     });
 
-    const coturnInstance = new Instance(this, "coturn-server", {
-      ami: amazonLinux2ArmAmi.id,
-      instanceType: "t4g.small",
-      subnetId: subnet1.id,
-      vpcSecurityGroupIds: [coturnSecurityGroup.id],
-      associatePublicIpAddress: true,
-      iamInstanceProfile: coturnInstanceProfile.name,
-      tags: { Name: "coturn-server" },
-      lifecycle: { createBeforeDestroy: true },
-      userData: userData,
-    });
-
-    new EipAssociation(this, "coturn-eip-association", {
-      instanceId: coturnInstance.id,
-      allocationId: coturnElasticIp.id,
-    });
-
-    new TerraformOutput(this, "coturn-elastic-ip", {
-      value: coturnElasticIp.publicIp,
-    });
-
-    new Route53Record(this, "turn-dns", {
+    // Add STUN DNS record
+    new Route53Record(this, "stun-dns", {
       zoneId: hostedZone.zoneId,
-      name: "turn.awestruck.io",
+      name: "stun.awestruck.io",
       type: "A",
-      ttl: 60,
-      records: [coturnElasticIp.publicIp],
       allowOverwrite: true,
-      lifecycle: { createBeforeDestroy: true },
-      dependsOn: [coturnInstance, coturnElasticIp],
-    });
-
-    new TerraformOutput(this, "turn-server-details", {
-      value: {
-        domain: "turn.awestruck.io",
-        elastic_ip: coturnElasticIp.publicIp,
-        username: "awestruck",
-        ports: {
-          stun: 3478,
-          turn: 3478,
-          min_relay: 10000,
-          max_relay: 10100,
-        },
+      alias: {
+        name: alb.dnsName,
+        zoneId: alb.zoneId,
+        evaluateTargetHealth: true,
       },
-    });
-
-    // SSM parameters
-    new SsmParameter(this, "turn-password", {
-      name: "/awestruck/turn_password",
-      type: "SecureString",
-      value: turnPassword,
-      description: "TURN server password for WebRTC connections",
-    });
-
-    new SsmParameter(this, "openai-api-key", {
-      name: "/awestruck/openai_api_key",
-      type: "SecureString",
-      value:
-        process.env.OPENAI_API_KEY || this.node.tryGetContext("openaiApiKey"),
-      description: "OpenAI API key for AI services",
-    });
-
-    new SsmParameter(this, "awestruck-api-key", {
-      name: "/awestruck/awestruck_api_key",
-      type: "SecureString",
-      value:
-        process.env.AWESTRUCK_API_KEY ||
-        this.node.tryGetContext("awestruckApiKey"),
-      description: "Awestruck API key for authentication",
     });
   }
 }

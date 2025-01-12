@@ -1,20 +1,6 @@
 version: '3.8'
 
 services:
-  coturn:
-    platform: linux/arm64
-    image: coturn/coturn:latest
-    container_name: coturn
-    volumes:
-      - ./config/turnserver.dev.conf:/etc/coturn/turnserver.conf:ro
-    command: ["-c", "/etc/coturn/turnserver.conf"]
-    restart: unless-stopped
-    network_mode: host
-    ports:
-      - "3478:3478"
-      - "3478:3478/udp"
-      - "49152-65535:49152-65535/udp"
-
   webrtc-server:
     platform: linux/arm64
     build:
@@ -22,13 +8,12 @@ services:
       dockerfile: Dockerfile
       platforms:
         - linux/arm64
-    container_name: go-webrtc-server-arm64
+    container_name: server-arm64
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ./client:/app/client
       - ./supercollider/src:/app/supercollider/src
       - ./supercollider/synthdefs:/app/supercollider/synthdefs
-    network_mode: host
     shm_size: 1g
     security_opt:
       - seccomp:unconfined
@@ -41,7 +26,6 @@ services:
         hard: 67108864
       rtprio: 99
     environment:
-      - TURN_PASSWORD=password
       - JACK_NO_AUDIO_RESERVATION=1
       - JACK_OPTIONS=-R -d dummy
       - JACK_SAMPLE_RATE=48000
@@ -50,11 +34,22 @@ services:
       - AWESTRUCK_ENV=development
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
-    depends_on:
-      - coturn
+      - STUN_SERVER=localhost:3478
     cap_add:
       - SYS_NICE
-    ports:
-      - "8080:8080"  # HTTP server
-      - "49152-65535:49152-65535/udp"  # WebRTC media ports
-      - "10000-10100:10000-10100"
+    network_mode: host
+    depends_on:
+      - stun-server
+
+  stun-server:
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: Dockerfile.stun
+      platforms:
+        - linux/arm64
+    container_name: stun-server-arm64
+    environment:
+      - STUN_PORT=3478
+    network_mode: host
+    restart: unless-stopped

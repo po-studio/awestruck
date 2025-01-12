@@ -1,4 +1,4 @@
-module github.com/po-studio/go-webrtc-server
+module github.com/po-studio/server
 
 go 1.18
 
@@ -6,6 +6,11 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/pion/webrtc/v3 v3.2.29
 	github.com/sashabaranov/go-openai v1.36.0
+)
+
+require (
+	github.com/pion/stun/v2 v2.0.0 // indirect
+	github.com/pion/transport/v3 v3.0.1 // indirect
 )
 
 require (

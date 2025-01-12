@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/po-studio/go-webrtc-server/config"
-	sc "github.com/po-studio/go-webrtc-server/supercollider"
+	"github.com/po-studio/server/config"
+	sc "github.com/po-studio/server/supercollider"
 	openai "github.com/sashabaranov/go-openai"
 )
 

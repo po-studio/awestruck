@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/po-studio/go-webrtc-server/synth"
+	"github.com/po-studio/server/synth"
 )
 
 var sessionManager = SessionManager{

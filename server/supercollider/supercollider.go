@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/hypebeast/go-osc/osc"
-	"github.com/po-studio/go-webrtc-server/jack"
-	"github.com/po-studio/go-webrtc-server/utils"
+	"github.com/po-studio/server/jack"
+	"github.com/po-studio/server/utils"
 )
 
 type SuperColliderSynth struct {

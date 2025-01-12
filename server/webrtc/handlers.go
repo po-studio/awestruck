@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/po-studio/go-webrtc-server/session"
-	sc "github.com/po-studio/go-webrtc-server/supercollider"
+	"github.com/po-studio/server/session"
+	sc "github.com/po-studio/server/supercollider"
 )
 
 // HandleSynthCode serves the currently playing synth's code

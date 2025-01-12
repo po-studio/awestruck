@@ -43,6 +43,9 @@
         <a href="/api">api</a>
         <a href="/contact">contact</a>
     </nav>
+    <script>
+        window.STUN_SERVER = window.location.hostname === 'localhost' ? 'localhost:3478' : 'stun.awestruck.io:3478';
+    </script>
     <script src="script.js"></script>
 </body>
 

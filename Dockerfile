@@ -40,14 +40,14 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-libav \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /go-webrtc-server
+WORKDIR /server
 
 # Copy only go.mod and go.sum first (change less frequently)
-COPY go-webrtc-server/go.mod go-webrtc-server/go.sum ./
+COPY server/go.mod server/go.sum ./
 RUN go mod download
 
 # Copy source code (changes most frequently)
-COPY go-webrtc-server/ .
+COPY server/ .
 RUN go build -o /app/webrtc-server .
 
 # Final stage
