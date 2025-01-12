@@ -144,9 +144,7 @@ const ICE_CONFIG = {
             {
                 urls: [
                     // primary UDP STUN server
-                    "stun:stun.awestruck.io:3478",
-                    // TCP fallback STUN server
-                    "stun:stun.awestruck.io:3479"
+                    "stun:stun.awestruck.io:3478"
                 ]
             }
         ],

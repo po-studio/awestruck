@@ -46,10 +46,7 @@
     <script>
         window.STUN_SERVERS = window.location.hostname === 'localhost' 
             ? ['localhost:3478']  // local development
-            : [
-                'stun.awestruck.io:3478',  // UDP primary
-                'stun.awestruck.io:3479'   // TCP fallback
-            ];
+            : ['stun.awestruck.io:3478'];  // production udp
     </script>
     <script src="script.js"></script>
 </body>

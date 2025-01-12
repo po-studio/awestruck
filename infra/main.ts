@@ -136,13 +136,6 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 3478,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          // STUN server TCP ports
-          fromPort: 3478,
-          toPort: 3479,
-          protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
         }
       ],
       egress: [
@@ -396,11 +389,6 @@ class AwestruckInfrastructure extends TerraformStack {
                 containerPort: 3478,
                 hostPort: 3478,
                 protocol: "udp"
-              },
-              {
-                containerPort: 3479,
-                hostPort: 3479,
-                protocol: "tcp"
               }
             ],
             environment: [
@@ -427,7 +415,7 @@ class AwestruckInfrastructure extends TerraformStack {
     );
 
     // why we need a network load balancer for stun:
-    // - supports layer 4 protocols (tcp/udp) unlike application load balancer (layer 7 http/https only)
+    // - supports layer 4 protocols (udp) unlike application load balancer (layer 7 http/https only)
     // - preserves client source ip addresses which is crucial for stun/ice
     // - provides lower latency by operating at transport layer
     // - enables cross-zone load balancing for high availability
@@ -439,10 +427,10 @@ class AwestruckInfrastructure extends TerraformStack {
       enableCrossZoneLoadBalancing: true,
     });
 
-    // why we need separate target groups for udp and tcp:
-    // - stun requires both protocols for reliability
-    // - allows independent health checks per protocol
-    // - enables protocol-specific monitoring
+    // why we need a udp target group:
+    // - stun primarily operates over udp
+    // - enables health checks and monitoring
+    // - allows for scaling and high availability
     const stunUdpTargetGroup = new LbTargetGroup(this, "awestruck-stun-udp-tg", {
       name: "awestruck-stun-udp-tg",
       port: 3478,
@@ -452,24 +440,7 @@ class AwestruckInfrastructure extends TerraformStack {
       healthCheck: {
         enabled: true,
         port: "3478",
-        protocol: "TCP",
-        healthyThreshold: 2,
-        unhealthyThreshold: 3,
-        interval: 30
-      },
-      dependsOn: [stunNlb]
-    });
-
-    const stunTcpTargetGroup = new LbTargetGroup(this, "awestruck-stun-tcp-tg", {
-      name: "awestruck-stun-tcp-tg",
-      port: 3478,
-      protocol: "TCP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        port: "3478",
-        protocol: "TCP",
+        protocol: "UDP",
         healthyThreshold: 2,
         unhealthyThreshold: 3,
         interval: 30
@@ -493,10 +464,10 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    // why we need both udp and tcp listeners:
-    // - udp is primary protocol for stun
-    // - tcp provides fallback for restricted networks
-    // - improves overall connection reliability
+    // why we use udp for stun:
+    // - udp is the primary and standard protocol for stun
+    // - lower latency than tcp
+    // - better suited for real-time communications
     const stunUdpListener = new LbListener(this, "stun-udp-listener", {
       loadBalancerArn: stunNlb.arn,
       port: 3478,
@@ -507,17 +478,7 @@ class AwestruckInfrastructure extends TerraformStack {
       }],
     });
 
-    const stunTcpListener = new LbListener(this, "stun-tcp-listener", {
-      loadBalancerArn: stunNlb.arn,
-      port: 3479,  // Using a different port for TCP
-      protocol: "TCP",
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: stunTcpTargetGroup.arn,
-      }],
-    });
-
-    // Update STUN service to use both target groups
+    // Update STUN service to use UDP only
     new EcsService(this, "stun-service", {
       name: "stun-service",
       cluster: ecsCluster.arn,
@@ -535,14 +496,9 @@ class AwestruckInfrastructure extends TerraformStack {
           targetGroupArn: stunUdpTargetGroup.arn,
           containerName: "stun-server-arm64",
           containerPort: 3478,
-        },
-        {
-          targetGroupArn: stunTcpTargetGroup.arn,
-          containerName: "stun-server-arm64",
-          containerPort: 3478,
         }
       ],
-      dependsOn: [stunUdpListener, stunTcpListener]
+      dependsOn: [stunUdpListener]
     });
 
     // Attach ECR read policy to allow pulling images

@@ -20,11 +20,10 @@ FROM scratch
 
 COPY --from=builder /app/stun-server /stun-server
 
-# why we expose both udp and tcp:
-# - udp is primary protocol for stun
-# - tcp provides fallback for restricted networks
-# - enables protocol flexibility for clients
+# why we expose udp port:
+# - udp is the primary protocol for stun
+# - lower latency than tcp
+# - better suited for real-time communications
 EXPOSE 3478/udp
-EXPOSE 3479/tcp
 
 ENTRYPOINT ["/stun-server"] 
