@@ -25,7 +25,6 @@ COPY --from=builder /app/stun-server /stun-server
 # - tcp provides fallback for restricted networks
 # - enables protocol flexibility for clients
 EXPOSE 3478/udp
-EXPOSE 3478/tcp
 EXPOSE 3479/tcp
 
 ENTRYPOINT ["/stun-server"] 

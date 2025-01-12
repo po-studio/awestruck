@@ -392,8 +392,16 @@ class AwestruckInfrastructure extends TerraformStack {
             name: "stun-server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/stun:latest`,
             portMappings: [
-              { containerPort: 3478, hostPort: 3478, protocol: "udp" },
-              { containerPort: 3478, hostPort: 3478, protocol: "tcp" }
+              {
+                containerPort: 3478,
+                hostPort: 3478,
+                protocol: "udp"
+              },
+              {
+                containerPort: 3479,
+                hostPort: 3479,
+                protocol: "tcp"
+              }
             ],
             environment: [
               { name: "STUN_PORT", value: "3478" }
