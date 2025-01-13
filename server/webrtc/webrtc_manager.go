@@ -263,7 +263,7 @@ func MonitorAudioPipeline(appSession *session.AppSession) {
 	// Monitor JACK connections with faster initial checks
 	go func() {
 		// Start with fast checks for the first few seconds
-		fastTicker := time.NewTicker(500 * time.Millisecond)
+		fastTicker := time.NewTicker(3000 * time.Millisecond)
 		defer fastTicker.Stop()
 
 		// After 5 seconds, switch to slower checks
