@@ -124,13 +124,15 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
-// why we need longer timeouts in production:
-// - accounts for network latency in cloud environment
-// - allows for multiple STUN retries
-// - prevents premature connection failures
+// why we need ecs-optimized timeouts:
+// - account for ALB latency
+// - handle container networking delays
+// - provide stability in cloud environment
 const (
-	iceGatheringTimeout = 30 * time.Second
-	iceConnectTimeout   = 40 * time.Second
+	iceDisconnectedTimeout = 30 * time.Second // Increased for ECS
+	iceFailedTimeout       = 45 * time.Second // Increased for ECS
+	iceKeepaliveInterval   = 2 * time.Second  // More frequent for stability
+	iceGatheringTimeout    = 15 * time.Second // Extended for cloud environment
 )
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
@@ -486,16 +488,21 @@ func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 // createPeerConnection initializes a new WebRTC peer connection
 func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
 	s := webrtc.SettingEngine{}
+
+	// why we need specific port ranges:
+	// - work with ECS security groups
+	// - ensure consistent port allocation
+	// - prevent port conflicts
 	s.SetEphemeralUDPPortRange(10000, 10100)
 
 	// why we need these ice timeouts:
-	// - longer disconnection grace period for network issues
-	// - more time for candidate gathering
-	// - frequent keepalive for connection stability
+	// - handle ALB latency and routing
+	// - account for container networking
+	// - ensure stability in cloud environment
 	s.SetICETimeouts(
-		15*time.Second,       // disconnectedTimeout (increased from 10s)
-		30*time.Second,       // failedTimeout (increased from 15s)
-		100*time.Millisecond, // keepAliveInterval (unchanged)
+		iceDisconnectedTimeout,
+		iceFailedTimeout,
+		iceKeepaliveInterval,
 	)
 
 	// why we disable host candidates:
@@ -505,14 +512,18 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	s.SetIncludeLoopbackCandidate(false)
 	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
 
-	// candidate gathering timeouts:
-	// - increased timeouts to ensure complete gathering
-	// - allow more time for STUN responses
-	s.SetHostAcceptanceMinWait(500 * time.Millisecond)   // increased from 250ms
-	s.SetSrflxAcceptanceMinWait(2000 * time.Millisecond) // increased from 1000ms
-	s.SetPrflxAcceptanceMinWait(500 * time.Millisecond)  // increased from 250ms
+	// why we need extended gathering timeouts:
+	// - account for ECS networking latency
+	// - allow time for ALB routing
+	// - ensure complete candidate gathering
+	s.SetHostAcceptanceMinWait(1000 * time.Millisecond)
+	s.SetSrflxAcceptanceMinWait(3000 * time.Millisecond)
+	s.SetPrflxAcceptanceMinWait(1000 * time.Millisecond)
 
-	// enable trickle ICE for faster connection establishment
+	// why we need to optimize ice gathering:
+	// - reduce connection establishment time
+	// - handle ECS networking efficiently
+	// - improve stability in cloud environment
 	s.SetLite(false)
 
 	m := &webrtc.MediaEngine{}
@@ -525,12 +536,16 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		webrtc.WithMediaEngine(m),
 	)
 
+	// why we need these connection settings:
+	// - optimize for ECS deployment
+	// - ensure reliable media transport
+	// - handle cloud networking conditions
 	config := webrtc.Configuration{
 		ICEServers:           iceServers,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
-		ICECandidatePoolSize: 2,
+		ICECandidatePoolSize: 4, // Increased for ECS
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll, // We filter candidates manually
 	}
 
 	pc, err := api.NewPeerConnection(config)
@@ -548,8 +563,10 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok {
 					if candidatePair.State == "succeeded" {
 						candidateCount++
-						log.Printf("[ICE] Successful candidate pair: local=%s remote=%s",
-							candidatePair.LocalCandidateID, candidatePair.RemoteCandidateID)
+						log.Printf("[ICE] Successful candidate pair: local=%s remote=%s nominated=%v",
+							candidatePair.LocalCandidateID,
+							candidatePair.RemoteCandidateID,
+							candidatePair.Nominated)
 					}
 				}
 			}

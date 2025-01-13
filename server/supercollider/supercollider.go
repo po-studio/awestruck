@@ -145,34 +145,51 @@ func (s *SuperColliderSynth) setupCmd() error {
 
 // Stop stops the SuperCollider server gracefully
 func (s *SuperColliderSynth) Stop() error {
+	log.Printf("[SCSYNTH][%s] Starting cleanup sequence", s.Id)
+
 	// First disconnect JACK ports
 	if err := jack.DisconnectJackPorts(s.Id, s.JackClientName); err != nil {
-		log.Printf("Warning: error disconnecting JACK ports: %v", err)
+		log.Printf("[SCSYNTH][%s] Warning: error disconnecting JACK ports: %v", s.Id, err)
+	} else {
+		log.Printf("[SCSYNTH][%s] Successfully disconnected JACK ports", s.Id)
 	}
 
 	// Send quit message to scsynth
 	client := osc.NewClient("127.0.0.1", s.Port)
 	if err := client.Send(osc.NewMessage("/quit")); err != nil {
-		return fmt.Errorf("failed to send quit message to scsynth: %w", err)
+		log.Printf("[SCSYNTH][%s] Failed to send quit message: %v", s.Id, err)
+	} else {
+		log.Printf("[SCSYNTH][%s] Successfully sent quit message", s.Id)
 	}
 
 	// Close the output reader
 	if s.outputReader != nil {
-		s.outputReader.Close()
+		if err := s.outputReader.Close(); err != nil {
+			log.Printf("[SCSYNTH][%s] Error closing output reader: %v", s.Id, err)
+		} else {
+			log.Printf("[SCSYNTH][%s] Successfully closed output reader", s.Id)
+		}
 	}
 
 	// Close log file
 	if s.LogFile != nil {
-		s.LogFile.Close()
+		if err := s.LogFile.Close(); err != nil {
+			log.Printf("[SCSYNTH][%s] Error closing log file: %v", s.Id, err)
+		} else {
+			log.Printf("[SCSYNTH][%s] Successfully closed log file", s.Id)
+		}
 	}
 
 	// Kill the scsynth process if it's still running
 	if s.Cmd != nil && s.Cmd.Process != nil {
 		if err := s.Cmd.Process.Kill(); err != nil {
+			log.Printf("[SCSYNTH][%s] Failed to kill process: %v", s.Id, err)
 			return fmt.Errorf("failed to kill scsynth process: %w", err)
 		}
+		log.Printf("[SCSYNTH][%s] Successfully killed process", s.Id)
 	}
 
+	log.Printf("[SCSYNTH][%s] Cleanup sequence completed", s.Id)
 	return nil
 }
 
