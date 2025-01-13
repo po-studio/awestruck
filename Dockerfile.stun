@@ -12,18 +12,20 @@ COPY stun/ ./
 # Build the STUN server
 RUN CGO_ENABLED=0 GOOS=linux go build -o stun-server ./cmd/main.go
 
-# why we use scratch:
-# - minimal possible image size
-# - improved security
-# - reduced resource usage
-FROM scratch
+# why we need a health check capable image:
+# - provides necessary tools for health checks
+# - allows for better debugging
+# - ensures consistent behavior
+FROM alpine:latest
+
+RUN apk add --no-cache netcat-openbsd busybox-extras
 
 COPY --from=builder /app/stun-server /stun-server
 
-# why we expose udp port:
-# - udp is the primary protocol for stun
-# - lower latency than tcp
-# - better suited for real-time communications
+# why we expose both udp and tcp ports:
+# - udp for stun protocol
+# - tcp for health checks
 EXPOSE 3478/udp
+EXPOSE 3478/tcp
 
 ENTRYPOINT ["/stun-server"] 

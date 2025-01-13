@@ -394,6 +394,29 @@ class AwestruckInfrastructure extends TerraformStack {
             environment: [
               { name: "STUN_PORT", value: "3478" }
             ],
+            // why we need these linux parameters:
+            // - allows binding to privileged ports
+            // - enables network capabilities
+            // - required for stun server operation
+            linuxParameters: {
+              capabilities: {
+                add: ["NET_BIND_SERVICE"]
+              }
+            },
+            // why we need both container and target group health checks:
+            // - container health check ensures the process is running
+            // - target group health check ensures network connectivity
+            // - both are needed for proper ecs service operation
+            healthCheck: {
+              command: [
+                "CMD-SHELL",
+                "echo 'health' | telnet localhost 3478 2>&1 | grep -q 'Connected' || exit 1"
+              ],
+              interval: 5,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 10
+            },
             logConfiguration: {
               logDriver: "awslogs",
               options: {
@@ -401,15 +424,7 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "stun",
               },
-            },
-            // NB: this health check is failing, likely udp related
-            // healthCheck: {
-            //   command: ["CMD-SHELL", "nc -zu localhost 3478 || exit 1"],
-            //   interval: 30,
-            //   timeout: 5,
-            //   retries: 3,
-            //   startPeriod: 60,
-            // }
+            }
           }
         ]),
       }
@@ -428,25 +443,21 @@ class AwestruckInfrastructure extends TerraformStack {
       enableCrossZoneLoadBalancing: true,
     });
 
-    // why we need a udp target group:
-    // - stun primarily operates over udp
-    // - enables health checks over tcp (udp health checks not supported)
-    // - allows for scaling and high availability
     const stunUdpTargetGroup = new LbTargetGroup(this, "awestruck-stun-udp-tg", {
       name: "awestruck-stun-udp-tg",
       port: 3478,
       protocol: "UDP",
       targetType: "ip",
       vpcId: vpc.id,
-      // NB: this health check is failing, likely udp related
-      // healthCheck: {
-      //   enabled: true,
-      //   port: "3478",
-      //   protocol: "TCP",
-      //   healthyThreshold: 2,
-      //   unhealthyThreshold: 3,
-      //   interval: 30
-      // },
+      healthCheck: {
+        enabled: true,
+        protocol: "TCP",
+        port: "3478",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 30,
+        timeout: 10
+      },
       dependsOn: [stunNlb]
     });
 

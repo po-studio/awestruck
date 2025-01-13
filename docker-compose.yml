@@ -27,7 +27,7 @@ services:
       rtprio: 99
     environment:
       - JACK_NO_AUDIO_RESERVATION=1
-      - JACK_OPTIONS=-R -d dummy
+      - JACK_OPTIONS=-r -d dummy
       - JACK_SAMPLE_RATE=48000
       - GST_DEBUG=2
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
@@ -39,7 +39,8 @@ services:
       - SYS_NICE
     network_mode: host
     depends_on:
-      - stun-server
+      stun-server:
+        condition: service_healthy
 
   stun-server:
     platform: linux/arm64
@@ -51,5 +52,14 @@ services:
     container_name: stun-server-arm64
     environment:
       - STUN_PORT=3478
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
     network_mode: host
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'health' | telnet localhost 3478 2>&1 | grep -q 'Connected' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

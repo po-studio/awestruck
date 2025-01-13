@@ -11,37 +11,52 @@ import (
 	"github.com/pion/stun/v2"
 )
 
-// helper function to get minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // why we need a custom stun server:
 // - reduces dependency on external services
 // - provides better control over NAT traversal
 // - allows for custom configuration and monitoring
 type StunServer struct {
-	listener *net.UDPConn
-	port     int
+	listener       *net.UDPConn
+	port           int
+	healthListener net.Listener
 }
 
 func NewStunServer(port int) (*StunServer, error) {
+	logWithTime("INFO", "Creating STUN server on port %d", port)
+
 	addr := &net.UDPAddr{
 		Port: port,
-		IP:   net.IPv4zero,
+		IP:   net.ParseIP("0.0.0.0"),
 	}
+
+	logWithTime("INFO", "Attempting to bind to %s:%d", addr.IP.String(), addr.Port)
 
 	conn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create STUN listener: %v", err)
+		logWithTime("ERROR", "Failed to create STUN listener: %v", err)
+		return nil, fmt.Errorf("failed to create STUN listener on %s:%d: %v", addr.IP.String(), port, err)
 	}
 
+	logWithTime("INFO", "Successfully bound to UDP address")
+
+	// why we need a separate tcp health check:
+	// - provides reliable container health monitoring
+	// - allows load balancer health checks
+	// - simpler than checking udp stun protocol
+	healthAddr := fmt.Sprintf("0.0.0.0:%d", port)
+	healthListener, err := net.Listen("tcp", healthAddr)
+	if err != nil {
+		logWithTime("ERROR", "Failed to create health check listener: %v", err)
+		conn.Close()
+		return nil, fmt.Errorf("failed to create health check listener on %s: %v", healthAddr, err)
+	}
+
+	logWithTime("INFO", "Successfully created TCP health check listener")
+
 	return &StunServer{
-		listener: conn,
-		port:     port,
+		listener:       conn,
+		port:           port,
+		healthListener: healthListener,
 	}, nil
 }
 
@@ -122,6 +137,7 @@ func (s *StunServer) Start() error {
 
 	logWithTime("INFO", "UDP listener started successfully")
 
+	// Start UDP STUN handler
 	go func() {
 		buffer := make([]byte, 1024)
 		for {
@@ -138,6 +154,36 @@ func (s *StunServer) Start() error {
 			logWithTime("DEBUG", "Received %d bytes from %s", n, remoteAddr.String())
 
 			go s.handleStunRequest(s.listener, buffer[:n], remoteAddr)
+		}
+	}()
+
+	// Start TCP health check handler
+	go func() {
+		logWithTime("INFO", "Starting TCP health check handler on port %d", s.port)
+		for {
+			conn, err := s.healthListener.Accept()
+			if err != nil {
+				if strings.Contains(err.Error(), "use of closed network connection") {
+					logWithTime("INFO", "Health check listener closed")
+					return
+				}
+				logWithTime("ERROR", "Failed to accept health check connection: %v", err)
+				continue
+			}
+			remoteAddr := conn.RemoteAddr().String()
+			logWithTime("INFO", "Received health check connection from %s", remoteAddr)
+
+			// why we need to send a response:
+			// - confirms server is truly operational
+			// - allows health check to verify response
+			// - helps with debugging
+			_, err = conn.Write([]byte("healthy\n"))
+			if err != nil {
+				logWithTime("ERROR", "Failed to send health check response: %v", err)
+			}
+
+			conn.Close()
+			logWithTime("INFO", "Successfully handled health check from %s", remoteAddr)
 		}
 	}()
 
@@ -211,6 +257,11 @@ func (s *StunServer) Stop() {
 	if s.listener != nil {
 		if err := s.listener.Close(); err != nil {
 			logWithTime("ERROR", "Error closing UDP listener: %v", err)
+		}
+	}
+	if s.healthListener != nil {
+		if err := s.healthListener.Close(); err != nil {
+			logWithTime("ERROR", "Error closing health check listener: %v", err)
 		}
 	}
 	logWithTime("INFO", "STUN server stopped")
