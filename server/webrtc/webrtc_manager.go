@@ -408,13 +408,22 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 
 	appSession.PeerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
-			log.Printf("[ICE] New candidate for session %s: type=%d protocol=%s address=%s port=%d priority=%d",
-				appSession.Id,
-				candidate.Component,
-				candidate.Protocol,
-				candidate.Address,
-				candidate.Port,
-				candidate.Priority)
+			// why we filter candidates:
+			// - only allow STUN-discovered candidates
+			// - prevent local network candidates
+			// - ensure consistent behavior across environments
+			candidateStr := candidate.String()
+			if strings.Contains(candidateStr, "typ srflx") {
+				log.Printf("[ICE] New STUN candidate for session %s: protocol=%s address=%s port=%d priority=%d",
+					appSession.Id,
+					candidate.Protocol,
+					candidate.Address,
+					candidate.Port,
+					candidate.Priority)
+			} else {
+				log.Printf("[ICE] Ignoring non-STUN candidate: %s", candidateStr)
+				return
+			}
 		}
 	})
 
@@ -448,41 +457,27 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 // - ensures STUN servers are properly configured
 // - validates URL format
 // - verifies required parameters are present
-// - checks for TURN server availability
 func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 	if len(iceServers) == 0 {
 		return fmt.Errorf("no ICE servers provided")
 	}
 
 	hasSTUN := false
-	hasTURN := false
 
 	for i, server := range iceServers {
 		log.Printf("[ICE] Server %d configuration:", i)
 		log.Printf("  - URLs: %v", server.URLs)
-		log.Printf("  - Username: %v", server.Username != "")
-		log.Printf("  - Credential: %v", server.Credential != nil)
 
 		for _, url := range server.URLs {
 			if strings.HasPrefix(url, "stun:") {
 				hasSTUN = true
 				log.Printf("[ICE] Found valid STUN URL: %s", url)
-			} else if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
-				hasTURN = true
-				log.Printf("[ICE] Found valid TURN URL: %s", url)
-				if server.Username == "" || server.Credential == nil {
-					log.Printf("[ICE][WARN] TURN server missing credentials")
-				}
 			}
 		}
 	}
 
 	if !hasSTUN {
 		return fmt.Errorf("no valid STUN URLs found in ICE server configuration")
-	}
-
-	if !hasTURN {
-		log.Printf("[ICE][WARN] No TURN servers configured. This may cause connectivity issues for clients behind symmetric NATs")
 	}
 
 	return nil
@@ -502,6 +497,13 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		30*time.Second,       // failedTimeout (increased from 15s)
 		100*time.Millisecond, // keepAliveInterval (unchanged)
 	)
+
+	// why we disable host candidates:
+	// - forces use of STUN-discovered candidates only
+	// - prevents local network candidates
+	// - ensures consistent NAT traversal behavior
+	s.SetIncludeLoopbackCandidate(false)
+	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
 
 	// candidate gathering timeouts:
 	// - increased timeouts to ensure complete gathering
@@ -621,60 +623,6 @@ func HandleStop(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func cleanUpSession(appSession *session.AppSession) error {
-	log.Printf("[CLEANUP] Starting cleanup for session %s", appSession.Id)
-
-	// First stop monitoring to prevent any new operations
-	if appSession.MonitorDone != nil {
-		close(appSession.MonitorDone)
-		appSession.MonitorDone = nil
-	}
-
-	// Stop the synth engine first as it depends on other components
-	if appSession.Synth != nil {
-		if err := appSession.Synth.Stop(); err != nil {
-			log.Printf("[CLEANUP][ERROR] Failed to stop synth: %v", err)
-		}
-		appSession.Synth = nil
-	}
-
-	// Stop the GStreamer pipeline
-	if appSession.GStreamerPipeline != nil {
-		appSession.GStreamerPipeline.Stop()
-		appSession.GStreamerPipeline = nil
-	}
-
-	// Close the peer connection last
-	if appSession.PeerConnection != nil {
-		// Get final stats before closing
-		stats := appSession.PeerConnection.GetStats()
-		log.Printf("[CLEANUP] Final WebRTC stats: %+v", stats)
-
-		// Close all transceivers
-		for _, t := range appSession.PeerConnection.GetTransceivers() {
-			if err := t.Stop(); err != nil {
-				log.Printf("[CLEANUP][ERROR] Failed to stop transceiver: %v", err)
-			}
-		}
-
-		// Remove all tracks
-		for _, sender := range appSession.PeerConnection.GetSenders() {
-			if err := appSession.PeerConnection.RemoveTrack(sender); err != nil {
-				log.Printf("[CLEANUP][ERROR] Failed to remove track: %v", err)
-			}
-		}
-
-		// Close the connection
-		if err := appSession.PeerConnection.Close(); err != nil {
-			log.Printf("[CLEANUP][ERROR] Failed to close peer connection: %v", err)
-		}
-		appSession.PeerConnection = nil
-	}
-
-	log.Printf("[CLEANUP] Completed cleanup for session %s", appSession.Id)
-	return nil
-}
-
 // why we need robust ice candidate handling:
 // - ensures reliable peer connections
 // - handles network changes gracefully
@@ -717,7 +665,6 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid candidate format", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[ICE][DEBUG] Decoded wrapper candidate: %s", wrapper.Candidate)
 
 	// Decode the base64 string
 	candidateJSON, err := base64.StdEncoding.DecodeString(wrapper.Candidate)
@@ -727,9 +674,8 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid base64 encoding", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[ICE][DEBUG] Decoded base64 JSON: %s", string(candidateJSON))
 
-	// Try to parse as a direct candidate string first
+	// Parse the candidate
 	var candidateObj struct {
 		Candidate        string `json:"candidate"`
 		SDPMid           string `json:"sdpMid"`
@@ -742,25 +688,32 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid candidate format", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[ICE][DEBUG] Parsed candidate: %+v", candidateObj)
 
-	// Create and log ICE candidate init
+	// why we check candidate type:
+	// - only allow STUN-discovered candidates
+	// - prevent local network candidates
+	// - ensure consistent behavior
+	if !strings.Contains(candidateObj.Candidate, "typ srflx") {
+		log.Printf("[ICE] Ignoring non-STUN candidate: %s", candidateObj.Candidate)
+		w.WriteHeader(http.StatusOK) // Still return OK to not disrupt the process
+		return
+	}
+
+	// Create and add the ICE candidate
 	candidate := webrtc.ICECandidateInit{
 		Candidate:        candidateObj.Candidate,
 		SDPMid:           &candidateObj.SDPMid,
 		SDPMLineIndex:    &candidateObj.SDPMLineIndex,
 		UsernameFragment: &candidateObj.UsernameFragment,
 	}
-	log.Printf("[ICE][DEBUG] Created ICE candidate init: %+v", candidate)
 
-	// Add the candidate and log result
 	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
 		log.Printf("[ICE][ERROR] Failed to add candidate: %v", err)
 		log.Printf("[ICE][DEBUG] Failed candidate details: %+v", candidate)
 		http.Error(w, fmt.Sprintf("Failed to add candidate: %v", err), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[ICE][SUCCESS] Added ICE candidate for session %s", sessionID)
+	log.Printf("[ICE][SUCCESS] Added STUN candidate for session %s", sessionID)
 
 	w.WriteHeader(http.StatusOK)
 }

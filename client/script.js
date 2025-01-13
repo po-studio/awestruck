@@ -121,9 +121,9 @@ function waitForICEConnection(pc) {
 }
 
 // why we need ice configuration:
-// - enables peer discovery through our custom STUN server
-// - allows direct peer connections where possible
-// - falls back to host candidates if STUN fails
+// - enables discovery through our custom STUN server
+// - prevents local network candidates when possible
+// - ensures consistent behavior across environments
 const ICE_CONFIG = {
     development: {
         iceServers: [
@@ -136,7 +136,7 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 0,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all',
+        iceTransportPolicy: 'all', // We'll filter candidates in the stats monitoring
         sdpSemantics: 'unified-plan'
     },
     production: {
@@ -151,15 +151,15 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 2,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all',
+        iceTransportPolicy: 'all', // We'll filter candidates in the stats monitoring
         sdpSemantics: 'unified-plan'
     }
 };
 
-// why we need ice configuration validation:
-// - ensures our custom STUN server is properly configured
-// - validates URL format
-// - verifies required parameters are present
+// why we need strict ice configuration validation:
+// - ensures STUN server is properly configured
+// - validates server URLs
+// - prevents misconfiguration
 function validateIceConfig(config) {
     if (!config || !config.iceServers) {
         console.error('[ICE] Invalid ICE configuration');
@@ -172,18 +172,17 @@ function validateIceConfig(config) {
             return false;
         }
 
-        // Validate URLs format and ensure they're STUN
+        // Validate URLs format and ensure they're STUN only
         const validUrls = server.urls.every(url => {
-            const isStun = url.startsWith('stun:');
-            if (!isStun) {
-                console.error('[ICE] URL must be STUN:', url);
+            if (!url.startsWith('stun:')) {
+                console.error('[ICE] Only STUN URLs are allowed:', url);
                 return false;
             }
             return true;
         });
 
         if (!validUrls) {
-            console.error('[ICE] Invalid STUN URLs:', server.urls);
+            console.error('[ICE] Invalid or non-STUN URLs:', server.urls);
             return false;
         }
 
@@ -285,20 +284,65 @@ async function setupWebRTC(config) {
         // Monitor candidate gathering progress
         if (pc.iceGatheringState !== 'new') {
             pc.getStats().then(stats => {
-                let hasViableCandidate = false;
-                let candidateTypes = new Set();
+                // why we track different stats types:
+                // - local-candidate: our STUN-discovered endpoints
+                // - remote-candidate: server's endpoints
+                // - candidate-pair: actual connections being attempted
+                // - transport: overall ICE transport status
+                let statsReport = {
+                    localCandidates: [],
+                    remoteCandidates: [],
+                    candidatePairs: [],
+                    transport: null
+                };
                 
                 stats.forEach(stat => {
-                    if (stat.type === 'local-candidate' && 
-                        (stat.candidateType === 'host' || stat.candidateType === 'srflx')) {
-                        hasViableCandidate = true;
-                        candidateTypes.add(stat.candidateType);
+                    switch(stat.type) {
+                        case 'local-candidate':
+                            if (stat.candidateType === 'srflx') {
+                                statsReport.localCandidates.push({
+                                    type: stat.candidateType,
+                                    protocol: stat.protocol,
+                                    address: stat.address,
+                                    port: stat.port
+                                });
+                            }
+                            break;
+                        case 'remote-candidate':
+                            statsReport.remoteCandidates.push({
+                                type: stat.candidateType,
+                                protocol: stat.protocol,
+                                address: stat.address,
+                                port: stat.port
+                            });
+                            break;
+                        case 'candidate-pair':
+                            if (stat.state === 'succeeded') {
+                                statsReport.candidatePairs.push({
+                                    state: stat.state,
+                                    localCandidateId: stat.localCandidateId,
+                                    remoteCandidateId: stat.remoteCandidateId,
+                                    priority: stat.priority,
+                                    nominated: stat.nominated,
+                                    writable: stat.writable
+                                });
+                            }
+                            break;
+                        case 'transport':
+                            statsReport.transport = {
+                                bytesReceived: stat.bytesReceived,
+                                bytesSent: stat.bytesSent,
+                                dtlsState: stat.dtlsState,
+                                iceState: stat.iceState,
+                                selectedCandidatePairId: stat.selectedCandidatePairId
+                            };
+                            break;
                     }
                 });
-                
-                if (hasViableCandidate) {
-                    console.log('[ICE] Have viable candidates:', Array.from(candidateTypes));
-                    // Note: We don't need to create an offer here as it's already handled in setupWebRTC
+
+                // Log only if we have STUN candidates or successful pairs
+                if (statsReport.localCandidates.length > 0 || statsReport.candidatePairs.length > 0) {
+                    console.log('[ICE] Connection stats:', statsReport);
                 }
             });
         }
@@ -543,17 +587,16 @@ function onIceConnectionStateChange() {
         pc.getStats().then(stats => {
             let candidateTypes = new Set();
             stats.forEach(stat => {
-                if (stat.type === 'local-candidate') {
+                if (stat.type === 'local-candidate' && stat.candidateType === 'srflx') {
                     candidateTypes.add(stat.candidateType);
-                    console.log('[ICE] Local candidate:', {
-                        type: stat.candidateType,
+                    console.log('[ICE] STUN candidate:', {
                         protocol: stat.protocol,
                         address: stat.address,
                         port: stat.port
                     });
                 }
             });
-            console.log('[ICE] Found candidate types:', Array.from(candidateTypes));
+            console.log('[ICE] Found STUN candidates:', Array.from(candidateTypes));
         });
     }
 
@@ -561,15 +604,14 @@ function onIceConnectionStateChange() {
         console.error('[ICE] Connection failed - checking stats...');
         pc.getStats().then(stats => {
             let diagnostics = {
-                localCandidates: [],
+                stunCandidates: [],
                 remoteCandidates: [],
                 candidatePairs: []
             };
             
             stats.forEach(stat => {
-                if (stat.type === 'local-candidate') {
-                    diagnostics.localCandidates.push({
-                        type: stat.candidateType,
+                if (stat.type === 'local-candidate' && stat.candidateType === 'srflx') {
+                    diagnostics.stunCandidates.push({
                         protocol: stat.protocol,
                         address: stat.address
                     });

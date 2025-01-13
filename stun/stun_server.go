@@ -16,7 +16,7 @@ import (
 // - provides better control over NAT traversal
 // - allows for custom configuration and monitoring
 type StunServer struct {
-	listener       *net.UDPConn
+	udpListener    *net.UDPConn
 	port           int
 	healthListener net.Listener
 }
@@ -54,7 +54,7 @@ func NewStunServer(port int) (*StunServer, error) {
 	logWithTime("INFO", "Successfully created TCP health check listener")
 
 	return &StunServer{
-		listener:       conn,
+		udpListener:    conn,
 		port:           port,
 		healthListener: healthListener,
 	}, nil
@@ -131,7 +131,7 @@ func logWithContext(level string, msg string, ctx map[string]interface{}) {
 func (s *StunServer) Start() error {
 	logWithTime("INFO", "Starting STUN server on port %d", s.port)
 
-	if s.listener == nil {
+	if s.udpListener == nil {
 		return fmt.Errorf("STUN server not properly initialized: nil listener")
 	}
 
@@ -141,7 +141,7 @@ func (s *StunServer) Start() error {
 	go func() {
 		buffer := make([]byte, 1024)
 		for {
-			n, remoteAddr, err := s.listener.ReadFromUDP(buffer)
+			n, remoteAddr, err := s.udpListener.ReadFromUDP(buffer)
 			if err != nil {
 				if strings.Contains(err.Error(), "use of closed network connection") {
 					logWithTime("INFO", "UDP listener closed")
@@ -153,7 +153,7 @@ func (s *StunServer) Start() error {
 
 			logWithTime("DEBUG", "Received %d bytes from %s", n, remoteAddr.String())
 
-			go s.handleStunRequest(s.listener, buffer[:n], remoteAddr)
+			go s.handleStunRequest(s.udpListener, buffer[:n], remoteAddr)
 		}
 	}()
 
@@ -254,8 +254,8 @@ func (s *StunServer) handleStunRequest(conn *net.UDPConn, packet []byte, addr *n
 
 func (s *StunServer) Stop() {
 	logWithTime("INFO", "Stopping STUN server")
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
+	if s.udpListener != nil {
+		if err := s.udpListener.Close(); err != nil {
 			logWithTime("ERROR", "Error closing UDP listener: %v", err)
 		}
 	}
