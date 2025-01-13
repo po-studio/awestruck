@@ -135,7 +135,42 @@ const (
 	iceGatheringTimeout    = 15 * time.Second // Extended for cloud environment
 )
 
+// why we need connection state tracking:
+// - ensure clean state between attempts
+// - prevent stale candidates
+// - improve reconnection reliability
+type connectionState struct {
+	lastICEState       webrtc.ICEConnectionState
+	successfulPairs    int
+	gatheringComplete  bool
+	lastDisconnectTime time.Time
+}
+
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
+	connState := &connectionState{}
+
+	// Track ICE connection state changes
+	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		log.Printf("[ICE] Connection state changed from %s to %s for session %s",
+			connState.lastICEState, state, appSession.Id)
+
+		if state == webrtc.ICEConnectionStateChecking {
+			stats := appSession.PeerConnection.GetStats()
+			for _, stat := range stats {
+				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.State == "succeeded" {
+					connState.successfulPairs++
+					log.Printf("[ICE] Found successful candidate pair: local=%s, remote=%s (total: %d)",
+						s.LocalCandidateID, s.RemoteCandidateID, connState.successfulPairs)
+				}
+			}
+		} else if state == webrtc.ICEConnectionStateDisconnected {
+			connState.lastDisconnectTime = time.Now()
+			log.Printf("[ICE] Connection disconnected at %v", connState.lastDisconnectTime)
+		}
+
+		connState.lastICEState = state
+	})
+
 	// Start media pipeline and synth engine in parallel with ICE gathering
 	errChan := make(chan error, 2)
 
@@ -169,24 +204,6 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 	// Wait for ICE gathering with early success detection
 	gatherComplete := webrtc.GatheringCompletePromise(appSession.PeerConnection)
 	log.Println("Waiting for ICE gathering to complete (with timeout)")
-
-	// Track successful candidate pairs
-	var successfulPairs int
-	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("[ICE] Connection state changed to %s for session %s", state.String(), appSession.Id)
-		if state == webrtc.ICEConnectionStateChecking {
-			stats := appSession.PeerConnection.GetStats()
-			for _, stat := range stats {
-				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.State == "succeeded" {
-					successfulPairs++
-					if successfulPairs == 1 {
-						log.Printf("[ICE] Found first successful candidate pair, proceeding with connection")
-					}
-					log.Printf("[ICE] Found successful candidate pair: local=%s, remote=%s", s.LocalCandidateID, s.RemoteCandidateID)
-				}
-			}
-		}
-	})
 
 	// Wait for pipeline and synth engine initialization
 	for i := 0; i < 2; i++ {

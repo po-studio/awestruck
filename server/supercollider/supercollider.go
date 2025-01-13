@@ -121,23 +121,37 @@ func (s *SuperColliderSynth) setupCmd() error {
 	pipeReader, pipeWriter := io.Pipe()
 	s.outputReader = pipeReader
 
+	// why we need these scsynth settings:
+	// - bind to all interfaces for ECS networking
+	// - optimize for container environment
+	// - ensure stable audio processing
 	s.Cmd = exec.Command(
 		"scsynth",
 		"-u", strconv.Itoa(s.Port),
-		"-a", "1024",
-		"-i", "0",
-		"-o", "2",
-		"-b", "1026",
-		"-R", "0",
-		"-C", "0",
-		"-l", "1",
+		"-H", "0.0.0.0", // Listen on all interfaces
+		"-a", "1024", // Audio bus channels
+		"-i", "0", // Input channels
+		"-o", "2", // Output channels
+		"-b", "1026", // Number of buffers
+		"-R", "0", // Real-time memory size
+		"-C", "0", // Control bus channels
+		"-l", "1", // Max logins
+		"-z", "16", // Block size (helps with network jitter)
+		"-P", "70", // Real-time priority
+		"-V", "0", // Verbosity level
 	)
 
 	s.Cmd.Stdout = io.MultiWriter(logFile, pipeWriter)
 	s.Cmd.Stderr = io.MultiWriter(logFile, pipeWriter)
 
+	// why we need these environment variables:
+	// - ensure proper synthdef loading
+	// - set up jack client name
+	// - configure network settings
 	s.Cmd.Env = append(os.Environ(),
 		"SC_SYNTHDEF_PATH="+utils.SCSynthDefDirectory,
+		"JACK_START_SERVER=false",
+		"JACK_NO_START_SERVER=true",
 	)
 
 	return nil

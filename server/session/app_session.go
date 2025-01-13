@@ -26,7 +26,23 @@ type AppSession struct {
 func (as *AppSession) StopAllProcesses() {
 	log.Printf("[CLEANUP] Starting cleanup for session %s", as.Id)
 
-	// Stop synth first to prevent new audio data
+	// Stop monitoring first to prevent any new operations
+	if as.MonitorDone != nil {
+		if closed, _ := as.monitorClosed.Load().(bool); !closed {
+			as.monitorClosed.Store(true)
+			close(as.MonitorDone)
+		}
+		as.MonitorDone = nil
+	}
+
+	// Stop GStreamer before SuperCollider to prevent port disconnection race
+	if as.GStreamerPipeline != nil {
+		log.Printf("[%s] Stopping GStreamer pipeline", as.Id)
+		as.GStreamerPipeline.Stop()
+		as.GStreamerPipeline = nil
+	}
+
+	// Stop synth for this session only
 	if as.Synth != nil {
 		log.Printf("[%s] Stopping synth engine", as.Id)
 		if err := as.Synth.Stop(); err != nil {
@@ -38,13 +54,6 @@ func (as *AppSession) StopAllProcesses() {
 	// Clean up WebRTC resources
 	if as.PeerConnection != nil {
 		log.Printf("[%s] Closing WebRTC peer connection", as.Id)
-
-		// Stop the pipeline before cleaning up WebRTC
-		if as.GStreamerPipeline != nil {
-			log.Printf("[%s] Stopping GStreamer pipeline", as.Id)
-			as.GStreamerPipeline.Stop()
-			as.GStreamerPipeline = nil
-		}
 
 		// Get current connection state
 		connState := as.PeerConnection.ConnectionState()
@@ -80,7 +89,7 @@ func (as *AppSession) StopAllProcesses() {
 		if err := as.PeerConnection.Close(); err != nil {
 			log.Printf("[%s] Error closing peer connection: %v", as.Id, err)
 		} else {
-			log.Printf("[%s] Peer connection closed successfully", as.Id)
+			log.Printf("[%s] Successfully closed peer connection", as.Id)
 		}
 		as.PeerConnection = nil
 	}

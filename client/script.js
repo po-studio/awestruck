@@ -49,6 +49,18 @@ let lastConnectionState = null;
 let pendingCandidates = [];
 let remoteDescriptionSet = false;
 
+// why we need connection state tracking:
+// - ensure clean state between attempts
+// - prevent stale candidates
+// - improve reconnection reliability
+let connectionState = {
+    lastState: null,
+    lastStateChangeTime: null,
+    successfulPairs: 0,
+    gatheringComplete: false,
+    lastDisconnectTime: null
+};
+
 // Add session ID to all HTMX requests
 document.body.addEventListener('htmx:configRequest', evt => {
   evt.detail.headers['X-Session-ID'] = sessionID;
@@ -580,59 +592,80 @@ function onIceConnectionStateChange() {
         return;
     }
 
-    console.log('ICE Connection State:', pc.iceConnectionState);
+    const now = new Date();
+    console.log('[ICE] Connection state changed from', connectionState.lastState, 'to', pc.iceConnectionState, 'at', now);
     
     if (pc.iceConnectionState === 'checking') {
         console.log('[ICE] Connection checking - gathering candidates...');
         pc.getStats().then(stats => {
             let candidateTypes = new Set();
+            let stunCandidates = [];
             stats.forEach(stat => {
                 if (stat.type === 'local-candidate' && stat.candidateType === 'srflx') {
                     candidateTypes.add(stat.candidateType);
-                    console.log('[ICE] STUN candidate:', {
+                    stunCandidates.push({
                         protocol: stat.protocol,
                         address: stat.address,
-                        port: stat.port
+                        port: stat.port,
+                        priority: stat.priority
                     });
                 }
             });
-            console.log('[ICE] Found STUN candidates:', Array.from(candidateTypes));
+            if (stunCandidates.length > 0) {
+                console.log('[ICE] Found STUN candidates:', stunCandidates);
+            }
         });
-    }
-
-    if (pc.iceConnectionState === 'failed') {
+    } else if (pc.iceConnectionState === 'disconnected') {
+        connectionState.lastDisconnectTime = now;
+        console.log('[ICE] Connection disconnected at', now);
+        
+        // Check if we should attempt immediate cleanup
+        const timeSinceLastStateChange = connectionState.lastStateChangeTime ? 
+            now - connectionState.lastStateChangeTime : 0;
+        if (timeSinceLastStateChange < 5000) { // If state changed too quickly
+            console.log('[ICE] Quick state change detected, may need cleanup');
+        }
+    } else if (pc.iceConnectionState === 'failed') {
         console.error('[ICE] Connection failed - checking stats...');
         pc.getStats().then(stats => {
             let diagnostics = {
                 stunCandidates: [],
                 remoteCandidates: [],
-                candidatePairs: []
+                candidatePairs: [],
+                lastDisconnectTime: connectionState.lastDisconnectTime
             };
             
             stats.forEach(stat => {
                 if (stat.type === 'local-candidate' && stat.candidateType === 'srflx') {
                     diagnostics.stunCandidates.push({
                         protocol: stat.protocol,
-                        address: stat.address
+                        address: stat.address,
+                        priority: stat.priority,
+                        timestamp: stat.timestamp
                     });
                 } else if (stat.type === 'remote-candidate') {
                     diagnostics.remoteCandidates.push({
                         type: stat.candidateType,
                         protocol: stat.protocol,
-                        address: stat.address
+                        address: stat.address,
+                        timestamp: stat.timestamp
                     });
                 } else if (stat.type === 'candidate-pair') {
                     diagnostics.candidatePairs.push({
                         state: stat.state,
                         nominated: stat.nominated,
                         bytesSent: stat.bytesSent,
-                        bytesReceived: stat.bytesReceived
+                        bytesReceived: stat.bytesReceived,
+                        timestamp: stat.timestamp
                     });
                 }
             });
             console.error('[ICE] Connection diagnostics:', diagnostics);
         });
     }
+    
+    connectionState.lastState = pc.iceConnectionState;
+    connectionState.lastStateChangeTime = now;
 }
 
 // why we need connection monitoring:
@@ -705,34 +738,18 @@ function startAudioStatsMonitoring() {
 // - stops all monitoring intervals
 // - closes WebRTC connection properly
 async function cleanupConnection() {
-    console.log('Cleaning up connection...');
-
-    // Clear all intervals first
-    [qualityMonitorInterval, audioStatsInterval, audioLevelsInterval, 
-     trackStatsInterval, codePollingInterval].forEach(interval => {
-        if (interval) {
-            clearInterval(interval);
-            interval = null;
-        }
-    });
-
-    // Stop audio context and clear element
-    if (audioContext) {
-        await audioContext.close();
-        audioContext = null;
-    }
-    if (audioElement) {
-        audioElement.pause();
-        audioElement.remove();
-        audioElement = null;
-    }
-
-    // Clear code display
-    clearCode();
-
-    // Close peer connection
+    console.log('[WebRTC] Starting connection cleanup');
+    
     if (pc) {
-        // Send stop signal to server
+        // Log final state before cleanup
+        console.log('[WebRTC] Final connection state:', {
+            connectionState: pc.connectionState,
+            iceConnectionState: pc.iceConnectionState,
+            iceGatheringState: pc.iceGatheringState,
+            signalingState: pc.signalingState
+        });
+        
+        // Send stop signal to server first
         try {
             await fetch('/stop', {
                 method: 'POST',
@@ -740,15 +757,49 @@ async function cleanupConnection() {
                     'X-Session-ID': sessionID
                 }
             });
+            console.log('[WebRTC] Successfully sent stop signal to server');
         } catch (error) {
-            console.error('Error sending stop signal:', error);
+            console.error('[WebRTC] Error sending stop signal:', error);
         }
-
+        
+        // Stop all tracks
+        pc.getReceivers().forEach(receiver => {
+            if (receiver.track) {
+                receiver.track.stop();
+            }
+        });
+        
+        // Close peer connection
         pc.close();
-        pc = null;
+        
+        // Reset state
+        connectionState = {
+            lastState: null,
+            lastStateChangeTime: null,
+            successfulPairs: 0,
+            gatheringComplete: false,
+            lastDisconnectTime: null
+        };
+    }
+    
+    // Clear all intervals
+    [qualityMonitorInterval, audioStatsInterval, audioLevelsInterval].forEach(interval => {
+        if (interval) {
+            clearInterval(interval);
+        }
+    });
+    
+    // Reset audio context
+    if (audioContext) {
+        await audioContext.close();
+        audioContext = null;
     }
 
-    console.log('Cleanup complete');
+    // Clear code display
+    clearCode();
+    
+    pc = null;
+    console.log('[WebRTC] Cleanup complete');
 }
 
 // why we need code display functions:

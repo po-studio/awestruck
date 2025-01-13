@@ -59,7 +59,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "nc -zv localhost 3478 2>/dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
+      interval: 10s
+      timeout: 5s
       retries: 5
       start_period: 5s
