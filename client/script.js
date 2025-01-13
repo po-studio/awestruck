@@ -281,19 +281,24 @@ async function setupWebRTC(config) {
     // Optimize ICE gathering
     pc.onicegatheringstatechange = () => {
         console.log('[ICE] Gathering state:', pc.iceGatheringState);
-        // Start connection as soon as we have a viable candidate
+        
+        // Monitor candidate gathering progress
         if (pc.iceGatheringState !== 'new') {
             pc.getStats().then(stats => {
                 let hasViableCandidate = false;
+                let candidateTypes = new Set();
+                
                 stats.forEach(stat => {
                     if (stat.type === 'local-candidate' && 
                         (stat.candidateType === 'host' || stat.candidateType === 'srflx')) {
                         hasViableCandidate = true;
+                        candidateTypes.add(stat.candidateType);
                     }
                 });
-                if (hasViableCandidate && !pc.remoteDescription) {
-                    console.log('[ICE] Have viable candidate, proceeding with connection');
-                    createAndSendOffer();
+                
+                if (hasViableCandidate) {
+                    console.log('[ICE] Have viable candidates:', Array.from(candidateTypes));
+                    // Note: We don't need to create an offer here as it's already handled in setupWebRTC
                 }
             });
         }
