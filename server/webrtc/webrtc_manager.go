@@ -379,9 +379,22 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 	appSession.PeerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("[WebRTC] Connection state changed to: %s", state.String())
 
+		// cleanup strategy for webrtc connections:
+		// - only log states when the connection is still valid
+		// - avoid redundant logging in terminal states
+		// - ensure proper cleanup of resources when connection ends
+		// - prevent memory leaks from orphaned sessions
+
+		// only log connection details if peer connection is still valid
 		if appSession.PeerConnection != nil {
-			log.Printf("Signaling State: %s\n", appSession.PeerConnection.SignalingState().String())
-			log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
+			if sigState := appSession.PeerConnection.SignalingState(); sigState != webrtc.SignalingStateClosed {
+				log.Printf("Signaling State: %s", sigState.String())
+			}
+			// avoid checking connection state if we're already in a terminal state
+			if state != webrtc.PeerConnectionStateClosed &&
+				state != webrtc.PeerConnectionStateFailed {
+				log.Printf("Connection State: %s", state.String())
+			}
 		}
 
 		// Clean up when connection is closed or failed

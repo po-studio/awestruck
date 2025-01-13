@@ -84,11 +84,3 @@ func (sm *SessionManager) DeleteSession(id string) {
 	defer sm.mutex.Unlock()
 	delete(sm.Sessions, id)
 }
-
-// why we need session retrieval:
-// - allows lookup of existing sessions
-// - enables cleanup on connection state changes
-// - prevents orphaned sessions
-func GetSession(id string) (*AppSession, bool) {
-	return sessionManager.GetSession(id)
-}
