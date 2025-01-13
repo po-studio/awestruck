@@ -124,13 +124,13 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
-// why we need ice timeouts:
-// - shorter timeouts for faster connection establishment
-// - quick failure detection for better user experience
-// - balanced between reliability and speed
+// why we need longer timeouts in production:
+// - accounts for network latency in cloud environment
+// - allows for multiple STUN retries
+// - prevents premature connection failures
 const (
-	iceGatheringTimeout = 15 * time.Second
-	iceConnectTimeout   = 20 * time.Second
+	iceGatheringTimeout = 30 * time.Second
+	iceConnectTimeout   = 40 * time.Second
 )
 
 func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample, answer webrtc.SessionDescription) error {
@@ -493,14 +493,14 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	s := webrtc.SettingEngine{}
 	s.SetEphemeralUDPPortRange(10000, 10100)
 
-	// ice timeouts for STUN:
-	// - increased timeouts to allow for more connection attempts
-	// - more frequent keepalive for connection stability
+	// why we need these ice timeouts:
 	// - longer disconnection grace period for network issues
+	// - more time for candidate gathering
+	// - frequent keepalive for connection stability
 	s.SetICETimeouts(
-		10*time.Second,       // disconnectedTimeout (increased from 5s)
-		15*time.Second,       // failedTimeout (increased from 7s)
-		100*time.Millisecond, // keepAliveInterval (decreased for more frequent checks)
+		15*time.Second,       // disconnectedTimeout (increased from 10s)
+		30*time.Second,       // failedTimeout (increased from 15s)
+		100*time.Millisecond, // keepAliveInterval (unchanged)
 	)
 
 	// candidate gathering timeouts:

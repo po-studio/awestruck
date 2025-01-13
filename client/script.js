@@ -100,7 +100,7 @@ function waitForICEConnection(pc) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             reject(new Error('ICE connection timeout'));
-        }, 10000); // Increased to 10 seconds for production
+        }, 30000); // Increased to 30 seconds to match server gathering timeout
 
         function checkState() {
             if (pc.iceConnectionState === 'connected' || 
@@ -148,7 +148,7 @@ const ICE_CONFIG = {
                 ]
             }
         ],
-        iceCandidatePoolSize: 1,
+        iceCandidatePoolSize: 2,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
         iceTransportPolicy: 'all',
