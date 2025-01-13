@@ -394,15 +394,6 @@ class AwestruckInfrastructure extends TerraformStack {
             environment: [
               { name: "STUN_PORT", value: "3478" }
             ],
-            // why we need these linux parameters:
-            // - allows binding to privileged ports
-            // - enables network capabilities
-            // - required for stun server operation
-            linuxParameters: {
-              capabilities: {
-                add: ["NET_BIND_SERVICE"]
-              }
-            },
             // why we need both container and target group health checks:
             // - container health check ensures the process is running
             // - target group health check ensures network connectivity
