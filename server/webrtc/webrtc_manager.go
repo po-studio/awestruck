@@ -494,21 +494,24 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	s.SetEphemeralUDPPortRange(10000, 10100)
 
 	// ice timeouts for STUN:
-	// - disconnectedTimeout: time to wait before considering a connection lost
-	// - failedTimeout: time to wait before giving up on reconnection
-	// - keepAliveInterval: how often to send keepalive packets
+	// - increased timeouts to allow for more connection attempts
+	// - more frequent keepalive for connection stability
+	// - longer disconnection grace period for network issues
 	s.SetICETimeouts(
-		5*time.Second,        // disconnectedTimeout (reduced from 10s)
-		7*time.Second,        // failedTimeout (reduced from 15s)
-		250*time.Millisecond, // keepAliveInterval (reduced from 500ms)
+		10*time.Second,       // disconnectedTimeout (increased from 5s)
+		15*time.Second,       // failedTimeout (increased from 7s)
+		100*time.Millisecond, // keepAliveInterval (decreased for more frequent checks)
 	)
 
 	// candidate gathering timeouts:
-	// - reduced timeouts for faster connection establishment
-	// - still allowing enough time for STUN candidates
-	s.SetHostAcceptanceMinWait(250 * time.Millisecond)   // reduced from 500ms
-	s.SetSrflxAcceptanceMinWait(1000 * time.Millisecond) // reduced from 2000ms
-	s.SetPrflxAcceptanceMinWait(250 * time.Millisecond)  // reduced from 500ms
+	// - increased timeouts to ensure complete gathering
+	// - allow more time for STUN responses
+	s.SetHostAcceptanceMinWait(500 * time.Millisecond)   // increased from 250ms
+	s.SetSrflxAcceptanceMinWait(2000 * time.Millisecond) // increased from 1000ms
+	s.SetPrflxAcceptanceMinWait(500 * time.Millisecond)  // increased from 250ms
+
+	// enable trickle ICE for faster connection establishment
+	s.SetLite(false)
 
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
@@ -525,6 +528,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 2,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
 	}
 
 	pc, err := api.NewPeerConnection(config)
