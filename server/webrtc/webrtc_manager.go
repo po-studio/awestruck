@@ -371,35 +371,25 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 		return nil, err
 	}
 	appSession.PeerConnection = peerConnection
-	appSession.PeerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("[ICE] Connection state changed to %s for session %s", state.String(), appSession.Id)
+
+	// why we need connection state monitoring:
+	// - detect browser window closes
+	// - ensure cleanup on unexpected disconnects
+	// - prevent orphaned jack connections
+	appSession.PeerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Printf("[WebRTC] Connection state changed to: %s", state.String())
 
 		if appSession.PeerConnection != nil {
 			log.Printf("Signaling State: %s\n", appSession.PeerConnection.SignalingState().String())
 			log.Printf("Connection State: %s\n", appSession.PeerConnection.ConnectionState().String())
 		}
 
-		switch state {
-		case webrtc.ICEConnectionStateFailed:
-			// Complete failure - clean up everything
-			log.Printf("[ICE][ERROR] Connection failed for session %s, initiating cleanup...", appSession.Id)
-			if appSession.PeerConnection != nil {
-				stats := appSession.PeerConnection.GetStats()
-				log.Printf("[ICE] Last known ICE stats for session %s: %+v", appSession.Id, stats)
-			}
-			cleanUpSession(appSession)
-
-		case webrtc.ICEConnectionStateDisconnected:
-			// Temporary disconnection - wait for potential reconnect
-			log.Printf("[ICE] Connection disconnected for session %s, waiting for reconnection...", appSession.Id)
-			// Start a timer to cleanup only if disconnection persists
-			time.AfterFunc(30*time.Second, func() {
-				if appSession.PeerConnection != nil &&
-					appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateDisconnected {
-					log.Printf("[ICE] Disconnection timeout for session %s, cleaning up", appSession.Id)
-					cleanUpSession(appSession)
-				}
-			})
+		// Clean up when connection is closed or failed
+		if state == webrtc.PeerConnectionStateClosed ||
+			state == webrtc.PeerConnectionStateFailed ||
+			state == webrtc.PeerConnectionStateDisconnected {
+			log.Printf("[CLEANUP] Connection state %s triggered cleanup for session %s", state, appSession.Id)
+			appSession.StopAllProcesses()
 		}
 	})
 
@@ -529,21 +519,6 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		return nil, err
 	}
 
-	// Add detailed connection state monitoring
-	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		log.Printf("[WebRTC] Connection state changed to: %s", state.String())
-		if state == webrtc.PeerConnectionStateConnecting {
-			// Log ICE candidates when connecting
-			stats := pc.GetStats()
-			for _, stat := range stats {
-				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok {
-					log.Printf("[ICE] Candidate pair: state=%s nominated=%v",
-						candidatePair.State, candidatePair.Nominated)
-				}
-			}
-		}
-	})
-
 	// Monitor ICE gathering state
 	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
 		log.Printf("[ICE] Gathering state changed to: %s", state.String())
@@ -560,36 +535,6 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 				}
 			}
 			log.Printf("[ICE] Found %d successful candidate pairs", candidateCount)
-		}
-	})
-
-	// why we need connection state monitoring:
-	// - detect browser window closes
-	// - ensure cleanup on unexpected disconnects
-	// - prevent orphaned jack connections
-	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		log.Printf("[WebRTC] Connection state changed to: %s", state.String())
-
-		// Clean up when connection is closed or failed
-		if state == webrtc.PeerConnectionStateClosed ||
-			state == webrtc.PeerConnectionStateFailed ||
-			state == webrtc.PeerConnectionStateDisconnected {
-
-			// Get session from connection
-			sessionID := ""
-			for _, stats := range pc.GetStats() {
-				if transportStats, ok := stats.(*webrtc.TransportStats); ok {
-					sessionID = transportStats.ID
-					break
-				}
-			}
-
-			if sessionID != "" {
-				if appSession, exists := session.GetSession(sessionID); exists {
-					log.Printf("[CLEANUP] Connection state %s triggered cleanup for session %s", state, sessionID)
-					appSession.StopAllProcesses()
-				}
-			}
 		}
 	})
 
