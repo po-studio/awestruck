@@ -2,6 +2,7 @@ package webrtc
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	gst "github.com/po-studio/server/internal/gstreamer-src"
 	"github.com/po-studio/server/internal/signal"
 	"github.com/po-studio/server/session"
+	"github.com/po-studio/server/synth"
 )
 
 // BrowserOffer represents the SDP offer from the browser
@@ -232,13 +234,27 @@ func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.Track
 }
 
 func startSynthEngine(appSession *session.AppSession) error {
+	// Initialize monitoring before starting synth
 	MonitorAudioPipeline(appSession)
-	var wg sync.WaitGroup
+
+	// Create error channel for synth startup
 	errChan := make(chan error, 1)
 
+	// Start synth in goroutine
+	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer close(errChan)
+
+		// Ensure synth is initialized
+		if appSession.Synth == nil {
+			appSession.Synth = synth.NewSuperColliderSynth(appSession.Id)
+			appSession.Synth.SetOnClientName(func(clientName string) {
+				appSession.JackClientName = clientName
+			})
+		}
+
 		if err := appSession.Synth.Start(); err != nil {
 			errChan <- fmt.Errorf("failed to start synth engine: %v", err)
 			return
@@ -247,13 +263,12 @@ func startSynthEngine(appSession *session.AppSession) error {
 	}()
 
 	wg.Wait()
-	close(errChan)
 
+	// Check for startup errors
 	if err := <-errChan; err != nil {
 		return err
 	}
 
-	appSession.Synth.SendPlayMessage()
 	return nil
 }
 
@@ -548,6 +563,36 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 		}
 	})
 
+	// why we need connection state monitoring:
+	// - detect browser window closes
+	// - ensure cleanup on unexpected disconnects
+	// - prevent orphaned jack connections
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Printf("[WebRTC] Connection state changed to: %s", state.String())
+
+		// Clean up when connection is closed or failed
+		if state == webrtc.PeerConnectionStateClosed ||
+			state == webrtc.PeerConnectionStateFailed ||
+			state == webrtc.PeerConnectionStateDisconnected {
+
+			// Get session from connection
+			sessionID := ""
+			for _, stats := range pc.GetStats() {
+				if transportStats, ok := stats.(*webrtc.TransportStats); ok {
+					sessionID = transportStats.ID
+					break
+				}
+			}
+
+			if sessionID != "" {
+				if appSession, exists := session.GetSession(sessionID); exists {
+					log.Printf("[CLEANUP] Connection state %s triggered cleanup for session %s", state, sessionID)
+					appSession.StopAllProcesses()
+				}
+			}
+		}
+	})
+
 	return pc, nil
 }
 
@@ -591,44 +636,81 @@ func sendAnswer(w http.ResponseWriter, answer *webrtc.SessionDescription) {
 	log.Println("[ANSWER] Answer sent successfully")
 }
 
-// HandleStop processes the stop request for a WebRTC session
+// why we need session-specific cleanup:
+// - multiple clients may have active sessions
+// - stopping one synth shouldn't affect others
+// - must preserve other sessions' resources
 func HandleStop(w http.ResponseWriter, r *http.Request) {
-	log.Println("Stop signal received, cleaning up...")
+	sessionID := r.Header.Get("X-Session-ID")
+	log.Printf("[STOP] Received stop request for session: %s", sessionID)
 
-	// Retrieve the session from the request
+	// Get the specific session to stop
 	appSession, err := session.GetOrCreateSession(r, w)
 	if err != nil {
+		log.Printf("[STOP][ERROR] Session not found: %v", err)
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
-	err = cleanUpSession(appSession)
-	if err != nil {
-		http.Error(w, "Error closing peer connection", http.StatusInternalServerError)
-		return
-	}
 
+	// Use StopAllProcesses for thorough cleanup of this session only
+	appSession.StopAllProcesses()
+
+	log.Printf("[STOP] Successfully stopped session: %s", sessionID)
 	w.WriteHeader(http.StatusOK)
 }
 
 func cleanUpSession(appSession *session.AppSession) error {
-	// Close the peer connection
-	err := closePeerConnection(appSession.PeerConnection)
-	if err != nil {
-		log.Printf("Error closing peer connection: %v", err)
-		return err
+	log.Printf("[CLEANUP] Starting cleanup for session %s", appSession.Id)
+
+	// First stop monitoring to prevent any new operations
+	if appSession.MonitorDone != nil {
+		close(appSession.MonitorDone)
+		appSession.MonitorDone = nil
 	}
 
-	appSession.StopAllProcesses()
+	// Stop the synth engine first as it depends on other components
+	if appSession.Synth != nil {
+		if err := appSession.Synth.Stop(); err != nil {
+			log.Printf("[CLEANUP][ERROR] Failed to stop synth: %v", err)
+		}
+		appSession.Synth = nil
+	}
+
+	// Stop the GStreamer pipeline
+	if appSession.GStreamerPipeline != nil {
+		appSession.GStreamerPipeline.Stop()
+		appSession.GStreamerPipeline = nil
+	}
+
+	// Close the peer connection last
+	if appSession.PeerConnection != nil {
+		// Get final stats before closing
+		stats := appSession.PeerConnection.GetStats()
+		log.Printf("[CLEANUP] Final WebRTC stats: %+v", stats)
+
+		// Close all transceivers
+		for _, t := range appSession.PeerConnection.GetTransceivers() {
+			if err := t.Stop(); err != nil {
+				log.Printf("[CLEANUP][ERROR] Failed to stop transceiver: %v", err)
+			}
+		}
+
+		// Remove all tracks
+		for _, sender := range appSession.PeerConnection.GetSenders() {
+			if err := appSession.PeerConnection.RemoveTrack(sender); err != nil {
+				log.Printf("[CLEANUP][ERROR] Failed to remove track: %v", err)
+			}
+		}
+
+		// Close the connection
+		if err := appSession.PeerConnection.Close(); err != nil {
+			log.Printf("[CLEANUP][ERROR] Failed to close peer connection: %v", err)
+		}
+		appSession.PeerConnection = nil
+	}
+
+	log.Printf("[CLEANUP] Completed cleanup for session %s", appSession.Id)
 	return nil
-}
-
-// closePeerConnection gracefully closes the given peer connection
-func closePeerConnection(pc *webrtc.PeerConnection) error {
-	if pc == nil {
-		return nil // If the peer connection is already nil, no need to close
-	}
-	log.Println("Closing peer connection")
-	return pc.Close()
 }
 
 // why we need robust ice candidate handling:
@@ -639,62 +721,86 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	logWithTime("[ICE] Received candidate for session: %s", sessionID)
 
-	// Read and validate request body
+	// Get session and validate it exists
+	appSession, err := session.GetOrCreateSession(r, w)
+	if err != nil {
+		log.Printf("[ICE][ERROR] Session not found: %v", err)
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Ensure peer connection exists
+	if appSession.PeerConnection == nil {
+		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
+		http.Error(w, "No peer connection", http.StatusBadRequest)
+		return
+	}
+
+	// Read and log the raw request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		logWithTime("[ICE][ERROR] Failed to read request body: %v", err)
+		log.Printf("[ICE][ERROR] Failed to read request body: %v", err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	logWithTime("[ICE] Raw request body: %s", string(body))
 
-	// Parse ICE candidate
-	var candidateReq ICECandidateRequest
-	if err := json.Unmarshal(body, &candidateReq); err != nil {
-		logWithTime("[ICE][ERROR] Failed to parse ICE candidate: %v", err)
-		http.Error(w, "Invalid ICE candidate format", http.StatusBadRequest)
+	// First unmarshal the outer wrapper
+	var wrapper struct {
+		Candidate string `json:"candidate"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&wrapper); err != nil {
+		log.Printf("[ICE][ERROR] Failed to decode outer wrapper: %v", err)
+		log.Printf("[ICE][DEBUG] Attempted to decode body: %s", string(body))
+		http.Error(w, "Invalid candidate format", http.StatusBadRequest)
 		return
 	}
+	log.Printf("[ICE][DEBUG] Decoded wrapper candidate: %s", wrapper.Candidate)
 
-	// Get the session
-	appSession, err := session.GetOrCreateSession(r, w)
+	// Decode the base64 string
+	candidateJSON, err := base64.StdEncoding.DecodeString(wrapper.Candidate)
 	if err != nil {
-		logWithTime("[ICE][ERROR] Session not found: %s", sessionID)
-		http.Error(w, "Session not found", http.StatusNotFound)
+		log.Printf("[ICE][ERROR] Failed to decode base64: %v", err)
+		log.Printf("[ICE][DEBUG] Attempted to decode base64: %s", wrapper.Candidate)
+		http.Error(w, "Invalid base64 encoding", http.StatusBadRequest)
 		return
 	}
+	log.Printf("[ICE][DEBUG] Decoded base64 JSON: %s", string(candidateJSON))
 
-	// Validate peer connection
-	if appSession.PeerConnection == nil {
-		logWithTime("[ICE][ERROR] No peer connection for session: %s", sessionID)
-		http.Error(w, "No peer connection", http.StatusBadRequest)
+	// Try to parse as a direct candidate string first
+	var candidateObj struct {
+		Candidate        string `json:"candidate"`
+		SDPMid           string `json:"sdpMid"`
+		SDPMLineIndex    uint16 `json:"sdpMLineIndex"`
+		UsernameFragment string `json:"usernameFragment"`
+	}
+	if err := json.Unmarshal(candidateJSON, &candidateObj); err != nil {
+		log.Printf("[ICE][ERROR] Failed to decode candidate JSON: %v", err)
+		log.Printf("[ICE][DEBUG] Attempted to decode JSON: %s", string(candidateJSON))
+		http.Error(w, "Invalid candidate format", http.StatusBadRequest)
 		return
 	}
+	log.Printf("[ICE][DEBUG] Parsed candidate: %+v", candidateObj)
 
-	// Create ICE candidate
-	usernameFragment := candidateReq.Candidate.UsernameFragment
+	// Create and log ICE candidate init
 	candidate := webrtc.ICECandidateInit{
-		Candidate:        candidateReq.Candidate.Candidate,
-		SDPMid:           &candidateReq.Candidate.SDPMid,
-		SDPMLineIndex:    &candidateReq.Candidate.SDPMLineIndex,
-		UsernameFragment: &usernameFragment,
+		Candidate:        candidateObj.Candidate,
+		SDPMid:           &candidateObj.SDPMid,
+		SDPMLineIndex:    &candidateObj.SDPMLineIndex,
+		UsernameFragment: &candidateObj.UsernameFragment,
 	}
+	log.Printf("[ICE][DEBUG] Created ICE candidate init: %+v", candidate)
 
-	// Add ICE candidate with retry
-	maxRetries := 3
-	for i := 0; i < maxRetries; i++ {
-		err = appSession.PeerConnection.AddICECandidate(candidate)
-		if err == nil {
-			logWithTime("[ICE] Successfully added candidate for session %s", sessionID)
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		logWithTime("[ICE][WARN] Failed to add candidate (attempt %d/%d): %v", i+1, maxRetries, err)
-		time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+	// Add the candidate and log result
+	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
+		log.Printf("[ICE][ERROR] Failed to add candidate: %v", err)
+		log.Printf("[ICE][DEBUG] Failed candidate details: %+v", candidate)
+		http.Error(w, fmt.Sprintf("Failed to add candidate: %v", err), http.StatusInternalServerError)
+		return
 	}
+	log.Printf("[ICE][SUCCESS] Added ICE candidate for session %s", sessionID)
 
-	logWithTime("[ICE][ERROR] Failed to add candidate after %d retries: %v", maxRetries, err)
-	http.Error(w, fmt.Sprintf("Failed to add ICE candidate: %v", err), http.StatusInternalServerError)
+	w.WriteHeader(http.StatusOK)
 }
 
 func getTimestamp() string {

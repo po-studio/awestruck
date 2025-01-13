@@ -10,6 +10,8 @@ import (
 	"github.com/po-studio/server/synth"
 )
 
+// NB: not scaleable, as we can't hold all these sessions in memory
+// revisit later
 var sessionManager = SessionManager{
 	Sessions: make(map[string]*AppSession),
 }
@@ -81,4 +83,12 @@ func (sm *SessionManager) DeleteSession(id string) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 	delete(sm.Sessions, id)
+}
+
+// why we need session retrieval:
+// - allows lookup of existing sessions
+// - enables cleanup on connection state changes
+// - prevents orphaned sessions
+func GetSession(id string) (*AppSession, bool) {
+	return sessionManager.GetSession(id)
 }
