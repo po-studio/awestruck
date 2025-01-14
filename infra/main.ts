@@ -299,11 +299,9 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "AWESTRUCK_ENV", value: "production" },
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-r -d dummy -p 2048" },
+              { name: "JACK_BUFFER_SIZE", value: "2048" },
               { name: "JACK_SAMPLE_RATE", value: "48000" },
               { name: "GST_DEBUG", value: "3" },
-              { name: "JACK_BUFFER_SIZE", value: "2048" },
-              { name: "JACK_PERIODS", value: "3" },
               { name: "GST_BUFFER_SIZE", value: "4194304" },
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }

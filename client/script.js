@@ -134,7 +134,7 @@ function waitForICEConnection(pc) {
 
 // why we need ice configuration:
 // - enables discovery through our custom STUN server
-// - prevents local network candidates when possible
+// - allows host candidates for container communication
 // - ensures consistent behavior across environments
 const ICE_CONFIG = {
     development: {
@@ -148,7 +148,7 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 0,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all', // We'll filter candidates in the stats monitoring
+        iceTransportPolicy: 'all',
         sdpSemantics: 'unified-plan'
     },
     production: {
@@ -163,45 +163,43 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 2,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all', // We'll filter candidates in the stats monitoring
+        iceTransportPolicy: 'all',
         sdpSemantics: 'unified-plan'
     }
 };
 
-// why we need strict ice configuration validation:
-// - ensures STUN server is properly configured
-// - validates server URLs
-// - prevents misconfiguration
+// why we need flexible ice validation:
+// - allows both STUN and host candidates
+// - supports container-to-container communication
+// - maintains logging for monitoring
 function validateIceConfig(config) {
     if (!config || !config.iceServers) {
         console.error('[ICE] Invalid ICE configuration');
         return false;
     }
 
-    const hasStunServer = config.iceServers.some(server => {
+    const hasValidServer = config.iceServers.some(server => {
         if (!server.urls) {
             console.error('[ICE] Missing URLs');
             return false;
         }
 
-        // Validate URLs format and ensure they're STUN only
-        const validUrls = server.urls.every(url => {
-            if (!url.startsWith('stun:') && !url.startsWith('host:')) {
-                console.log('[ICE] Non-STUN/host URL found:', url);
+        // Log all URL types for monitoring
+        server.urls.forEach(url => {
+            if (url.startsWith('stun:')) {
+                console.log('[ICE] Found STUN URL:', url);
+            } else if (url.startsWith('host:')) {
+                console.log('[ICE] Found host URL:', url);
+            } else {
+                console.log('[ICE] Found other URL type:', url);
             }
-            return true; // Accept all URL types but log for monitoring
         });
-
-        if (!validUrls) {
-            console.error('[ICE] Invalid URLs:', server.urls);
-            return false;
-        }
 
         return true;
     });
 
-    if (!hasStunServer) {
-        console.error('[ICE] No valid STUN server found in configuration');
+    if (!hasValidServer) {
+        console.error('[ICE] No valid server configuration found');
         return false;
     }
 
@@ -580,7 +578,7 @@ function onConnectionStateChange() {
 }
 
 // why we need ice connection monitoring:
-// - tracks STUN connectivity status
+// - tracks all candidate types for connectivity
 // - helps identify network issues
 // - provides detailed ICE state information
 function onIceConnectionStateChange() {
@@ -596,11 +594,12 @@ function onIceConnectionStateChange() {
         console.log('[ICE] Connection checking - gathering candidates...');
         pc.getStats().then(stats => {
             let candidateTypes = new Set();
-            let stunCandidates = [];
+            let candidates = [];
             stats.forEach(stat => {
-                if (stat.type === 'local-candidate' && stat.candidateType === 'srflx') {
+                if (stat.type === 'local-candidate') {
                     candidateTypes.add(stat.candidateType);
-                    stunCandidates.push({
+                    candidates.push({
+                        type: stat.candidateType,
                         protocol: stat.protocol,
                         address: stat.address,
                         port: stat.port,
@@ -608,8 +607,9 @@ function onIceConnectionStateChange() {
                     });
                 }
             });
-            if (stunCandidates.length > 0) {
-                console.log('[ICE] Found STUN candidates:', stunCandidates);
+            if (candidates.length > 0) {
+                console.log('[ICE] Found candidates:', candidates);
+                console.log('[ICE] Candidate types:', Array.from(candidateTypes));
             }
         });
     } else if (pc.iceConnectionState === 'disconnected') {
@@ -626,7 +626,7 @@ function onIceConnectionStateChange() {
         console.error('[ICE] Connection failed - checking stats...');
         pc.getStats().then(stats => {
             let diagnostics = {
-                stunCandidates: [],
+                localCandidates: [],
                 remoteCandidates: [],
                 candidatePairs: [],
                 lastDisconnectTime: connectionState.lastDisconnectTime
@@ -634,7 +634,7 @@ function onIceConnectionStateChange() {
             
             stats.forEach(stat => {
                 if (stat.type === 'local-candidate') {
-                    diagnostics.stunCandidates.push({
+                    diagnostics.localCandidates.push({
                         type: stat.candidateType,
                         protocol: stat.protocol,
                         address: stat.address,
@@ -654,7 +654,9 @@ function onIceConnectionStateChange() {
                         nominated: stat.nominated,
                         bytesSent: stat.bytesSent,
                         bytesReceived: stat.bytesReceived,
-                        timestamp: stat.timestamp
+                        timestamp: stat.timestamp,
+                        localCandidateType: stat.localCandidateType,
+                        remoteCandidateType: stat.remoteCandidateType
                     });
                 }
             });
@@ -927,6 +929,7 @@ function setupAudioElement(track) {
     audioElement.autoplay = true;
     audioElement.controls = true;
     audioElement.style.display = 'none';
+    audioElement.volume = 1.0; // Ensure volume is at maximum
     document.body.appendChild(audioElement);
     
     console.log('[AUDIO][SETUP] Created audio element:', {
@@ -945,7 +948,15 @@ function setupAudioElement(track) {
     audioElement.addEventListener('loadstart', () => console.log('[AUDIO][STATE] Loading started'));
     audioElement.addEventListener('loadedmetadata', () => console.log('[AUDIO][STATE] Metadata loaded'));
     audioElement.addEventListener('loadeddata', () => console.log('[AUDIO][STATE] Data loaded'));
-    audioElement.addEventListener('canplay', () => console.log('[AUDIO][STATE] Can start playing'));
+    audioElement.addEventListener('canplay', () => {
+        console.log('[AUDIO][STATE] Can start playing');
+        // Ensure audio context is resumed when we can play
+        if (audioContext && audioContext.state === 'suspended') {
+            audioContext.resume().then(() => {
+                console.log('[AUDIO][CONTEXT] Resumed audio context');
+            });
+        }
+    });
     audioElement.addEventListener('canplaythrough', () => console.log('[AUDIO][STATE] Can play through'));
     audioElement.addEventListener('play', () => console.log('[AUDIO][STATE] Playback started'));
     audioElement.addEventListener('pause', () => console.log('[AUDIO][STATE] Playback paused'));
@@ -957,9 +968,23 @@ function setupAudioElement(track) {
             readyState: audioElement.readyState
         });
     });
-    audioElement.addEventListener('stalled', () => console.warn('[AUDIO][WARN] Playback stalled'));
+    audioElement.addEventListener('stalled', () => {
+        console.warn('[AUDIO][WARN] Playback stalled');
+        // Try to recover from stall
+        audioElement.load();
+        audioElement.play().catch(err => {
+            console.error('[AUDIO][ERROR] Failed to recover from stall:', err);
+        });
+    });
     audioElement.addEventListener('suspend', () => console.warn('[AUDIO][WARN] Playback suspended'));
-    audioElement.addEventListener('waiting', () => console.warn('[AUDIO][WARN] Waiting for data'));
+    audioElement.addEventListener('waiting', () => {
+        console.warn('[AUDIO][WARN] Waiting for data');
+        // Check audio pipeline state
+        if (audioContext) {
+            console.log('[AUDIO][DEBUG] Audio context state:', audioContext.state);
+            console.log('[AUDIO][DEBUG] Audio context time:', audioContext.currentTime);
+        }
+    });
     
     // Set up audio processing and monitoring
     try {
@@ -980,7 +1005,10 @@ function setupAudioElement(track) {
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 2048;
         analyser.smoothingTimeConstant = 0.8;
+        
+        // Connect source to both analyser and destination
         source.connect(analyser);
+        source.connect(audioContext.destination);
         
         // Enhanced audio level monitoring
         const dataArray = new Float32Array(analyser.frequencyBinCount);
@@ -1003,7 +1031,8 @@ function setupAudioElement(track) {
                 console.log('[AUDIO][LEVELS]', {
                     peak: maxLevel.toFixed(4),
                     rms: rms.toFixed(4),
-                    frequency: analyser.context.sampleRate
+                    frequency: analyser.context.sampleRate,
+                    contextTime: audioContext.currentTime
                 });
 
                 // Detect prolonged silence
@@ -1011,6 +1040,10 @@ function setupAudioElement(track) {
                     silentFrames++;
                     if (silentFrames >= MAX_SILENT_FRAMES) {
                         console.warn('[AUDIO][WARN] Prolonged silence detected');
+                        // Try to recover audio pipeline
+                        audioContext.resume().then(() => {
+                            console.log('[AUDIO][RECOVERY] Resumed audio context after silence');
+                        });
                         silentFrames = 0;
                     }
                 } else {
@@ -1025,7 +1058,18 @@ function setupAudioElement(track) {
     const playPromise = audioElement.play();
     if (playPromise !== undefined) {
         playPromise
-            .then(() => console.log('[AUDIO][PLAY] Playback started successfully'))
+            .then(() => {
+                console.log('[AUDIO][PLAY] Playback started successfully');
+                // Ensure audio context is running
+                if (audioContext && audioContext.state === 'suspended') {
+                    return audioContext.resume();
+                }
+            })
+            .then(() => {
+                if (audioContext) {
+                    console.log('[AUDIO][CONTEXT] Audio context state after play:', audioContext.state);
+                }
+            })
             .catch(error => {
                 console.error('[AUDIO][ERROR] Playback failed:', {
                     error: error,
@@ -1034,7 +1078,8 @@ function setupAudioElement(track) {
                     audioState: audioElement.readyState,
                     networkState: audioElement.networkState,
                     paused: audioElement.paused,
-                    currentTime: audioElement.currentTime
+                    currentTime: audioElement.currentTime,
+                    contextState: audioContext ? audioContext.state : 'no context'
                 });
             });
     }
