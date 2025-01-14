@@ -27,8 +27,7 @@ services:
       rtprio: 99
     environment:
       - JACK_NO_AUDIO_RESERVATION=1
-      - JACK_OPTIONS=-r -d dummy -p 2048
-      - JACK_SAMPLE_RATE=48000
+      - JACK_PORT_MAX=128
       - GST_DEBUG=2
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
       - AWESTRUCK_ENV=development
