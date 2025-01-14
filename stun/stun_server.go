@@ -210,6 +210,9 @@ func (s *StunServer) handleStunRequest(conn *net.UDPConn, packet []byte, addr *n
 
 	ctx["message_type"] = m.Type.String()
 	ctx["transaction_id"] = fmt.Sprintf("%x", m.TransactionID)
+	ctx["message_length"] = len(m.Raw)
+	ctx["message_method"] = m.Type.Method.String()
+	ctx["message_class"] = m.Type.Class.String()
 	logWithContext("DEBUG", "Decoded STUN message", ctx)
 
 	if m.Type == stun.BindingRequest {
@@ -238,6 +241,12 @@ func (s *StunServer) handleStunRequest(conn *net.UDPConn, packet []byte, addr *n
 			logWithContext("ERROR", "Failed to build STUN response", ctx)
 			return
 		}
+
+		ctx["response_length"] = len(resp.Raw)
+		ctx["response_type"] = resp.Type.String()
+		ctx["response_method"] = resp.Type.Method.String()
+		ctx["response_class"] = resp.Type.Class.String()
+		logWithContext("DEBUG", "Built STUN response", ctx)
 
 		if _, err := conn.WriteToUDP(resp.Raw, addr); err != nil {
 			ctx["error"] = err.Error()

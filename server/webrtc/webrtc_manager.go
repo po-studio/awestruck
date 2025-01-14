@@ -609,7 +609,9 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
+		// when using ICETransportPolicyRelay, a TURN server is required as only relayed candidates will be used
+		// since we only have STUN configured, we should use ICETransportPolicyAll to allow all candidate types
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 

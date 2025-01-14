@@ -148,6 +148,8 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 0,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
+        // when using 'relay' policy, a TURN server is required as only relayed candidates will be used
+        // since we only have STUN configured, we should use 'all' to allow all candidate types
         iceTransportPolicy: 'all',
         sdpSemantics: 'unified-plan'
     },
@@ -163,6 +165,8 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 2,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
+        // when using 'relay' policy, a TURN server is required as only relayed candidates will be used
+        // since we only have STUN configured, we should use 'all' to allow all candidate types
         iceTransportPolicy: 'all',
         sdpSemantics: 'unified-plan'
     }
@@ -595,6 +599,7 @@ function onIceConnectionStateChange() {
         pc.getStats().then(stats => {
             let candidateTypes = new Set();
             let candidates = [];
+            let transportStats = null;
             stats.forEach(stat => {
                 if (stat.type === 'local-candidate') {
                     candidateTypes.add(stat.candidateType);
@@ -603,13 +608,29 @@ function onIceConnectionStateChange() {
                         protocol: stat.protocol,
                         address: stat.address,
                         port: stat.port,
-                        priority: stat.priority
+                        priority: stat.priority,
+                        url: stat.url,
+                        relayProtocol: stat.relayProtocol
                     });
+                } else if (stat.type === 'transport') {
+                    transportStats = {
+                        dtlsState: stat.dtlsState,
+                        iceRole: stat.iceRole,
+                        iceLocalUsernameFragment: stat.iceLocalUsernameFragment,
+                        iceState: stat.iceState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId
+                    };
                 }
             });
             if (candidates.length > 0) {
                 console.log('[ICE] Found candidates:', candidates);
                 console.log('[ICE] Candidate types:', Array.from(candidateTypes));
+                if (transportStats) {
+                    console.log('[ICE] Transport stats:', transportStats);
+                }
+                if (!candidateTypes.has('relay')) {
+                    console.warn('[ICE] No relay candidates found, this might indicate STUN server issues');
+                }
             }
         });
     } else if (pc.iceConnectionState === 'disconnected') {
@@ -622,6 +643,22 @@ function onIceConnectionStateChange() {
         if (timeSinceLastStateChange < 5000) { // If state changed too quickly
             console.log('[ICE] Quick state change detected, may need cleanup');
         }
+
+        // Log the last known transport stats
+        pc.getStats().then(stats => {
+            stats.forEach(stat => {
+                if (stat.type === 'transport') {
+                    console.log('[ICE] Last transport stats before disconnect:', {
+                        dtlsState: stat.dtlsState,
+                        iceRole: stat.iceRole,
+                        iceState: stat.iceState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent
+                    });
+                }
+            });
+        });
     } else if (pc.iceConnectionState === 'failed') {
         console.error('[ICE] Connection failed - checking stats...');
         pc.getStats().then(stats => {
@@ -629,6 +666,7 @@ function onIceConnectionStateChange() {
                 localCandidates: [],
                 remoteCandidates: [],
                 candidatePairs: [],
+                transport: null,
                 lastDisconnectTime: connectionState.lastDisconnectTime
             };
             
@@ -639,6 +677,8 @@ function onIceConnectionStateChange() {
                         protocol: stat.protocol,
                         address: stat.address,
                         priority: stat.priority,
+                        url: stat.url,
+                        relayProtocol: stat.relayProtocol,
                         timestamp: stat.timestamp
                     });
                 } else if (stat.type === 'remote-candidate') {
@@ -656,11 +696,44 @@ function onIceConnectionStateChange() {
                         bytesReceived: stat.bytesReceived,
                         timestamp: stat.timestamp,
                         localCandidateType: stat.localCandidateType,
-                        remoteCandidateType: stat.remoteCandidateType
+                        remoteCandidateType: stat.remoteCandidateType,
+                        priority: stat.priority,
+                        writable: stat.writable,
+                        requestsReceived: stat.requestsReceived,
+                        requestsSent: stat.requestsSent,
+                        responsesReceived: stat.responsesReceived,
+                        responsesSent: stat.responsesSent,
+                        consentRequestsSent: stat.consentRequestsSent
                     });
+                } else if (stat.type === 'transport') {
+                    diagnostics.transport = {
+                        dtlsState: stat.dtlsState,
+                        iceRole: stat.iceRole,
+                        iceLocalUsernameFragment: stat.iceLocalUsernameFragment,
+                        iceState: stat.iceState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent
+                    };
                 }
             });
             console.error('[ICE] Connection diagnostics:', diagnostics);
+
+            // Check for specific failure patterns
+            const hasStunCandidates = diagnostics.localCandidates.some(c => c.type === 'relay');
+            if (!hasStunCandidates) {
+                console.error('[ICE] No STUN candidates found - possible STUN server connectivity issue');
+            }
+
+            const hasSuccessfulPairs = diagnostics.candidatePairs.some(p => p.state === 'succeeded');
+            if (!hasSuccessfulPairs) {
+                console.error('[ICE] No successful candidate pairs - possible connectivity issue');
+            }
+
+            const hasResponses = diagnostics.candidatePairs.some(p => p.responsesReceived > 0);
+            if (!hasResponses) {
+                console.error('[ICE] No responses received - possible firewall/NAT issue');
+            }
         });
     }
     
