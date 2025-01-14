@@ -16,7 +16,7 @@ import { InternetGateway } from "@cdktf/provider-aws/lib/internet-gateway";
 import { RouteTable } from "@cdktf/provider-aws/lib/route-table";
 import { RouteTableAssociation } from "@cdktf/provider-aws/lib/route-table-association";
 import { Route } from "@cdktf/provider-aws/lib/route";
-import { Lb as AlbLoadBalancer } from "@cdktf/provider-aws/lib/lb";
+import { Lb } from "@cdktf/provider-aws/lib/lb";
 import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
 import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
@@ -126,7 +126,7 @@ class AwestruckInfrastructure extends TerraformStack {
         {
           // WebRTC media ports
           fromPort: 10000,
-          toPort: 10100,
+          toPort: 10010,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -167,7 +167,7 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    const alb = new AlbLoadBalancer(this, "awestruck-alb", {
+    const alb = new Lb(this, "awestruck-alb", {
       name: "awestruck-alb-new",
       internal: false,
       loadBalancerType: "application",
@@ -289,7 +289,7 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              ...Array.from({ length: 101 }, (_, i) => ({
+              ...Array.from({ length: 11 }, (_, i) => ({
                 containerPort: 10000 + i,
                 hostPort: 10000 + i,
                 protocol: "udp",
@@ -340,8 +340,53 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
-    // TODO: rename to webrtc-service
-    // we can later have separate services for supercollider, jack, etc.
+    // why we need both ALB and NLB for awestruck-service:
+    // - ALB handles HTTP/HTTPS signaling traffic (8080/443)
+    // - NLB handles WebRTC UDP media traffic (10000-10010)
+    // - this split architecture provides optimal handling for each protocol
+    const webrtcNlb = new Lb(this, "awestruck-webrtc-nlb", {
+      name: "awestruck-webrtc-nlb",
+      internal: false,
+      loadBalancerType: "network",
+      subnets: [subnet1.id, subnet2.id],
+      enableCrossZoneLoadBalancing: true,
+    });
+
+    // why we use a single target group with multiple listeners:
+    // - one target group can handle multiple ports
+    // - each listener maps to a specific port in our range
+    // - allows for multiple simultaneous webrtc connections
+    const webrtcUdpTargetGroup = new LbTargetGroup(this, "awestruck-webrtc-udp-tg", {
+      name: "awestruck-webrtc-udp-tg",
+      port: 10000,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        protocol: "TCP",
+        port: "8080",
+        healthyThreshold: 3,
+        unhealthyThreshold: 5,
+        interval: 30,
+        timeout: 10
+      }
+    });
+
+    // Create UDP listeners for each port in the WebRTC range
+    const webrtcListeners = Array.from({ length: 11 }, (_, i) => {
+      return new LbListener(this, `webrtc-udp-listener-${10000 + i}`, {
+        loadBalancerArn: webrtcNlb.arn,
+        port: 10000 + i,
+        protocol: "UDP",
+        defaultAction: [{
+          type: "forward",
+          targetGroupArn: webrtcUdpTargetGroup.arn,
+        }],
+      });
+    });
+
+    // Update awestruck-service to use both load balancers
     new EcsService(this, "awestruck-service", {
       name: "awestruck-service",
       cluster: ecsCluster.arn,
@@ -355,13 +400,20 @@ class AwestruckInfrastructure extends TerraformStack {
         securityGroups: [securityGroup.id],
       },
       loadBalancer: [
+        // HTTP/HTTPS traffic through ALB
         {
           targetGroupArn: targetGroup.arn,
           containerName: "server-arm64",
           containerPort: 8080,
         },
+        // WebRTC UDP traffic through NLB
+        ...Array.from({ length: 11 }, (_, i) => ({
+          targetGroupArn: webrtcUdpTargetGroup.arn,
+          containerName: "server-arm64",
+          containerPort: 10000 + i,
+        }))
       ],
-      dependsOn: [listener],
+      dependsOn: [listener, ...webrtcListeners],
     });
 
     // STUN server task definition
@@ -426,7 +478,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - preserves client source ip addresses which is crucial for stun/ice
     // - provides lower latency by operating at transport layer
     // - enables cross-zone load balancing for high availability
-    const stunNlb = new AlbLoadBalancer(this, "awestruck-stun-nlb", {
+    const stunNlb = new Lb(this, "awestruck-stun-nlb", {
       name: "awestruck-stun-nlb",
       internal: false,
       loadBalancerType: "network",

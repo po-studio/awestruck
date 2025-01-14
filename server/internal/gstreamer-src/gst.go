@@ -67,7 +67,7 @@ func CreatePipeline(codecName string, tracks []*webrtc.TrackLocalStaticSample, p
 		clockRate = videoClockRate
 
 	case "opus":
-		pipelineStr = pipelineSrc + " ! opusenc ! " + pipelineStr
+		pipelineStr = pipelineSrc + " ! opusenc frame-size=20 complexity=10 bitrate=128000 audio-type=2051 ! " + pipelineStr
 		clockRate = audioClockRate
 
 	case "g722":

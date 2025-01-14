@@ -77,7 +77,7 @@ RUN chown -R appuser:appuser /app && \
 USER appuser
 
 EXPOSE 8080
-EXPOSE 10000-10100/udp
+EXPOSE 10000-10010/udp
 
 ENV GST_DEBUG=4 \
     JACK_NO_AUDIO_RESERVATION=1 \

@@ -136,7 +136,10 @@ func (s *SuperColliderSynth) setupCmd() error {
 		"-R", "0", // Real-time memory size
 		"-C", "0", // Control bus channels
 		"-l", "1", // Max logins
-		"-z", "16", // Block size (helps with network jitter)
+		"-z", "128", // Block size (increased for network stability)
+		"-Z", "2", // Hardware buffer size in blocks
+		"-S", "48000", // Sample rate
+		"-B", "0.0.0.0", // Bind address
 		"-P", "70", // Real-time priority
 		"-V", "0", // Verbosity level
 	)

@@ -510,7 +510,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection
 	// - work with ECS security groups
 	// - ensure consistent port allocation
 	// - prevent port conflicts
-	s.SetEphemeralUDPPortRange(10000, 10100)
+	s.SetEphemeralUDPPortRange(10000, 10010)
 
 	// why we need these ice timeouts:
 	// - handle ALB latency and routing
