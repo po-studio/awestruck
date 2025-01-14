@@ -695,6 +695,10 @@ function startConnectionMonitoring() {
     }, 2000); // Reduced from 5s to 2s for faster feedback
 }
 
+// why we need enhanced audio monitoring:
+// - track audio pipeline health
+// - detect playback issues early
+// - monitor network impact on audio
 function startAudioStatsMonitoring() {
     if (audioStatsInterval) {
         clearInterval(audioStatsInterval);
@@ -704,9 +708,16 @@ function startAudioStatsMonitoring() {
         if (!pc) return;
 
         pc.getStats().then(stats => {
+            let audioStats = {
+                inbound: {},
+                track: {},
+                transport: {},
+                candidatePair: {}
+            };
+
             stats.forEach(stat => {
                 if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
-                    console.log('[AUDIO] Detailed Stats:', {
+                    audioStats.inbound = {
                         packetsReceived: stat.packetsReceived,
                         packetsLost: stat.packetsLost,
                         jitter: stat.jitter,
@@ -716,21 +727,78 @@ function startAudioStatsMonitoring() {
                         totalSamplesReceived: stat.totalSamplesReceived,
                         concealedSamples: stat.concealedSamples,
                         silentConcealedSamples: stat.silentConcealedSamples,
-                        codecId: stat.codecId
-                    });
+                        codecId: stat.codecId,
+                        fecPacketsReceived: stat.fecPacketsReceived,
+                        fecPacketsDiscarded: stat.fecPacketsDiscarded,
+                        packetsDiscarded: stat.packetsDiscarded,
+                        nackCount: stat.nackCount
+                    };
+                    
+                    // Calculate packet loss percentage
+                    if (stat.packetsReceived > 0) {
+                        audioStats.inbound.packetLossPercent = 
+                            (stat.packetsLost / (stat.packetsReceived + stat.packetsLost)) * 100;
+                    }
+                    
+                    console.log('[AUDIO][STATS] Inbound RTP:', audioStats.inbound);
                 } else if (stat.type === 'track' && stat.kind === 'audio') {
-                    console.log('[AUDIO] Track Stats:', {
+                    audioStats.track = {
                         audioLevel: stat.audioLevel,
                         totalAudioEnergy: stat.totalAudioEnergy,
                         totalSamplesDuration: stat.totalSamplesDuration,
                         detached: stat.detached,
                         ended: stat.ended,
-                        remoteSource: stat.remoteSource
-                    });
+                        remoteSource: stat.remoteSource,
+                        jitterBufferDelay: stat.jitterBufferDelay,
+                        jitterBufferEmittedCount: stat.jitterBufferEmittedCount
+                    };
+                    
+                    // Calculate effective jitter buffer in ms
+                    if (stat.jitterBufferEmittedCount > 0) {
+                        audioStats.track.avgJitterBufferMs = 
+                            (stat.jitterBufferDelay / stat.jitterBufferEmittedCount) * 1000;
+                    }
+                    
+                    console.log('[AUDIO][STATS] Media Track:', audioStats.track);
+                } else if (stat.type === 'transport') {
+                    audioStats.transport = {
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent,
+                        dtlsState: stat.dtlsState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId,
+                        iceRole: stat.iceRole,
+                        iceState: stat.iceState
+                    };
+                    console.log('[AUDIO][STATS] Transport:', audioStats.transport);
+                } else if (stat.type === 'candidate-pair' && stat.selected) {
+                    audioStats.candidatePair = {
+                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
+                        currentRoundTripTime: stat.currentRoundTripTime,
+                        localCandidateType: stat.localCandidateType,
+                        remoteCandidateType: stat.remoteCandidateType,
+                        state: stat.state,
+                        totalRoundTripTime: stat.totalRoundTripTime,
+                        responsesReceived: stat.responsesReceived
+                    };
+                    console.log('[AUDIO][STATS] Active Candidate Pair:', audioStats.candidatePair);
                 }
             });
+
+            // Log critical metrics that might affect audio quality
+            if (audioStats.inbound.packetLossPercent > 5) {
+                console.warn('[AUDIO][QUALITY] High packet loss detected:', 
+                    audioStats.inbound.packetLossPercent.toFixed(2) + '%');
+            }
+            if (audioStats.inbound.jitter > 50) {
+                console.warn('[AUDIO][QUALITY] High jitter detected:', 
+                    audioStats.inbound.jitter.toFixed(2) + 'ms');
+            }
+            if (audioStats.track.avgJitterBufferMs > 250) {
+                console.warn('[AUDIO][QUALITY] Large jitter buffer:', 
+                    audioStats.track.avgJitterBufferMs.toFixed(2) + 'ms');
+            }
         });
-    }, 2000); // Reduced from 5s to 2s for faster feedback
+    }, 2000);
 }
 
 // why we need proper cleanup:
@@ -836,21 +904,23 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('htmx:afterRequest', handleSynthResponse);
 });
 
-// why we need audio setup debugging:
-// - tracks audio element creation and state
-// - monitors stream attachment
-// - verifies playback is working
+// why we need enhanced audio setup:
+// - ensure proper audio pipeline initialization
+// - detect browser audio issues early
+// - monitor playback state changes
 function setupAudioElement(track) {
-    console.log('[AUDIO] Setting up audio element for track:', {
+    console.log('[AUDIO][SETUP] Setting up audio element for track:', {
         kind: track.kind,
         id: track.id,
         enabled: track.enabled,
         muted: track.muted,
-        readyState: track.readyState
+        readyState: track.readyState,
+        constraints: track.getConstraints(),
+        settings: track.getSettings()
     });
 
     const stream = new MediaStream([track]);
-    console.log('[AUDIO] Created MediaStream:', {
+    console.log('[AUDIO][SETUP] Created MediaStream:', {
         active: stream.active,
         id: stream.id
     });
@@ -861,58 +931,113 @@ function setupAudioElement(track) {
     audioElement.style.display = 'none';
     document.body.appendChild(audioElement);
     
-    console.log('[AUDIO] Created audio element:', {
+    console.log('[AUDIO][SETUP] Created audio element:', {
         autoplay: audioElement.autoplay,
         controls: audioElement.controls,
         volume: audioElement.volume,
-        muted: audioElement.muted
+        muted: audioElement.muted,
+        readyState: audioElement.readyState,
+        networkState: audioElement.networkState,
+        error: audioElement.error
     });
 
     audioElement.srcObject = stream;
     
-    // Add event listeners for audio element
-    audioElement.addEventListener('play', () => console.log('[AUDIO] Audio element started playing'));
-    audioElement.addEventListener('pause', () => console.log('[AUDIO] Audio element paused'));
-    audioElement.addEventListener('ended', () => console.log('[AUDIO] Audio element ended'));
-    audioElement.addEventListener('error', (e) => console.error('[AUDIO] Audio element error:', e));
+    // Enhanced event listeners for audio element
+    audioElement.addEventListener('loadstart', () => console.log('[AUDIO][STATE] Loading started'));
+    audioElement.addEventListener('loadedmetadata', () => console.log('[AUDIO][STATE] Metadata loaded'));
+    audioElement.addEventListener('loadeddata', () => console.log('[AUDIO][STATE] Data loaded'));
+    audioElement.addEventListener('canplay', () => console.log('[AUDIO][STATE] Can start playing'));
+    audioElement.addEventListener('canplaythrough', () => console.log('[AUDIO][STATE] Can play through'));
+    audioElement.addEventListener('play', () => console.log('[AUDIO][STATE] Playback started'));
+    audioElement.addEventListener('pause', () => console.log('[AUDIO][STATE] Playback paused'));
+    audioElement.addEventListener('ended', () => console.log('[AUDIO][STATE] Playback ended'));
+    audioElement.addEventListener('error', (e) => {
+        console.error('[AUDIO][ERROR] Playback error:', {
+            error: e.target.error,
+            networkState: audioElement.networkState,
+            readyState: audioElement.readyState
+        });
+    });
+    audioElement.addEventListener('stalled', () => console.warn('[AUDIO][WARN] Playback stalled'));
+    audioElement.addEventListener('suspend', () => console.warn('[AUDIO][WARN] Playback suspended'));
+    audioElement.addEventListener('waiting', () => console.warn('[AUDIO][WARN] Waiting for data'));
     
     // Set up audio processing and monitoring
     try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        console.log('[AUDIO] Created AudioContext:', {
+        console.log('[AUDIO][CONTEXT] Created AudioContext:', {
             sampleRate: audioContext.sampleRate,
             state: audioContext.state,
             baseLatency: audioContext.baseLatency,
-            outputLatency: audioContext.outputLatency
+            outputLatency: audioContext.outputLatency,
+            destination: {
+                maxChannelCount: audioContext.destination.maxChannelCount,
+                numberOfInputs: audioContext.destination.numberOfInputs,
+                numberOfOutputs: audioContext.destination.numberOfOutputs
+            }
         });
         
         const source = audioContext.createMediaStreamSource(stream);
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
         source.connect(analyser);
         
-        // Create data array for monitoring
+        // Enhanced audio level monitoring
         const dataArray = new Float32Array(analyser.frequencyBinCount);
+        let silentFrames = 0;
+        const MAX_SILENT_FRAMES = 50; // 25 seconds at 500ms interval
         
-        // Monitor audio levels
         audioLevelsInterval = setInterval(() => {
             if (audioContext && audioContext.state === 'running') {
                 analyser.getFloatTimeDomainData(dataArray);
                 let maxLevel = 0;
+                let rms = 0;
+                
+                // Calculate both peak and RMS levels
                 for (let i = 0; i < dataArray.length; i++) {
                     maxLevel = Math.max(maxLevel, Math.abs(dataArray[i]));
+                    rms += dataArray[i] * dataArray[i];
                 }
-                console.log('[AUDIO] Current level:', maxLevel.toFixed(4));
+                rms = Math.sqrt(rms / dataArray.length);
+                
+                console.log('[AUDIO][LEVELS]', {
+                    peak: maxLevel.toFixed(4),
+                    rms: rms.toFixed(4),
+                    frequency: analyser.context.sampleRate
+                });
+
+                // Detect prolonged silence
+                if (maxLevel < 0.01) {
+                    silentFrames++;
+                    if (silentFrames >= MAX_SILENT_FRAMES) {
+                        console.warn('[AUDIO][WARN] Prolonged silence detected');
+                        silentFrames = 0;
+                    }
+                } else {
+                    silentFrames = 0;
+                }
             }
-        }, 500); // Monitor every 500ms
+        }, 500);
     } catch (error) {
-        console.error('[AUDIO] Failed to setup audio processing:', error);
+        console.error('[AUDIO][ERROR] Failed to setup audio processing:', error);
     }
 
     const playPromise = audioElement.play();
     if (playPromise !== undefined) {
         playPromise
-            .then(() => console.log('[AUDIO] Audio playback started successfully'))
-            .catch(error => console.error('[AUDIO] Audio playback failed:', error));
+            .then(() => console.log('[AUDIO][PLAY] Playback started successfully'))
+            .catch(error => {
+                console.error('[AUDIO][ERROR] Playback failed:', {
+                    error: error,
+                    name: error.name,
+                    message: error.message,
+                    audioState: audioElement.readyState,
+                    networkState: audioElement.networkState,
+                    paused: audioElement.paused,
+                    currentTime: audioElement.currentTime
+                });
+            });
     }
 }

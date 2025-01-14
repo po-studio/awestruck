@@ -14,6 +14,7 @@ import "C"
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 	"unsafe"
@@ -48,8 +49,18 @@ const (
 	pcmClockRate   = 8000
 )
 
+// why we need focused gstreamer logging:
+// - track critical pipeline events
+// - monitor audio buffer flow
+// - identify potential bottlenecks
+func logWithTime(format string, v ...interface{}) {
+	log.Printf("[%s] %s", time.Now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), fmt.Sprintf(format, v...))
+}
+
 // CreatePipeline creates a GStreamer Pipeline
 func CreatePipeline(codecName string, tracks []*webrtc.TrackLocalStaticSample, pipelineSrc string) *Pipeline {
+	logWithTime("[GST] Creating pipeline: codec=%s tracks=%d", codecName, len(tracks))
+
 	pipelineStr := "appsink name=appsink"
 	var clockRate float32
 
@@ -69,6 +80,7 @@ func CreatePipeline(codecName string, tracks []*webrtc.TrackLocalStaticSample, p
 	case "opus":
 		pipelineStr = pipelineSrc + " ! opusenc frame-size=20 complexity=10 bitrate=128000 ! " + pipelineStr
 		clockRate = audioClockRate
+		logWithTime("[GST] Configured Opus encoder: rate=%f", clockRate)
 
 	case "g722":
 		pipelineStr = pipelineSrc + " ! avenc_g722 ! " + pipelineStr
@@ -83,7 +95,8 @@ func CreatePipeline(codecName string, tracks []*webrtc.TrackLocalStaticSample, p
 		clockRate = pcmClockRate
 
 	default:
-		panic("Unhandled codec " + codecName) //nolint
+		logWithTime("[GST][ERROR] Unsupported codec: %s", codecName)
+		panic("Unhandled codec " + codecName)
 	}
 
 	pipelineStrUnsafe := C.CString(pipelineStr)
@@ -100,17 +113,24 @@ func CreatePipeline(codecName string, tracks []*webrtc.TrackLocalStaticSample, p
 		clockRate: clockRate,
 	}
 
+	if pipeline.Pipeline == nil {
+		logWithTime("[GST][ERROR] Pipeline creation failed")
+		return nil
+	}
+
 	pipelines[pipeline.id] = pipeline
 	return pipeline
 }
 
 // Start starts the GStreamer Pipeline
 func (p *Pipeline) Start() {
+	logWithTime("[GST] Starting pipeline %d", p.id)
 	C.gstreamer_send_start_pipeline(p.Pipeline, C.int(p.id))
 }
 
 // Stop stops the GStreamer Pipeline
 func (p *Pipeline) Stop() {
+	logWithTime("[GST] Stopping pipeline %d", p.id)
 	C.gstreamer_send_stop_pipeline(p.Pipeline)
 }
 
@@ -121,13 +141,23 @@ func goHandlePipelineBuffer(buffer unsafe.Pointer, bufferLen C.int, duration C.i
 	pipelinesLock.Unlock()
 
 	if ok {
-		for _, t := range pipeline.tracks {
-			if err := t.WriteSample(media.Sample{Data: C.GoBytes(buffer, bufferLen), Duration: time.Duration(duration)}); err != nil {
-				panic(err) //nolint
+		data := C.GoBytes(buffer, bufferLen)
+		dur := time.Duration(duration)
+
+		// Log buffer details only every 10000 samples to reduce noise
+		// if int(pipelineID)%(48000*600) == 0 {
+		// 	logWithTime("[GST] Buffer stats: pipeline=%d size=%d duration=%v",
+		// 		pipelineID, len(data), dur)
+		// }
+
+		for i, t := range pipeline.tracks {
+			if err := t.WriteSample(media.Sample{Data: data, Duration: dur}); err != nil {
+				logWithTime("[GST][ERROR] Track %d write failed: %v", i, err)
+				panic(err)
 			}
 		}
 	} else {
-		fmt.Printf("discarding buffer, no pipeline with id %d", int(pipelineID)) //nolint
+		logWithTime("[GST][ERROR] No pipeline found for id %d", int(pipelineID))
 	}
 	C.free(buffer)
 }

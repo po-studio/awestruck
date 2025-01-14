@@ -36,7 +36,67 @@ type ICECandidateRequest struct {
 	} `json:"candidate"`
 }
 
-// HandleOffer handles the incoming WebRTC offer
+// why we need port management:
+// - prevent port conflicts between sessions
+// - ensure reliable port allocation
+// - handle cleanup of unused ports
+type portManager struct {
+	mu       sync.Mutex
+	ports    map[int]string // port -> sessionID
+	basePort int
+	maxPort  int
+}
+
+var (
+	pm = &portManager{
+		ports:    make(map[int]string),
+		basePort: 10000,
+		maxPort:  10010,
+	}
+)
+
+// why we need port reservation:
+// - prevent race conditions in port allocation
+// - ensure each session gets a unique port
+// - allow proper cleanup when sessions end
+func (pm *portManager) reservePort(sessionID string) (int, error) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// First try to find if this session already has a port
+	for port, sid := range pm.ports {
+		if sid == sessionID {
+			return port, nil
+		}
+	}
+
+	// Find first available port
+	for port := pm.basePort; port <= pm.maxPort; port++ {
+		if _, inUse := pm.ports[port]; !inUse {
+			pm.ports[port] = sessionID
+			log.Printf("[PORT] Reserved port %d for session %s", port, sessionID)
+			return port, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no ports available in range %d-%d", pm.basePort, pm.maxPort)
+}
+
+func (pm *portManager) releasePort(sessionID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	for port, sid := range pm.ports {
+		if sid == sessionID {
+			delete(pm.ports, port)
+			log.Printf("[PORT] Released port %d from session %s", port, sessionID)
+			return
+		}
+	}
+}
+
+// HandleOffer handles the incoming WebRTC offer from the browser and sets up the peer connection.
+// It processes the SDP offer, creates a peer connection, and sends back an SDP answer.
 func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	logWithTime("[OFFER] Received offer request from session: %s", sessionID)
@@ -45,7 +105,7 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	// Read and log the raw request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("[OFFER][ERROR] Failed to read request body: %v", err)
+		logWithTime("[OFFER][ERROR] Failed to read request body: %v", err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
@@ -56,7 +116,7 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 
 	offer, iceServers, err := processOffer(r)
 	if err != nil {
-		log.Printf("[OFFER][ERROR] Error processing offer: %v", err)
+		logWithTime("[OFFER][ERROR] Error processing offer: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to process offer: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -65,62 +125,61 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	logWithTime("[OFFER] SDP Preview: %.100s...", offer.SDP)
 
 	if err := verifyICEConfiguration(iceServers); err != nil {
-		log.Printf("[ERROR] Invalid ICE configuration: %v", err)
+		logWithTime("[ERROR] Invalid ICE configuration: %v", err)
 		http.Error(w, fmt.Sprintf("Invalid ICE configuration: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	log.Println("Creating peer connection")
-	peerConnection, err := createPeerConnection(iceServers)
+	logWithTime("[WEBRTC] Creating peer connection")
+	peerConnection, err := createPeerConnection(iceServers, sessionID)
 	if err != nil {
-		log.Printf("Error creating peer connection: %v", err)
+		logWithTime("[WEBRTC][ERROR] Error creating peer connection: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to create peer connection: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Peer connection created with config: %+v", peerConnection.GetConfiguration())
+	logWithTime("[WEBRTC] Peer connection created with config: %+v", peerConnection.GetConfiguration())
 
 	appSession, err := setSessionToConnection(w, r, peerConnection)
 	if err != nil {
+		logWithTime("[WEBRTC][ERROR] Failed to set session to peer connection: %v", err)
 		http.Error(w, "Failed to set session to peer connection: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	audioTrack, err := prepareMedia(*appSession)
 	if err != nil {
+		logWithTime("[MEDIA][ERROR] Failed to create audio track: %v", err)
 		http.Error(w, "Failed to create audio track or add to the peer connection: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Println("Setting remote description")
+	logWithTime("[WEBRTC] Setting remote description")
 	err = setRemoteDescription(peerConnection, *offer)
 	if err != nil {
-		log.Printf("Error setting remote description: %v", err)
+		logWithTime("[WEBRTC][ERROR] Error setting remote description: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to set remote description: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	log.Println("Creating answer")
-	log.Printf("Creating answer with transceivers: %+v", peerConnection.GetTransceivers())
+	logWithTime("[WEBRTC] Creating answer with transceivers: %+v", peerConnection.GetTransceivers())
 	answer, err := createAnswer(peerConnection)
 	if err != nil {
-		log.Printf("Error creating answer: %v", err)
+		logWithTime("[WEBRTC][ERROR] Error creating answer: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to create answer: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Answer SDP: %s", answer.SDP)
+	logWithTime("[WEBRTC] Answer SDP: %s", answer.SDP)
 
-	log.Println("Finalizing connection setup")
+	logWithTime("[WEBRTC] Finalizing connection setup")
 	if err := finalizeConnectionSetup(appSession, audioTrack, *answer); err != nil {
-		log.Printf("Error finalizing connection setup: %v", err)
+		logWithTime("[WEBRTC][ERROR] Error finalizing connection setup: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to finalize connection setup: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// appSession.Synth.SendPlayMessage()
-
-	log.Println("Sending answer to client")
+	logWithTime("[WEBRTC] Sending answer to client")
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
@@ -142,7 +201,6 @@ const (
 type connectionState struct {
 	lastICEState       webrtc.ICEConnectionState
 	successfulPairs    int
-	gatheringComplete  bool
 	lastDisconnectTime time.Time
 }
 
@@ -477,117 +535,117 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 // - validates URL format
 // - verifies required parameters are present
 func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
-	if len(iceServers) == 0 {
-		return fmt.Errorf("no ICE servers provided")
-	}
-
+	logWithTime("[ICE] Verifying ICE configuration with %d servers", len(iceServers))
 	hasSTUN := false
 
-	for i, server := range iceServers {
-		log.Printf("[ICE] Server %d configuration:", i)
-		log.Printf("  - URLs: %v", server.URLs)
-
+	for _, server := range iceServers {
+		logWithTime("[ICE] Checking server URLs: %v", server.URLs)
 		for _, url := range server.URLs {
 			if strings.HasPrefix(url, "stun:") {
 				hasSTUN = true
-				log.Printf("[ICE] Found valid STUN URL: %s", url)
+				logWithTime("[ICE] Found valid STUN URL: %s", url)
 			}
 		}
 	}
 
 	if !hasSTUN {
-		return fmt.Errorf("no valid STUN URLs found in ICE server configuration")
+		logWithTime("[ICE][ERROR] No valid STUN URLs found")
+		return fmt.Errorf("no valid STUN URLs found in ICE configuration")
 	}
 
 	return nil
 }
 
 // createPeerConnection initializes a new WebRTC peer connection
-func createPeerConnection(iceServers []webrtc.ICEServer) (*webrtc.PeerConnection, error) {
+func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*webrtc.PeerConnection, error) {
+	logWithTime("[WEBRTC] Creating peer connection for session: %s", sessionID)
 	s := webrtc.SettingEngine{}
 
-	// why we need specific port ranges:
-	// - work with ECS security groups
-	// - ensure consistent port allocation
-	// - prevent port conflicts
-	s.SetEphemeralUDPPortRange(10000, 10010)
+	port, err := pm.reservePort(sessionID)
+	if err != nil {
+		logWithTime("[PORT][ERROR] Failed to reserve port: %v", err)
+		return nil, fmt.Errorf("failed to reserve port: %v", err)
+	}
+	logWithTime("[PORT] Reserved port %d for session %s", port, sessionID)
 
-	// why we need these ice timeouts:
-	// - handle ALB latency and routing
-	// - account for container networking
-	// - ensure stability in cloud environment
+	s.SetEphemeralUDPPortRange(uint16(port), uint16(port))
+	logWithTime("[WEBRTC] Set UDP port range: %d-%d", port, port)
+
 	s.SetICETimeouts(
 		iceDisconnectedTimeout,
 		iceFailedTimeout,
 		iceKeepaliveInterval,
 	)
+	logWithTime("[ICE] Set timeouts: disconnected=%v, failed=%v, keepalive=%v",
+		iceDisconnectedTimeout, iceFailedTimeout, iceKeepaliveInterval)
 
-	// why we disable host candidates:
-	// - forces use of STUN-discovered candidates only
-	// - prevents local network candidates
-	// - ensures consistent NAT traversal behavior
 	s.SetIncludeLoopbackCandidate(false)
 	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
+	logWithTime("[ICE] Configured NAT and candidate settings")
 
-	// why we need extended gathering timeouts:
-	// - account for ECS networking latency
-	// - allow time for ALB routing
-	// - ensure complete candidate gathering
 	s.SetHostAcceptanceMinWait(1000 * time.Millisecond)
 	s.SetSrflxAcceptanceMinWait(3000 * time.Millisecond)
 	s.SetPrflxAcceptanceMinWait(1000 * time.Millisecond)
+	logWithTime("[ICE] Set candidate acceptance delays")
 
-	// why we need to optimize ice gathering:
-	// - reduce connection establishment time
-	// - handle ECS networking efficiently
-	// - improve stability in cloud environment
 	s.SetLite(false)
+	logWithTime("[ICE] ICE-Lite mode disabled for proper candidate gathering")
 
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
+		logWithTime("[MEDIA][ERROR] Failed to register codecs: %v", err)
 		return nil, fmt.Errorf("failed to register codecs: %v", err)
 	}
+	logWithTime("[MEDIA] Registered default codecs")
 
 	api := webrtc.NewAPI(
 		webrtc.WithSettingEngine(s),
 		webrtc.WithMediaEngine(m),
 	)
+	logWithTime("[WEBRTC] Created API with custom settings")
 
-	// why we need these connection settings:
-	// - optimize for ECS deployment
-	// - ensure reliable media transport
-	// - handle cloud networking conditions
 	config := webrtc.Configuration{
 		ICEServers:           iceServers,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
-		ICECandidatePoolSize: 4, // Increased for ECS
+		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		ICETransportPolicy:   webrtc.ICETransportPolicyAll, // We filter candidates manually
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
 	}
+	logWithTime("[WEBRTC] Created configuration: %+v", config)
 
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
+		pm.releasePort(sessionID)
+		logWithTime("[WEBRTC][ERROR] Failed to create peer connection: %v", err)
 		return nil, err
 	}
+	logWithTime("[WEBRTC] Created peer connection successfully")
 
-	// Monitor ICE gathering state
 	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
-		log.Printf("[ICE] Gathering state changed to: %s", state.String())
+		logWithTime("[ICE] Gathering state changed to: %s", state.String())
 		if state == webrtc.ICEGathererStateComplete {
 			stats := pc.GetStats()
 			var candidateCount int
 			for _, stat := range stats {
-				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok {
-					if candidatePair.State == "succeeded" {
-						candidateCount++
-						log.Printf("[ICE] Successful candidate pair: local=%s remote=%s nominated=%v",
-							candidatePair.LocalCandidateID,
-							candidatePair.RemoteCandidateID,
-							candidatePair.Nominated)
-					}
+				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok && candidatePair.State == "succeeded" {
+					candidateCount++
+					logWithTime("[ICE] Successful candidate pair: local=%s remote=%s nominated=%v",
+						candidatePair.LocalCandidateID,
+						candidatePair.RemoteCandidateID,
+						candidatePair.Nominated)
 				}
 			}
-			log.Printf("[ICE] Found %d successful candidate pairs", candidateCount)
+			logWithTime("[ICE] Found %d successful candidate pairs", candidateCount)
+		}
+	})
+
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		logWithTime("[WEBRTC] Connection state changed to: %s", state.String())
+		if state == webrtc.PeerConnectionStateClosed ||
+			state == webrtc.PeerConnectionStateFailed ||
+			state == webrtc.PeerConnectionStateDisconnected {
+			logWithTime("[PORT] Releasing port for session %s due to state: %s", sessionID, state)
+			pm.releasePort(sessionID)
 		}
 	})
 
@@ -642,6 +700,9 @@ func HandleStop(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	log.Printf("[STOP] Received stop request for session: %s", sessionID)
 
+	// Release the port
+	pm.releasePort(sessionID)
+
 	// Get the specific session to stop
 	appSession, err := session.GetOrCreateSession(r, w)
 	if err != nil {
@@ -665,51 +726,45 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	logWithTime("[ICE] Received candidate for session: %s", sessionID)
 
-	// Get session and validate it exists
 	appSession, err := session.GetOrCreateSession(r, w)
 	if err != nil {
-		log.Printf("[ICE][ERROR] Session not found: %v", err)
+		logWithTime("[ICE][ERROR] Session not found: %v", err)
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	// Ensure peer connection exists
 	if appSession.PeerConnection == nil {
-		log.Printf("[ICE][ERROR] No peer connection for session %s", sessionID)
+		logWithTime("[ICE][ERROR] No peer connection for session %s", sessionID)
 		http.Error(w, "No peer connection", http.StatusBadRequest)
 		return
 	}
 
-	// Read and log the raw request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("[ICE][ERROR] Failed to read request body: %v", err)
+		logWithTime("[ICE][ERROR] Failed to read request body: %v", err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	logWithTime("[ICE] Raw request body: %s", string(body))
 
-	// First unmarshal the outer wrapper
 	var wrapper struct {
 		Candidate string `json:"candidate"`
 	}
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&wrapper); err != nil {
-		log.Printf("[ICE][ERROR] Failed to decode outer wrapper: %v", err)
-		log.Printf("[ICE][DEBUG] Attempted to decode body: %s", string(body))
+		logWithTime("[ICE][ERROR] Failed to decode outer wrapper: %v", err)
+		logWithTime("[ICE][DEBUG] Attempted to decode body: %s", string(body))
 		http.Error(w, "Invalid candidate format", http.StatusBadRequest)
 		return
 	}
 
-	// Decode the base64 string
 	candidateJSON, err := base64.StdEncoding.DecodeString(wrapper.Candidate)
 	if err != nil {
-		log.Printf("[ICE][ERROR] Failed to decode base64: %v", err)
-		log.Printf("[ICE][DEBUG] Attempted to decode base64: %s", wrapper.Candidate)
+		logWithTime("[ICE][ERROR] Failed to decode base64: %v", err)
+		logWithTime("[ICE][DEBUG] Attempted to decode base64: %s", wrapper.Candidate)
 		http.Error(w, "Invalid base64 encoding", http.StatusBadRequest)
 		return
 	}
 
-	// Parse the candidate
 	var candidateObj struct {
 		Candidate        string `json:"candidate"`
 		SDPMid           string `json:"sdpMid"`
@@ -717,23 +772,20 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 		UsernameFragment string `json:"usernameFragment"`
 	}
 	if err := json.Unmarshal(candidateJSON, &candidateObj); err != nil {
-		log.Printf("[ICE][ERROR] Failed to decode candidate JSON: %v", err)
-		log.Printf("[ICE][DEBUG] Attempted to decode JSON: %s", string(candidateJSON))
+		logWithTime("[ICE][ERROR] Failed to decode candidate JSON: %v", err)
+		logWithTime("[ICE][DEBUG] Attempted to decode JSON: %s", string(candidateJSON))
 		http.Error(w, "Invalid candidate format", http.StatusBadRequest)
 		return
 	}
 
-	// why we check candidate type:
-	// - only allow STUN-discovered candidates
-	// - prevent local network candidates
-	// - ensure consistent behavior
+	logWithTime("[ICE] Processing candidate: %+v", candidateObj)
+
 	if !strings.Contains(candidateObj.Candidate, "typ srflx") {
 		log.Printf("[ICE] Ignoring non-STUN candidate: %s", candidateObj.Candidate)
 		w.WriteHeader(http.StatusOK) // Still return OK to not disrupt the process
 		return
 	}
 
-	// Create and add the ICE candidate
 	candidate := webrtc.ICECandidateInit{
 		Candidate:        candidateObj.Candidate,
 		SDPMid:           &candidateObj.SDPMid,
@@ -742,21 +794,16 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := appSession.PeerConnection.AddICECandidate(candidate); err != nil {
-		log.Printf("[ICE][ERROR] Failed to add candidate: %v", err)
-		log.Printf("[ICE][DEBUG] Failed candidate details: %+v", candidate)
+		logWithTime("[ICE][ERROR] Failed to add candidate: %v", err)
+		logWithTime("[ICE][DEBUG] Failed candidate details: %+v", candidate)
 		http.Error(w, fmt.Sprintf("Failed to add candidate: %v", err), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[ICE][SUCCESS] Added STUN candidate for session %s", sessionID)
+	logWithTime("[ICE][SUCCESS] Added STUN candidate for session %s", sessionID)
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func getTimestamp() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
-}
-
 func logWithTime(format string, v ...interface{}) {
-	timestamp := getTimestamp()
-	log.Printf("[%s] %s", timestamp, fmt.Sprintf(format, v...))
+	log.Printf("[%s] %s", time.Now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), fmt.Sprintf(format, v...))
 }
