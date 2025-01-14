@@ -165,8 +165,9 @@ const ICE_CONFIG = {
         iceCandidatePoolSize: 2,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        // when using 'relay' policy, a TURN server is required as only relayed candidates will be used
-        // since we only have STUN configured, we should use 'all' to allow all candidate types
+        // we want to prioritize STUN-discovered candidates (srflx)
+        // but we must use 'all' since those are the only valid values
+        // the actual filtering happens in the onicecandidate handler
         iceTransportPolicy: 'all',
         sdpSemantics: 'unified-plan'
     }
@@ -422,6 +423,16 @@ async function setupWebRTC(config) {
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
+            // in production, only allow srflx candidates
+            const isProduction = window.location.hostname !== 'localhost';
+            if (isProduction) {
+                const candidateObj = event.candidate.toJSON();
+                if (candidateObj.type !== 'srflx') {
+                    console.log('[ICE] Filtering out non-srflx candidate in production:', candidateObj);
+                    return;
+                }
+            }
+
             iceProgress.trackCandidate();
             console.log('[ICE] New candidate:', event.candidate);
             
