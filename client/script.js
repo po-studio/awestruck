@@ -186,15 +186,14 @@ function validateIceConfig(config) {
 
         // Validate URLs format and ensure they're STUN only
         const validUrls = server.urls.every(url => {
-            if (!url.startsWith('stun:')) {
-                console.error('[ICE] Only STUN URLs are allowed:', url);
-                return false;
+            if (!url.startsWith('stun:') && !url.startsWith('host:')) {
+                console.log('[ICE] Non-STUN/host URL found:', url);
             }
-            return true;
+            return true; // Accept all URL types but log for monitoring
         });
 
         if (!validUrls) {
-            console.error('[ICE] Invalid or non-STUN URLs:', server.urls);
+            console.error('[ICE] Invalid URLs:', server.urls);
             return false;
         }
 
@@ -311,14 +310,12 @@ async function setupWebRTC(config) {
                 stats.forEach(stat => {
                     switch(stat.type) {
                         case 'local-candidate':
-                            if (stat.candidateType === 'srflx') {
-                                statsReport.localCandidates.push({
-                                    type: stat.candidateType,
-                                    protocol: stat.protocol,
-                                    address: stat.address,
-                                    port: stat.port
-                                });
-                            }
+                            statsReport.localCandidates.push({
+                                type: stat.candidateType,
+                                protocol: stat.protocol,
+                                address: stat.address,
+                                port: stat.port
+                            });
                             break;
                         case 'remote-candidate':
                             statsReport.remoteCandidates.push({
@@ -636,8 +633,9 @@ function onIceConnectionStateChange() {
             };
             
             stats.forEach(stat => {
-                if (stat.type === 'local-candidate' && stat.candidateType === 'srflx') {
+                if (stat.type === 'local-candidate') {
                     diagnostics.stunCandidates.push({
+                        type: stat.candidateType,
                         protocol: stat.protocol,
                         address: stat.address,
                         priority: stat.priority,

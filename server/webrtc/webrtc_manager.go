@@ -780,10 +780,15 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 
 	logWithTime("[ICE] Processing candidate: %+v", candidateObj)
 
-	if !strings.Contains(candidateObj.Candidate, "typ srflx") {
-		log.Printf("[ICE] Ignoring non-STUN candidate: %s", candidateObj.Candidate)
-		w.WriteHeader(http.StatusOK) // Still return OK to not disrupt the process
-		return
+	// Log candidate type but accept both STUN and host candidates in ECS
+	if strings.Contains(candidateObj.Candidate, "typ srflx") {
+		log.Printf("[ICE] Processing STUN candidate: %s", candidateObj.Candidate)
+	} else if strings.Contains(candidateObj.Candidate, "typ host") {
+		log.Printf("[ICE] Processing host candidate: %s", candidateObj.Candidate)
+	} else if strings.Contains(candidateObj.Candidate, "typ relay") {
+		log.Printf("[ICE] Processing relay candidate: %s", candidateObj.Candidate)
+	} else {
+		log.Printf("[ICE] Processing other candidate type: %s", candidateObj.Candidate)
 	}
 
 	candidate := webrtc.ICECandidateInit{
