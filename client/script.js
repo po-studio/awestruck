@@ -157,20 +157,44 @@ const ICE_CONFIG = {
         iceServers: [
             {
                 urls: [
-                    // primary UDP STUN server
-                    "stun:stun.awestruck.io:3478"
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun1.l.google.com:19302"
                 ]
+            },
+            {
+                // Public test TURN server (DO NOT USE IN PRODUCTION)
+                urls: [
+                    "turn:numb.viagenie.ca:3478?transport=udp",
+                    "turn:numb.viagenie.ca:3478?transport=tcp"
+                ],
+                username: "webrtc@live.com",
+                credential: "muazkh"
             }
         ],
         iceCandidatePoolSize: 2,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        // we want to prioritize STUN-discovered candidates (srflx)
-        // but we must use 'all' since those are the only valid values
-        // the actual filtering happens in the onicecandidate handler
         iceTransportPolicy: 'all',
         sdpSemantics: 'unified-plan'
     }
+    // production: {
+    //     iceServers: [
+    //         {
+    //             urls: [
+    //                 // primary UDP STUN server
+    //                 "stun:stun.awestruck.io:3478"
+    //             ]
+    //         }
+    //     ],
+    //     iceCandidatePoolSize: 2,
+    //     rtcpMuxPolicy: 'require',
+    //     bundlePolicy: 'max-bundle',
+    //     // we want to prioritize STUN-discovered candidates (srflx)
+    //     // but we must use 'all' since those are the only valid values
+    //     // the actual filtering happens in the onicecandidate handler
+    //     iceTransportPolicy: 'all',
+    //     sdpSemantics: 'unified-plan'
+    // }
 };
 
 // why we need flexible ice validation:
