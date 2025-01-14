@@ -11,9 +11,10 @@ import (
 // - ensures clean startup and shutdown
 // - allows for future expansion of stun functionality
 type StunManager struct {
-	server *StunServer
-	port   int
-	mu     sync.Mutex
+	server  *StunServer
+	udpPort int
+	tcpPort int
+	mu      sync.Mutex
 }
 
 var (
@@ -24,16 +25,27 @@ var (
 func GetStunManager() *StunManager {
 	once.Do(func() {
 		instance = &StunManager{
-			port: 3478, // Default STUN port
+			udpPort: 3478, // Default STUN port
+			tcpPort: 3479, // Default health check port
 		}
 	})
 	return instance
 }
 
-func (m *StunManager) SetPort(port int) {
+// why we need separate port setters:
+// - allows independent configuration of stun and health ports
+// - maintains backward compatibility
+// - provides clear configuration interface
+func (m *StunManager) SetUDPPort(port int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.port = port
+	m.udpPort = port
+}
+
+func (m *StunManager) SetTCPPort(port int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tcpPort = port
 }
 
 func (m *StunManager) Start() error {
@@ -44,7 +56,7 @@ func (m *StunManager) Start() error {
 		return fmt.Errorf("STUN server already running")
 	}
 
-	server, err := NewStunServer(m.port)
+	server, err := NewStunServer(m.udpPort, m.tcpPort)
 	if err != nil {
 		return fmt.Errorf("failed to create STUN server: %v", err)
 	}
@@ -56,7 +68,7 @@ func (m *StunManager) Start() error {
 		}
 	}()
 
-	log.Printf("[STUN] Manager started server on port %d", m.port)
+	log.Printf("[STUN] Manager started server on UDP port %d and TCP port %d", m.udpPort, m.tcpPort)
 	return nil
 }
 
@@ -71,5 +83,5 @@ func (m *StunManager) Stop() error {
 }
 
 func (m *StunManager) GetServerAddress() string {
-	return fmt.Sprintf("stun:0.0.0.0:%d", m.port)
+	return fmt.Sprintf("stun:0.0.0.0:%d", m.udpPort)
 }

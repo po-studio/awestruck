@@ -17,15 +17,16 @@ import (
 // - allows for custom configuration and monitoring
 type StunServer struct {
 	udpListener    *net.UDPConn
-	port           int
+	udpPort        int
+	tcpPort        int
 	healthListener net.Listener
 }
 
-func NewStunServer(port int) (*StunServer, error) {
-	logWithTime("INFO", "Creating STUN server on port %d", port)
+func NewStunServer(udpPort int, tcpPort int) (*StunServer, error) {
+	logWithTime("INFO", "Creating STUN server on UDP port %d and TCP health port %d", udpPort, tcpPort)
 
 	addr := &net.UDPAddr{
-		Port: port,
+		Port: udpPort,
 		IP:   net.ParseIP("0.0.0.0"),
 	}
 
@@ -34,7 +35,7 @@ func NewStunServer(port int) (*StunServer, error) {
 	conn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
 		logWithTime("ERROR", "Failed to create STUN listener: %v", err)
-		return nil, fmt.Errorf("failed to create STUN listener on %s:%d: %v", addr.IP.String(), port, err)
+		return nil, fmt.Errorf("failed to create STUN listener on %s:%d: %v", addr.IP.String(), udpPort, err)
 	}
 
 	logWithTime("INFO", "Successfully bound to UDP address")
@@ -43,7 +44,8 @@ func NewStunServer(port int) (*StunServer, error) {
 	// - provides reliable container health monitoring
 	// - allows load balancer health checks
 	// - simpler than checking udp stun protocol
-	healthAddr := fmt.Sprintf("0.0.0.0:%d", port)
+	// - dedicated port for health traffic
+	healthAddr := fmt.Sprintf("0.0.0.0:%d", tcpPort)
 	healthListener, err := net.Listen("tcp", healthAddr)
 	if err != nil {
 		logWithTime("ERROR", "Failed to create health check listener: %v", err)
@@ -51,11 +53,12 @@ func NewStunServer(port int) (*StunServer, error) {
 		return nil, fmt.Errorf("failed to create health check listener on %s: %v", healthAddr, err)
 	}
 
-	logWithTime("INFO", "Successfully created TCP health check listener")
+	logWithTime("INFO", "Successfully created TCP health check listener on port %d", tcpPort)
 
 	return &StunServer{
 		udpListener:    conn,
-		port:           port,
+		udpPort:        udpPort,
+		tcpPort:        tcpPort,
 		healthListener: healthListener,
 	}, nil
 }
@@ -129,7 +132,7 @@ func logWithContext(level string, msg string, ctx map[string]interface{}) {
 }
 
 func (s *StunServer) Start() error {
-	logWithTime("INFO", "Starting STUN server on port %d", s.port)
+	logWithTime("INFO", "Starting STUN server on UDP port %d", s.udpPort)
 
 	if s.udpListener == nil {
 		return fmt.Errorf("STUN server not properly initialized: nil listener")
@@ -159,7 +162,7 @@ func (s *StunServer) Start() error {
 
 	// Start TCP health check handler
 	go func() {
-		logWithTime("INFO", "Starting TCP health check handler on port %d", s.port)
+		logWithTime("INFO", "Starting TCP health check handler on port %d", s.tcpPort)
 		for {
 			conn, err := s.healthListener.Accept()
 			if err != nil {
@@ -173,11 +176,26 @@ func (s *StunServer) Start() error {
 			remoteAddr := conn.RemoteAddr().String()
 			logWithTime("INFO", "Received health check connection from %s", remoteAddr)
 
-			// why we need to send a response:
-			// - confirms server is truly operational
-			// - allows health check to verify response
-			// - helps with debugging
-			_, err = conn.Write([]byte("healthy\n"))
+			// why we send a json health response:
+			// - provides structured data for monitoring
+			// - includes timestamp for tracking
+			// - allows future extension of health data
+			healthResponse := struct {
+				Status    string    `json:"status"`
+				Timestamp time.Time `json:"timestamp"`
+			}{
+				Status:    "healthy",
+				Timestamp: time.Now().UTC(),
+			}
+
+			response, err := json.Marshal(healthResponse)
+			if err != nil {
+				logWithTime("ERROR", "Failed to marshal health check response: %v", err)
+				conn.Close()
+				continue
+			}
+
+			_, err = conn.Write(append(response, '\n'))
 			if err != nil {
 				logWithTime("ERROR", "Failed to send health check response: %v", err)
 			}

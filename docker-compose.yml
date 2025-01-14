@@ -49,15 +49,17 @@ services:
       platforms:
         - linux/arm64
     container_name: stun-server-arm64
-    environment:
-      - STUN_PORT=3478
     ports:
       - "3478:3478/udp"
-      - "3478:3478/tcp"
+      - "3479:3479/tcp"
     network_mode: host
     restart: unless-stopped
+    # why we use more aggressive healthcheck timing in development:
+    # - faster feedback loop for local development
+    # - less resource constrained than production
+    # - quicker container replacement on failure
     healthcheck:
-      test: ["CMD-SHELL", "nc -zv localhost 3478 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "nc -zv localhost 3479 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5

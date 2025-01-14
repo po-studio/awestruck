@@ -26,6 +26,6 @@ COPY --from=builder /app/stun-server /stun-server
 # - udp for stun protocol
 # - tcp for health checks
 EXPOSE 3478/udp
-EXPOSE 3478/tcp
+EXPOSE 3479/tcp
 
 ENTRYPOINT ["/stun-server"] 

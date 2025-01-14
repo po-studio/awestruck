@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/po-studio/stun"
@@ -15,18 +14,19 @@ import (
 // - independent scaling
 // - simpler monitoring and maintenance
 func main() {
-	// Get port from environment or use default
-	portStr := os.Getenv("STUN_PORT")
-	port := 3478 // Default STUN port
-	if portStr != "" {
-		if p, err := strconv.Atoi(portStr); err == nil {
-			port = p
-		}
-	}
+	// why we need environment-based configuration:
+	// - allows runtime configuration
+	// - supports container orchestration
+	// - enables different settings per environment
+	udpPort := 3478 // Default STUN port
+
+	// TCP port for health checks is always UDP port + 1
+	tcpPort := 3479
 
 	// Create and start STUN server
 	manager := stun.GetStunManager()
-	manager.SetPort(port)
+	manager.SetUDPPort(udpPort)
+	manager.SetTCPPort(tcpPort)
 	if err := manager.Start(); err != nil {
 		log.Fatalf("Failed to start STUN server: %v", err)
 	}

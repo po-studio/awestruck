@@ -136,6 +136,13 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 3478,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          // STUN server TCP port [healthcheck only]
+          fromPort: 3479,
+          toPort: 3479,
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"],
         }
       ],
       egress: [
@@ -442,10 +449,12 @@ class AwestruckInfrastructure extends TerraformStack {
                 containerPort: 3478,
                 hostPort: 3478,
                 protocol: "udp"
+              },
+              {
+                containerPort: 3479,
+                hostPort: 3479,
+                protocol: "tcp"
               }
-            ],
-            environment: [
-              { name: "STUN_PORT", value: "3478" }
             ],
             // why we need both container and target group health checks:
             // - container health check ensures the process is running
@@ -454,7 +463,7 @@ class AwestruckInfrastructure extends TerraformStack {
             healthCheck: {
               command: [
                 "CMD-SHELL",
-                "nc -zv localhost 3478 2>/dev/null || exit 1"
+                "nc -zv localhost 3479 2>/dev/null || exit 1"
               ],
               interval: 30,
               timeout: 10,
@@ -493,10 +502,15 @@ class AwestruckInfrastructure extends TerraformStack {
       protocol: "UDP",
       targetType: "ip",
       vpcId: vpc.id,
+      // why we use tcp/3479 for healthcheck instead of udp/3478:
+      // - tcp provides more reliable health status
+      // - port 3479 dedicated to healthcheck to avoid interference
+      // - longer intervals in production for stability
+      // - higher thresholds to prevent premature failover
       healthCheck: {
         enabled: true,
         protocol: "TCP",
-        port: "3478",
+        port: "3479",
         healthyThreshold: 3,
         unhealthyThreshold: 5,
         interval: 60,
