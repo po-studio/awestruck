@@ -407,11 +407,15 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         },
         // WebRTC UDP traffic through NLB
-        ...Array.from({ length: 11 }, (_, i) => ({
+        // why we only need one mapping:
+        // - the nlb listeners will forward traffic to the correct container port
+        // - container exposes all ports 10000-10010
+        // - security group allows the full port range
+        {
           targetGroupArn: webrtcUdpTargetGroup.arn,
           containerName: "server-arm64",
-          containerPort: 10000 + i,
-        }))
+          containerPort: 10000,
+        }
       ],
       dependsOn: [listener, ...webrtcListeners],
     });
