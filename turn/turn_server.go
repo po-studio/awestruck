@@ -1,9 +1,13 @@
 package turn
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -24,53 +28,65 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - production: use container's private IP from VPC
+// - production: use container's IP from ECS metadata
 // - local docker: use host machine IP
 // - prevents using wrong IPs in each environment
 func getRelayAddress() (net.IP, error) {
 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		log.Printf("Running in production mode, looking for container IP")
-		addrs, err := net.InterfaceAddrs()
+		log.Printf("Running in production mode, checking ECS metadata endpoint")
+
+		// Get container IP from ECS metadata endpoint
+		metadataEndpoint := os.Getenv("ECS_CONTAINER_METADATA_URI_V4")
+		if metadataEndpoint == "" {
+			log.Printf("ECS_CONTAINER_METADATA_URI_V4 not set")
+			metadataEndpoint = "http://169.254.170.2/v2/metadata"
+		}
+
+		log.Printf("Using metadata endpoint: %s", metadataEndpoint)
+		client := http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get(metadataEndpoint)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get interface addresses: %v", err)
+			log.Printf("Failed to get metadata: %v", err)
+			return nil, fmt.Errorf("failed to get container metadata: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("Metadata endpoint returned status %d", resp.StatusCode)
+			return nil, fmt.Errorf("metadata endpoint returned status %d", resp.StatusCode)
 		}
 
-		// First, log all interfaces and their addresses
-		ifaces, _ := net.Interfaces()
-		for _, iface := range ifaces {
-			log.Printf("Found interface: %s (flags: %v)", iface.Name, iface.Flags)
-			ifaceAddrs, _ := iface.Addrs()
-			for _, addr := range ifaceAddrs {
-				log.Printf("  Address: %v", addr)
-			}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Failed to read metadata response: %v", err)
+			return nil, fmt.Errorf("failed to read metadata response: %v", err)
 		}
 
-		// Now check each address
-		for _, addr := range addrs {
-			log.Printf("Checking address: %v", addr)
-			if ipnet, ok := addr.(*net.IPNet); ok {
-				log.Printf("  Is IP network: %v", ipnet)
-				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
-					log.Printf("  Is IPv4: %v", ipv4)
-					if !ipv4.IsLoopback() {
-						log.Printf("  Not loopback")
-						if !ipv4.IsLinkLocalUnicast() {
-							log.Printf("Using container IP for relay: %s", ipv4.String())
-							return ipv4, nil
-						} else {
-							log.Printf("  Rejected: link-local address")
-						}
-					} else {
-						log.Printf("  Rejected: loopback address")
-					}
-				} else {
-					log.Printf("  Rejected: not IPv4")
+		log.Printf("Got metadata response: %s", string(body))
+
+		var metadata struct {
+			Networks []struct {
+				IPv4Addresses []string `json:"IPv4Addresses"`
+			} `json:"Networks"`
+		}
+
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&metadata); err != nil {
+			log.Printf("Failed to decode metadata: %v", err)
+			return nil, fmt.Errorf("failed to decode metadata: %v", err)
+		}
+
+		for _, network := range metadata.Networks {
+			for _, ipStr := range network.IPv4Addresses {
+				ip := net.ParseIP(ipStr)
+				if ip != nil && ip.To4() != nil {
+					log.Printf("Found container IP: %s", ip.String())
+					return ip, nil
 				}
-			} else {
-				log.Printf("  Rejected: not an IP network")
 			}
 		}
-		return nil, fmt.Errorf("no suitable IPv4 address found in container")
+
+		log.Printf("No IPv4 address found in metadata")
+		return nil, fmt.Errorf("no IPv4 address found in metadata")
 	}
 
 	// For local development in Docker, try to get host IP via environment
@@ -81,7 +97,6 @@ func getRelayAddress() (net.IP, error) {
 	}
 
 	// Fallback: try to find a suitable IP address for local development
-	// Here we DO want to filter out Docker network IPs
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get interface addresses: %v", err)
