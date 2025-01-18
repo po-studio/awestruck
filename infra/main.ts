@@ -543,7 +543,8 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_PORT", value: "3478" },
               { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "MIN_PORT", value: "49152" },
-              { name: "MAX_PORT", value: "49252" }
+              { name: "MAX_PORT", value: "49252" },
+              { name: "AWESTRUCK_ENV", value: "production" }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],

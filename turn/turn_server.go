@@ -24,38 +24,63 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - production: use eth0 IP from container
+// - production: use container's network interface
 // - local docker: use host machine IP
 // - prevents using wrong IPs in each environment
 func getRelayAddress() (net.IP, error) {
-	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		log.Printf("Running in production mode, getting eth0 IP")
+	log.Printf("getRelayAddress: Starting IP detection")
 
-		// In ECS with awsvpc mode, eth0 is our primary interface
-		iface, err := net.InterfaceByName("eth0")
+	env := os.Getenv("AWESTRUCK_ENV")
+	log.Printf("getRelayAddress: Environment is %q", env)
+
+	if env == "production" {
+		log.Printf("getRelayAddress: Running in production mode")
+
+		// List all interfaces first
+		interfaces, err := net.Interfaces()
 		if err != nil {
-			log.Printf("Failed to get eth0 interface: %v", err)
-			return nil, fmt.Errorf("failed to get eth0 interface: %v", err)
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			log.Printf("Failed to get eth0 addresses: %v", err)
-			return nil, fmt.Errorf("failed to get eth0 addresses: %v", err)
-		}
-
-		for _, addr := range addrs {
-			log.Printf("Found eth0 address: %v", addr)
-			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
-					log.Printf("Using eth0 IP for relay: %s", ipv4.String())
-					return ipv4, nil
+			log.Printf("getRelayAddress: Failed to list interfaces: %v", err)
+		} else {
+			for _, iface := range interfaces {
+				log.Printf("getRelayAddress: Found interface: %s (flags: %v)", iface.Name, iface.Flags)
+				addrs, err := iface.Addrs()
+				if err == nil {
+					for _, addr := range addrs {
+						log.Printf("getRelayAddress: Interface %s has address: %v", iface.Name, addr)
+					}
 				}
 			}
 		}
 
-		log.Printf("No IPv4 address found on eth0")
-		return nil, fmt.Errorf("no IPv4 address found on eth0")
+		// Try common interface names in ECS/Docker
+		interfaceNames := []string{"eth0", "ens5", "en0", "eth1"}
+		for _, name := range interfaceNames {
+			log.Printf("getRelayAddress: Trying interface %s", name)
+			iface, err := net.InterfaceByName(name)
+			if err != nil {
+				log.Printf("getRelayAddress: Interface %s not found: %v", name, err)
+				continue
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				log.Printf("getRelayAddress: Failed to get addresses for %s: %v", name, err)
+				continue
+			}
+
+			for _, addr := range addrs {
+				log.Printf("getRelayAddress: Found address on %s: %v", name, addr)
+				if ipnet, ok := addr.(*net.IPNet); ok {
+					if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !ipv4.IsLinkLocalUnicast() {
+						log.Printf("getRelayAddress: Using IP from %s for relay: %s", name, ipv4.String())
+						return ipv4, nil
+					}
+				}
+			}
+		}
+
+		log.Printf("getRelayAddress: No suitable IPv4 address found on any interface")
+		return nil, fmt.Errorf("no suitable IPv4 address found on any interface")
 	}
 
 	// For local development in Docker, try to get host IP via environment
