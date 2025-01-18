@@ -29,18 +29,45 @@ type TurnServer struct {
 // - prevents using wrong IPs in each environment
 func getRelayAddress() (net.IP, error) {
 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		// In production, find the first non-loopback, non-link-local IP
-		// We accept VPC IPs (10.0.0.0/8) in production
+		log.Printf("Running in production mode, looking for container IP")
 		addrs, err := net.InterfaceAddrs()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get interface addresses: %v", err)
 		}
+
+		// First, log all interfaces and their addresses
+		ifaces, _ := net.Interfaces()
+		for _, iface := range ifaces {
+			log.Printf("Found interface: %s (flags: %v)", iface.Name, iface.Flags)
+			ifaceAddrs, _ := iface.Addrs()
+			for _, addr := range ifaceAddrs {
+				log.Printf("  Address: %v", addr)
+			}
+		}
+
+		// Now check each address
 		for _, addr := range addrs {
+			log.Printf("Checking address: %v", addr)
 			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !ipv4.IsLinkLocalUnicast() {
-					log.Printf("Using container IP for relay: %s", ipv4.String())
-					return ipv4, nil
+				log.Printf("  Is IP network: %v", ipnet)
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					log.Printf("  Is IPv4: %v", ipv4)
+					if !ipv4.IsLoopback() {
+						log.Printf("  Not loopback")
+						if !ipv4.IsLinkLocalUnicast() {
+							log.Printf("Using container IP for relay: %s", ipv4.String())
+							return ipv4, nil
+						} else {
+							log.Printf("  Rejected: link-local address")
+						}
+					} else {
+						log.Printf("  Rejected: loopback address")
+					}
+				} else {
+					log.Printf("  Rejected: not IPv4")
 				}
+			} else {
+				log.Printf("  Rejected: not an IP network")
 			}
 		}
 		return nil, fmt.Errorf("no suitable IPv4 address found in container")
