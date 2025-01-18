@@ -2,12 +2,13 @@
 
 # Awestruck
 
-### WARNING
-Protect your ears! Before streaming audio, please turn the volume on your machine DOWN, especially if you're using headphones. While I've tried to ensure the examples play at a reasonable volume, this software gets close to audio hardware and rare glitches such as amplitude spikes can occur.
+> [!WARNING]  
+> Protect your ears! Before streaming audio, please turn the volume on your machine DOWN, especially if you're using headphones. While I've tried to ensure the examples play at a reasonable volume, this software gets close to audio hardware and rare glitches such as amplitude spikes can occur.
 
 ## Real-Time Audio Synthesis, Streaming, & Manipulation
 Awestruck aims to provide a framework for real-time, server-driven audio synthesis, streaming, and control over the Internet. It uses SuperCollider, a powerful language for audio programming, but other synthesis engines could be supported.
 
+### Tech Stack
 Awestruck uses:
 * [SuperCollider](https://supercollider.github.io/) for real-time sound synthesis
 * [JACK](https://jackaudio.org/) as a sound server API for low-latency connections
@@ -35,15 +36,17 @@ This repository contains a Makefile and Docker configuration for building and ru
 
 ## Prerequisites
 
+> [!NOTE]
+> Docker Desktop does not easily allow for enabling IPv6, which is needed for STUN connections. One fix is to use [OrbStack](https://orbstack.dev/), which lets you easily enable IPv6.
+
 * Docker
-* NOTE: Docker Desktop does not easily allow for enabling IPv6, which is needed for STUN connections. One fix is to use [OrbStack](https://orbstack.dev/), which lets you easily enable IPv6.
 
 ## Getting Started
 
 ### Build & Run
 To start using this repository, clone it to your local machine and navigate into the directory:
 
-```
+```bash
 make build
 make up
 ```
@@ -56,7 +59,7 @@ This should boot up the server and open a browser window. If you do not see a br
 
 ### Graceful Shutdown
 To gracefully stop all processes:
-```
+```bash
 make down
 ```
 
@@ -65,6 +68,7 @@ The synth examples in the `supercollider` directory are taken from simple [SC tw
 
 For example, Jonatan Liljedahl wrote this [track](https://open.spotify.com/track/4VecDB1uhp44posWgt85yN?si=b226049745f14d82) in ~100 lines of SC code. Imagine complex "applications" which represent pieces of music on the scale of symphonies or concertos. This is possible with SuperCollider.
 
+### Future Directions
 I'm currently interested applications/integrations with AIs. This could include:
 * Streaming of LLM-powered [text-to-speech audio](https://github.com/suno-ai/bark) that calls for server-side origins.
 * LLM-driven algorithmic composition. In an ideal scenario, given a prompt for a style of music, the LLM could write the .scd code before streaming it, with rapid feedback for the listener/co-composer. Unfortunately, there is little SuperCollider code out there for AIs to train on, and even if there were, a higher-level system like [Devin](https://www.cognition-labs.com/introducing-devin) with knowledge of musical structure and aesthetics would be necessary in order to produce anything worth listening to. This may change.
