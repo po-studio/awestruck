@@ -456,7 +456,7 @@ class AwestruckInfrastructure extends TerraformStack {
       healthCheck: {
         enabled: true,
         protocol: "TCP",
-        port: "3478",
+        port: "3479",
         healthyThreshold: 3,
         unhealthyThreshold: 5,
         interval: 30,
@@ -503,12 +503,15 @@ class AwestruckInfrastructure extends TerraformStack {
       retentionInDays: 30,
     });
 
-    // TURN server task definition
+    // why we need a separate task definition for turn:
+    // - isolates turn server configuration
+    // - enables independent scaling
+    // - simplifies monitoring and management
     const turnTaskDefinition = new EcsTaskDefinition(
       this,
       "turn-task-definition",
       {
-        family: "turn-server-arm64",
+        family: "turn-server",
         cpu: "256",
         memory: "512",
         networkMode: "awsvpc",
@@ -521,25 +524,15 @@ class AwestruckInfrastructure extends TerraformStack {
         },
         containerDefinitions: JSON.stringify([
           {
-            name: "turn-server-arm64",
+            name: "turn-server",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/turn:latest`,
             portMappings: [
-              {
-                containerPort: 3478,
-                hostPort: 3478,
-                protocol: "udp"
-              }
+              { containerPort: 3478, hostPort: 3478, protocol: "udp" },
+              { containerPort: 3479, hostPort: 3479, protocol: "tcp" }
             ],
-            healthCheck: {
-              command: [
-                "CMD-SHELL",
-                "nc -zv localhost 3478 2>/dev/null || exit 1"
-              ],
-              interval: 30,
-              timeout: 10,
-              retries: 5,
-              startPeriod: 5
-            },
+            environment: [
+              { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() }
+            ],
             logConfiguration: {
               logDriver: "awslogs",
               options: {
@@ -553,7 +546,10 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // Update TURN service
+    // why we need a dedicated turn service:
+    // - handles nat traversal for webrtc
+    // - provides relay capabilities when needed
+    // - runs independently of main application
     new EcsService(this, "turn-service", {
       name: "turn-service",
       cluster: ecsCluster.arn,
@@ -569,11 +565,11 @@ class AwestruckInfrastructure extends TerraformStack {
       loadBalancer: [
         {
           targetGroupArn: turnUdpTargetGroup.arn,
-          containerName: "turn-server-arm64",
+          containerName: "turn-server",
           containerPort: 3478,
         }
       ],
-      dependsOn: [turnUdpListener]
+      dependsOn: [turnUdpListener],
     });
 
     // Add CloudWatch dashboard for monitoring both services

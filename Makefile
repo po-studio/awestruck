@@ -71,8 +71,12 @@ build-turn:
 aws-login:
 	@echo "Logging into AWS ECR..."
 	@aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
-	@aws ecr describe-repositories --repository-names $(ECR_TURN_REPO) || \
-		aws ecr create-repository --repository-name $(ECR_TURN_REPO)
+	@for repo in $(ECR_WEBRTC_REPO) $(ECR_TURN_REPO); do \
+		echo "Checking repository $$repo..."; \
+		aws ecr describe-repositories --repository-names $$repo || \
+		(echo "Creating repository $$repo..." && \
+		aws ecr create-repository --repository-name $$repo); \
+	done
 
 aws-push: aws-login
 	# Pull the latest image from ECR to use as cache
@@ -114,14 +118,14 @@ aws-push-turn: aws-login
 	@rm -rf /tmp/.buildx-cache-turn
 	@mv /tmp/.buildx-cache-turn-new /tmp/.buildx-cache-turn
 
-deploy-all: build build-turn aws-login
+deploy-all: aws-login build build-turn
 	@echo "Deploying all services..."
 	# Tag TURN server image for ECR
 	@docker tag $(TURN_IMAGE_NAME) $(ECR_TURN_URL):latest
 	# Push TURN server to ECR
 	@docker push $(ECR_TURN_URL):latest
 	# Deploy infrastructure
-	@cd infra && npm run deploy
+	@cd infra && npm install && npm run deploy
 
 test-generate-synth:
 	curl -X POST \
