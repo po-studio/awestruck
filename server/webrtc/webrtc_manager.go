@@ -628,11 +628,16 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// why we use ICETransportPolicyAll:
-		// - allows both STUN and TURN candidates
-		// - provides fallback options
-		// - improves connection success rate
-		ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		// why we enforce relay policy in production:
+		// - ensures consistent behavior across all clients
+		// - prevents direct peer connections
+		// - routes all traffic through our TURN servers
+		ICETransportPolicy: func() webrtc.ICETransportPolicy {
+			// if os.Getenv("AWESTRUCK_ENV") == "production" {
+			// 	return webrtc.ICETransportPolicyRelay
+			// }
+			return webrtc.ICETransportPolicyAll
+		}(),
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 

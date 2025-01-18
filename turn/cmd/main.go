@@ -19,10 +19,22 @@ func main() {
 	// - enables easy testing
 	port := flag.Int("port", 3478, "UDP port for TURN/STUN")
 	healthPort := flag.Int("health-port", 3479, "TCP port for health checks")
-	realm := flag.String("realm", "awestruck.io", "Realm for TURN server")
 	flag.Parse()
 
-	server, err := turn.NewTurnServer(*port, *realm)
+	// why we need environment-based realm:
+	// - matches domain in production (awestruck.io)
+	// - uses localhost for development
+	// - enables proper turn authentication
+	realm := os.Getenv("TURN_REALM")
+	if realm == "" {
+		if os.Getenv("AWESTRUCK_ENV") == "production" {
+			realm = "awestruck.io"
+		} else {
+			realm = "localhost"
+		}
+	}
+
+	server, err := turn.NewTurnServer(*port, realm)
 	if err != nil {
 		log.Fatalf("Failed to create TURN server: %v", err)
 	}

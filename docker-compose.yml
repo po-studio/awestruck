@@ -31,21 +31,31 @@ services:
       rtprio: 99
     environment:
       - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
-      - AWESTRUCK_ENV=development
+      - AWESTRUCK_ENV=${AWESTRUCK_ENV:-development}
       - JACK_NO_AUDIO_RESERVATION=1
       - JACK_PORT_MAX=128
       - GST_DEBUG=2
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
-      - STUN_SERVER=localhost:3478
       - GST_BUFFER_SIZE=4194304
+      # why we need optimized jack settings:
+      # - reduces audio xruns
+      # - improves real-time performance
+      # - balances latency and stability
+      - JACK_PERIOD_SIZE=1024
+      - JACK_PERIODS=2
+      - JACK_PRIORITY=95
+      - JACK_REALTIME_PRIORITY=95
+      - JACK_TIMEOUT=2000
+      - JACK_BUFFER_SIZE=2048
     cap_add:
       - SYS_NICE
     network_mode: host
     depends_on:
       turn-server:
         condition: service_healthy
+
   # why we need a turn service:
   # - provides both stun and turn functionality
   # - enables nat traversal for webrtc
@@ -61,8 +71,20 @@ services:
       - "3479:3479"
     environment:
       - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
+      - AWESTRUCK_ENV=${AWESTRUCK_ENV:-development}
+      - HOST_IP=${HOST_IP:-127.0.0.1}
+      # why we need environment-specific realm:
+      # - matches domain in production (awestruck.io)
+      # - uses localhost for development
+      # - enables proper turn authentication
+      - TURN_REALM=localhost
     volumes:
       - ./turn:/app/turn
+    # why we need host networking for turn:
+    # - enables proper nat traversal
+    # - allows direct ip access
+    # - improves connection reliability
+    network_mode: host
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3479/health"]
       interval: 30s

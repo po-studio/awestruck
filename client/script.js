@@ -137,8 +137,11 @@ function waitForICEConnection(pc) {
 // - turn as fallback for symmetric nat
 // - improves connection reliability
 window.TURN_SERVERS = window.location.hostname === 'localhost'
-  ? ['localhost:3478']
-  : ['turn.awestruck.io:3478'];
+  ? ['127.0.0.1:3478']
+  : [
+      'turn1.awestruck.io:3478',  // Primary TURN server
+      'turn2.awestruck.io:3478'   // Secondary TURN server for redundancy
+    ];
 
 // why we use a static credential:
 // - simplifies initial implementation
@@ -162,10 +165,10 @@ const ICE_CONFIG = {
         credential: TURN_CREDENTIAL
       }
     ],
-    iceCandidatePoolSize: 1,
+    iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'all'
+    iceTransportPolicy: 'relay'  // Use relay in both environments for consistency
   },
   production: {
     iceServers: [
@@ -176,18 +179,12 @@ const ICE_CONFIG = {
         ]).flat(),
         username: 'default',
         credential: TURN_CREDENTIAL
-      },
-      {
-        urls: [
-          "stun:stun.l.google.com:19302",
-          "stun:stun1.l.google.com:19302"
-        ]
       }
     ],
-    iceCandidatePoolSize: 1,
+    iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'all'
+    iceTransportPolicy: 'relay'  // Force TURN relay for consistent behavior
   }
 };
 
