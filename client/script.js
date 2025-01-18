@@ -165,7 +165,7 @@ const ICE_CONFIG = {
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay'
+    iceTransportPolicy: 'relay'  // Use relay in both environments for consistency
   },
   production: {
     iceServers: [
