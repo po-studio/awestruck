@@ -242,11 +242,6 @@ class AwestruckInfrastructure extends TerraformStack {
       retentionInDays: 30,
     });
 
-    const stunLogGroup = new CloudwatchLogGroup(this, "stun-log-group", {
-      name: `/ecs/stun-server`,
-      retentionInDays: 30,
-    });
-
     const ecsTaskRole = new IamRole(this, "ecs-task-role", {
       name: "awestruck-ecs-task-role",
       assumeRolePolicy: JSON.stringify({
