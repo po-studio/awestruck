@@ -24,13 +24,25 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - bind to all interfaces (0.0.0.0) to let AWS handle routing
-// - client configuration will use NLB DNS name
-// - prevents hardcoding of IPs that may change
+// - production: use container's private IP (AWS handles NAT)
+// - local docker: use host machine IP
+// - prevents using internal container IPs that won't work
 func getRelayAddress() (net.IP, error) {
 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		// In production, bind to all interfaces and let AWS handle routing
-		return net.ParseIP("0.0.0.0"), nil
+		// In production, find the first non-loopback, non-link-local IP
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get interface addresses: %v", err)
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !ipv4.IsLinkLocalUnicast() {
+					log.Printf("Using container IP for relay: %s", ipv4.String())
+					return ipv4, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("no suitable IPv4 address found in container")
 	}
 
 	// For local development in Docker, try to get host IP via environment
