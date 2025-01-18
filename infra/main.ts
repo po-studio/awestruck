@@ -136,7 +136,7 @@ class AwestruckInfrastructure extends TerraformStack {
           // - matches container port mappings
           // - supports multiple simultaneous relays
           fromPort: 49152,
-          toPort: 65535,  // matches container definition
+          toPort: 49252,  // reduced range for testing
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -527,7 +527,11 @@ class AwestruckInfrastructure extends TerraformStack {
             portMappings: [
               { containerPort: 3478, hostPort: 3478, protocol: "udp" },
               { containerPort: 3479, hostPort: 3479, protocol: "tcp" },
-              ...Array.from({ length: 16384 }, (_, i) => ({
+              // why we use a minimal port range for testing:
+              // - reduces task definition size
+              // - sufficient for development testing
+              // - faster deployment and updates
+              ...Array.from({ length: 101 }, (_, i) => ({
                 containerPort: 49152 + i,
                 hostPort: 49152 + i,
                 protocol: "udp"
@@ -537,7 +541,9 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "TURN_REALM", value: "awestruck.io" },
               { name: "TURN_PORT", value: "3478" },
-              { name: "HEALTH_CHECK_PORT", value: "3479" }
+              { name: "HEALTH_CHECK_PORT", value: "3479" },
+              { name: "MIN_PORT", value: "49152" },
+              { name: "MAX_PORT", value: "49252" }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
