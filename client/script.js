@@ -140,6 +140,33 @@ window.TURN_SERVERS = window.location.hostname === 'localhost'
   ? ['127.0.0.1:3478']
   : ['turn.awestruck.io:3478'];
 
+// why we need hmac-based turn auth:
+// - follows turn protocol spec
+// - ensures credential integrity
+// - prevents mitm attacks
+function generateTurnCredentials(username, key) {
+  // TURN username is timestamp:username
+  const timestamp = Math.floor(Date.now() / 1000) + 24 * 3600;  // Valid for 24 hours
+  const turnUsername = `${timestamp}:${username}`;
+  
+  // TURN credential is HMAC-SHA1 of username using key
+  const hmac = CryptoJS.HmacSHA1(turnUsername, key);
+  const credential = hmac.toString(CryptoJS.enc.Base64);
+  
+  console.log('[TURN] Generated credentials:', {
+    username: turnUsername,
+    timestamp: timestamp,
+    credentialLength: credential.length,
+    realm: 'localhost',  // Match the server's realm
+    hmacInput: turnUsername  // Log what we're hashing for debugging
+  });
+  
+  return {
+    username: turnUsername,
+    credential: credential
+  };
+}
+
 // why we use a static credential:
 // - simplifies initial implementation
 // - can be replaced with dynamic auth later
@@ -158,14 +185,13 @@ const ICE_CONFIG = {
           `stun:${server}`,
           `turn:${server}`
         ]).flat(),
-        username: 'default',
-        credential: TURN_CREDENTIAL
+        ...generateTurnCredentials('default', TURN_CREDENTIAL)
       }
     ],
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay'  // Use relay in both environments for consistency
+    iceTransportPolicy: 'all'
   },
   production: {
     iceServers: [
@@ -174,8 +200,7 @@ const ICE_CONFIG = {
           `stun:${server}`,
           `turn:${server}`
         ]).flat(),
-        username: 'default',
-        credential: TURN_CREDENTIAL
+        ...generateTurnCredentials('default', TURN_CREDENTIAL)
       }
     ],
     iceCandidatePoolSize: 2,

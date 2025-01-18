@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +23,7 @@ type TurnServer struct {
 	udpPort     int
 	stopped     bool
 	credentials sync.Map // thread-safe map for credential management
+	authKey     []byte   // static auth key
 }
 
 // why we need proper relay address detection:
@@ -131,15 +134,16 @@ func isDockerIP(ip net.IP) bool {
 }
 
 func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
-	// why we use a static auth key initially:
-	// - provides consistent authentication across restarts
-	// - simplifies client configuration
-	// - matches client-side configuration
+	// why we need proper hmac auth:
+	// - follows turn protocol spec
+	// - prevents mitm attacks
+	// - ensures credential integrity
 	authKey := []byte("awestruck-turn-static-auth-key")
 
 	server := &TurnServer{
 		realm:   realm,
 		udpPort: udpPort,
+		authKey: authKey,
 	}
 
 	// why we need to bind to all interfaces:
@@ -158,32 +162,54 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 
 	log.Printf("TURN server using relay address: %s", relayIP.String())
 
+	// why we need external ip handling:
+	// - enables proper nat traversal
+	// - matches nlb's public ip
+	// - supports ice candidate generation
+	externalIP := os.Getenv("EXTERNAL_IP")
+	if externalIP == "" {
+		log.Printf("No EXTERNAL_IP set, using relay IP for external address")
+		externalIP = relayIP.String()
+	} else {
+		log.Printf("Using EXTERNAL_IP for address: %s", externalIP)
+	}
+
 	s, err := turn.NewServer(turn.ServerConfig{
 		Realm: realm,
-		// why we need dynamic auth handling:
-		// - enables future per-user credentials
-		// - allows credential rotation
-		// - supports auth service integration
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-			log.Printf("Auth request from %v - username: %s, realm: %s", srcAddr, username, realm)
-			if credential, ok := server.credentials.Load(username); ok {
-				log.Printf("Found stored credentials for user %s", username)
-				return credential.([]byte), true
+			log.Printf("[AUTH] Received auth request from %v - username: %s, realm: %s", srcAddr, username, realm)
+
+			// Split username into timestamp:identifier
+			parts := strings.Split(username, ":")
+			if len(parts) != 2 {
+				log.Printf("[AUTH] Invalid username format: %s", username)
+				return nil, false
 			}
-			// Fallback to static key for default user
-			if username == "default" {
-				log.Printf("Using default credentials for user %s", username)
-				return authKey, true
+
+			// Verify timestamp is within 24 hours
+			timestamp, err := strconv.ParseInt(parts[0], 10, 64)
+			if err != nil {
+				log.Printf("[AUTH] Invalid timestamp: %v", err)
+				return nil, false
 			}
-			log.Printf("Auth failed - no credentials found for user %s", username)
-			return nil, false
+
+			// Check if timestamp is within 24 hours
+			now := time.Now().Unix()
+			if now > timestamp {
+				log.Printf("[AUTH] Credential expired: %d seconds ago", now-timestamp)
+				return nil, false
+			}
+
+			// Use the static auth key for HMAC verification
+			log.Printf("[AUTH] Using static key for user %s", username)
+			return server.authKey, true
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
 			{
 				PacketConn: udpListener,
 				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
 					RelayAddress: relayIP,
-					Address:      relayIP.String(),
+					Address:      externalIP,
 				},
 			},
 		},
@@ -193,9 +219,6 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 	}
 
 	server.server = s
-	// Set default credential
-	server.credentials.Store("default", authKey)
-
 	return server, nil
 }
 

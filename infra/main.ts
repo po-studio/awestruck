@@ -544,7 +544,12 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "MIN_PORT", value: "49152" },
               { name: "MAX_PORT", value: "49252" },
-              { name: "AWESTRUCK_ENV", value: "production" }
+              { name: "AWESTRUCK_ENV", value: "production" },
+              // why we need external ip:
+              // - tells turn server what ip to use for ice candidates
+              // - matches nlb's public ip
+              // - enables proper nat traversal
+              { name: "EXTERNAL_IP", value: "${aws_lb.awestruck-turn-nlb.dns_name}" }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
@@ -565,6 +570,43 @@ class AwestruckInfrastructure extends TerraformStack {
         ]),
       }
     );
+
+    // why we need a separate target group for relay ports:
+    // - handles media relay traffic on ephemeral ports
+    // - enables proper health checks
+    // - supports multiple simultaneous relay sessions
+    const turnRelayTargetGroup = new LbTargetGroup(this, "awestruck-turn-relay-tg", {
+      name: "awestruck-turn-relay-tg",
+      port: 49152,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        protocol: "TCP",
+        port: "3479",
+        healthyThreshold: 3,
+        unhealthyThreshold: 5,
+        interval: 30,
+        timeout: 10
+      }
+    });
+
+    // why we need listeners for relay ports:
+    // - enables media relay through NAT/firewalls
+    // - supports multiple simultaneous connections
+    // - matches container port mappings
+    Array.from({ length: 101 }, (_, i) => {
+      return new LbListener(this, `turn-relay-listener-${49152 + i}`, {
+        loadBalancerArn: turnNlb.arn,
+        port: 49152 + i,
+        protocol: "UDP",
+        defaultAction: [{
+          type: "forward",
+          targetGroupArn: turnRelayTargetGroup.arn,
+        }],
+      });
+    });
 
     // why we need multiple turn service tasks:
     // - provides high availability
@@ -587,6 +629,15 @@ class AwestruckInfrastructure extends TerraformStack {
           targetGroupArn: turnUdpTargetGroup.arn,
           containerName: "turn-server",
           containerPort: 3478,
+        },
+        // why we need relay port target group:
+        // - enables media relay through NLB
+        // - matches container port mappings
+        // - supports multiple simultaneous relays
+        {
+          targetGroupArn: turnRelayTargetGroup.arn,
+          containerName: "turn-server",
+          containerPort: 49152,
         }
       ],
       dependsOn: [turnUdpListener],
