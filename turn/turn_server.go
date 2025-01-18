@@ -24,12 +24,13 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - production: use container's private IP (AWS handles NAT)
+// - production: use container's private IP from VPC
 // - local docker: use host machine IP
-// - prevents using internal container IPs that won't work
+// - prevents using wrong IPs in each environment
 func getRelayAddress() (net.IP, error) {
 	if os.Getenv("AWESTRUCK_ENV") == "production" {
 		// In production, find the first non-loopback, non-link-local IP
+		// We accept VPC IPs (10.0.0.0/8) in production
 		addrs, err := net.InterfaceAddrs()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get interface addresses: %v", err)
@@ -52,7 +53,8 @@ func getRelayAddress() (net.IP, error) {
 		}
 	}
 
-	// Fallback: try to find a suitable IP address
+	// Fallback: try to find a suitable IP address for local development
+	// Here we DO want to filter out Docker network IPs
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get interface addresses: %v", err)
@@ -68,10 +70,15 @@ func getRelayAddress() (net.IP, error) {
 }
 
 // why we need docker ip detection:
-// - prevents using container network IPs
-// - ensures we use host network IPs
-// - improves local development reliability
+// - only used in local development
+// - prevents using container network IPs locally
+// - not used in production where we want VPC IPs
 func isDockerIP(ip net.IP) bool {
+	// Only used in local development
+	if os.Getenv("AWESTRUCK_ENV") == "production" {
+		return false
+	}
+
 	// Common Docker network ranges
 	dockerRanges := []string{
 		"172.16.0.0/12",
@@ -122,13 +129,17 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		// - allows credential rotation
 		// - supports auth service integration
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
+			log.Printf("Auth request from %v - username: %s, realm: %s", srcAddr, username, realm)
 			if credential, ok := server.credentials.Load(username); ok {
+				log.Printf("Found stored credentials for user %s", username)
 				return credential.([]byte), true
 			}
 			// Fallback to static key for default user
 			if username == "default" {
+				log.Printf("Using default credentials for user %s", username)
 				return authKey, true
 			}
+			log.Printf("Auth failed - no credentials found for user %s", username)
 			return nil, false
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
