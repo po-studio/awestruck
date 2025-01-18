@@ -1,0 +1,40 @@
+# why we use a multi-stage build:
+# - reduces final image size
+# - separates build dependencies from runtime
+# - improves security by minimizing attack surface
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# why we copy only necessary files:
+# - speeds up build by reducing context size
+# - improves caching by minimizing changes
+# - keeps build context clean
+COPY turn/ ./
+
+# Build the TURN server
+RUN CGO_ENABLED=0 GOOS=linux go build -o turn-server ./cmd/main.go
+
+# why we use alpine:
+# - minimal base image
+# - includes necessary system utilities
+# - reduces attack surface
+FROM alpine:latest
+
+# why we need these utilities:
+# - curl for health checks
+# - coturn for testing and validation
+RUN apk add --no-cache curl coturn
+
+WORKDIR /
+
+COPY --from=builder /app/turn-server /turn-server
+
+# why we expose these ports:
+# - 3478/udp for STUN/TURN protocol
+# - 3479/tcp for health checks
+EXPOSE 3478/udp
+EXPOSE 3479
+
+ENTRYPOINT ["/turn-server"]
+LABEL com.docker.compose.image.builder=classic 

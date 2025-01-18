@@ -132,73 +132,67 @@ function waitForICEConnection(pc) {
     });
 }
 
+// why we need both stun and turn servers:
+// - stun for basic nat traversal
+// - turn as fallback for symmetric nat
+// - improves connection reliability
+window.TURN_SERVERS = window.location.hostname === 'localhost'
+  ? ['localhost:3478']
+  : ['turn.awestruck.io:3478'];
+
+// why we use a static credential:
+// - simplifies initial implementation
+// - can be replaced with dynamic auth later
+// - allows for testing and development
+const TURN_CREDENTIAL = 'awestruck-turn-static-auth-key';
+
 // why we need ice configuration:
-// - enables discovery through our custom STUN server
+// - enables discovery through our STUN/TURN server
 // - allows host candidates for container communication
 // - ensures consistent behavior across environments
 const ICE_CONFIG = {
     development: {
         iceServers: [
             {
-                urls: window.STUN_SERVERS 
-                    ? window.STUN_SERVERS.map(server => `stun:${server}`)
-                    : ["stun:localhost:3478"]
+                urls: window.TURN_SERVERS.map(server => [
+                    `stun:${server}`,
+                    `turn:${server}`
+                ]).flat(),
+                username: 'default',
+                credential: TURN_CREDENTIAL
             }
         ],
-        iceCandidatePoolSize: 0,
+        iceCandidatePoolSize: 1,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        // when using 'relay' policy, a TURN server is required as only relayed candidates will be used
-        // since we only have STUN configured, we should use 'all' to allow all candidate types
-        iceTransportPolicy: 'all',
-        sdpSemantics: 'unified-plan'
+        iceTransportPolicy: 'all'
     },
     production: {
         iceServers: [
+            {
+                urls: window.TURN_SERVERS.map(server => [
+                    `stun:${server}`,
+                    `turn:${server}`
+                ]).flat(),
+                username: 'default',
+                credential: TURN_CREDENTIAL
+            },
             {
                 urls: [
                     "stun:stun.l.google.com:19302",
                     "stun:stun1.l.google.com:19302"
                 ]
-            },
-            {
-                // Public test TURN server (DO NOT USE IN PRODUCTION)
-                urls: [
-                    "turn:numb.viagenie.ca:3478?transport=udp",
-                    "turn:numb.viagenie.ca:3478?transport=tcp"
-                ],
-                username: "webrtc@live.com",
-                credential: "muazkh"
             }
         ],
-        iceCandidatePoolSize: 2,
+        iceCandidatePoolSize: 1,
         rtcpMuxPolicy: 'require',
         bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all',
-        sdpSemantics: 'unified-plan'
+        iceTransportPolicy: 'all'
     }
-    // production: {
-    //     iceServers: [
-    //         {
-    //             urls: [
-    //                 // primary UDP STUN server
-    //                 "stun:stun.awestruck.io:3478"
-    //             ]
-    //         }
-    //     ],
-    //     iceCandidatePoolSize: 2,
-    //     rtcpMuxPolicy: 'require',
-    //     bundlePolicy: 'max-bundle',
-    //     // we want to prioritize STUN-discovered candidates (srflx)
-    //     // but we must use 'all' since those are the only valid values
-    //     // the actual filtering happens in the onicecandidate handler
-    //     iceTransportPolicy: 'all',
-    //     sdpSemantics: 'unified-plan'
-    // }
 };
 
 // why we need flexible ice validation:
-// - allows both STUN and host candidates
+// - allows both STUN and TURN candidates
 // - supports container-to-container communication
 // - maintains logging for monitoring
 function validateIceConfig(config) {
@@ -217,10 +211,12 @@ function validateIceConfig(config) {
         server.urls.forEach(url => {
             if (url.startsWith('stun:')) {
                 console.log('[ICE] Found STUN URL:', url);
-            } else if (url.startsWith('host:')) {
-                console.log('[ICE] Found host URL:', url);
-            } else {
-                console.log('[ICE] Found other URL type:', url);
+            } else if (url.startsWith('turn:')) {
+                console.log('[ICE] Found TURN URL:', url);
+                if (!server.username || !server.credential) {
+                    console.error('[ICE] TURN server missing credentials');
+                    return false;
+                }
             }
         });
 

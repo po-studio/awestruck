@@ -431,12 +431,84 @@ class AwestruckInfrastructure extends TerraformStack {
       dependsOn: [listener, ...webrtcListeners],
     });
 
-    // STUN server task definition
-    const stunTaskDefinition = new EcsTaskDefinition(
+    // why we need a network load balancer for turn:
+    // - supports udp protocol required for turn/stun
+    // - preserves client ip addresses for nat traversal
+    // - provides lower latency than application load balancer
+    const turnNlb = new Lb(this, "awestruck-turn-nlb", {
+      name: "awestruck-turn-nlb",
+      internal: false,
+      loadBalancerType: "network",
+      subnets: [subnet1.id, subnet2.id],
+      enableCrossZoneLoadBalancing: true,
+    });
+
+    // why we use a single target group for turn:
+    // - handles both stun and turn traffic on same port
+    // - simplifies load balancer configuration
+    // - enables health checks for the service
+    const turnUdpTargetGroup = new LbTargetGroup(this, "awestruck-turn-udp-tg", {
+      name: "awestruck-turn-udp-tg",
+      port: 3478,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        protocol: "TCP",
+        port: "3478",
+        healthyThreshold: 3,
+        unhealthyThreshold: 5,
+        interval: 30,
+        timeout: 10
+      }
+    });
+
+    // why we need a single udp listener:
+    // - handles both stun and turn protocols
+    // - standard port 3478 for both services
+    // - simplifies client configuration
+    const turnUdpListener = new LbListener(this, "turn-udp-listener", {
+      loadBalancerArn: turnNlb.arn,
+      port: 3478,
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: turnUdpTargetGroup.arn,
+      }],
+    });
+
+    // why we need dns records for the turn server:
+    // - enables client discovery of turn services
+    // - allows for future ip changes without client updates
+    // - supports geographic dns routing if needed
+    new Route53Record(this, "turn-dns", {
+      zoneId: hostedZone.zoneId,
+      name: "turn.awestruck.io",
+      type: "A",
+      allowOverwrite: true,
+      alias: {
+        name: turnNlb.dnsName,
+        zoneId: turnNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
+    });
+
+    // why we need a turn log group:
+    // - centralizes turn server logs
+    // - enables log retention policies
+    // - supports cloudwatch monitoring
+    const turnLogGroup = new CloudwatchLogGroup(this, "turn-log-group", {
+      name: `/ecs/turn-server`,
+      retentionInDays: 30,
+    });
+
+    // TURN server task definition
+    const turnTaskDefinition = new EcsTaskDefinition(
       this,
-      "stun-task-definition",
+      "turn-task-definition",
       {
-        family: "stun-server-arm64",
+        family: "turn-server-arm64",
         cpu: "256",
         memory: "512",
         networkMode: "awsvpc",
@@ -449,28 +521,19 @@ class AwestruckInfrastructure extends TerraformStack {
         },
         containerDefinitions: JSON.stringify([
           {
-            name: "stun-server-arm64",
-            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/stun:latest`,
+            name: "turn-server-arm64",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/turn:latest`,
             portMappings: [
               {
                 containerPort: 3478,
                 hostPort: 3478,
                 protocol: "udp"
-              },
-              {
-                containerPort: 3479,
-                hostPort: 3479,
-                protocol: "tcp"
               }
             ],
-            // why we need both container and target group health checks:
-            // - container health check ensures the process is running
-            // - target group health check ensures network connectivity
-            // - both are needed for proper ecs service operation
             healthCheck: {
               command: [
                 "CMD-SHELL",
-                "nc -zv localhost 3479 2>/dev/null || exit 1"
+                "nc -zv localhost 3478 2>/dev/null || exit 1"
               ],
               interval: 30,
               timeout: 10,
@@ -480,9 +543,9 @@ class AwestruckInfrastructure extends TerraformStack {
             logConfiguration: {
               logDriver: "awslogs",
               options: {
-                "awslogs-group": stunLogGroup.name,
+                "awslogs-group": turnLogGroup.name,
                 "awslogs-region": awsRegion,
-                "awslogs-stream-prefix": "stun",
+                "awslogs-stream-prefix": "turn",
               },
             }
           }
@@ -490,77 +553,11 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // why we need a network load balancer for stun:
-    // - supports layer 4 protocols (udp) unlike application load balancer (layer 7 http/https only)
-    // - preserves client source ip addresses which is crucial for stun/ice
-    // - provides lower latency by operating at transport layer
-    // - enables cross-zone load balancing for high availability
-    const stunNlb = new Lb(this, "awestruck-stun-nlb", {
-      name: "awestruck-stun-nlb",
-      internal: false,
-      loadBalancerType: "network",
-      subnets: [subnet1.id, subnet2.id],
-      enableCrossZoneLoadBalancing: true,
-    });
-
-    const stunUdpTargetGroup = new LbTargetGroup(this, "awestruck-stun-udp-tg", {
-      name: "awestruck-stun-udp-tg",
-      port: 3478,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      // why we use tcp/3479 for healthcheck instead of udp/3478:
-      // - tcp provides more reliable health status
-      // - port 3479 dedicated to healthcheck to avoid interference
-      // - longer intervals in production for stability
-      // - higher thresholds to prevent premature failover
-      healthCheck: {
-        enabled: true,
-        protocol: "TCP",
-        port: "3479",
-        healthyThreshold: 3,
-        unhealthyThreshold: 5,
-        interval: 60,
-        timeout: 30
-      },
-      dependsOn: [stunNlb]
-    });
-
-    // why we need dns records for the stun server:
-    // - enables client discovery of stun services
-    // - allows for future ip changes without client updates
-    // - supports geographic dns routing if needed
-    new Route53Record(this, "stun-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "stun.awestruck.io",
-      type: "A",
-      allowOverwrite: true,
-      alias: {
-        name: stunNlb.dnsName,
-        zoneId: stunNlb.zoneId,
-        evaluateTargetHealth: true,
-      },
-    });
-
-    // why we use udp for stun:
-    // - udp is the primary and standard protocol for stun
-    // - lower latency than tcp
-    // - better suited for real-time communications
-    const stunUdpListener = new LbListener(this, "stun-udp-listener", {
-      loadBalancerArn: stunNlb.arn,
-      port: 3478,
-      protocol: "UDP",
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: stunUdpTargetGroup.arn,
-      }],
-    });
-
-    // Update STUN service to use UDP only
-    new EcsService(this, "stun-service", {
-      name: "stun-service",
+    // Update TURN service
+    new EcsService(this, "turn-service", {
+      name: "turn-service",
       cluster: ecsCluster.arn,
-      taskDefinition: stunTaskDefinition.arn,
+      taskDefinition: turnTaskDefinition.arn,
       desiredCount: 1,
       launchType: "FARGATE",
       forceNewDeployment: true,
@@ -571,24 +568,12 @@ class AwestruckInfrastructure extends TerraformStack {
       },
       loadBalancer: [
         {
-          targetGroupArn: stunUdpTargetGroup.arn,
-          containerName: "stun-server-arm64",
+          targetGroupArn: turnUdpTargetGroup.arn,
+          containerName: "turn-server-arm64",
           containerPort: 3478,
         }
       ],
-      dependsOn: [stunUdpListener]
-    });
-
-    // Attach ECR read policy to allow pulling images
-    new IamRolePolicyAttachment(this, "ecs-ecr-policy", {
-      role: ecsTaskExecutionRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
-    });
-
-    // Add CloudWatch metrics permissions to task role
-    new IamRolePolicyAttachment(this, "cloudwatch-metrics-policy", {
-      role: ecsTaskRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+      dependsOn: [turnUdpListener]
     });
 
     // Add CloudWatch dashboard for monitoring both services
@@ -615,9 +600,9 @@ class AwestruckInfrastructure extends TerraformStack {
             width: 12,
             height: 6,
             properties: {
-              query: `SOURCE '${stunLogGroup.name}' | fields @timestamp, @message | sort @timestamp desc | limit 100`,
+              query: `SOURCE '${turnLogGroup.name}' | fields @timestamp, @message | sort @timestamp desc | limit 100`,
               region: awsRegion,
-              title: "STUN Server Logs",
+              title: "TURN Server Logs",
             },
           },
           {
@@ -628,17 +613,29 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               metrics: [
-                ["AWS/ECS", "CPUUtilization", "ServiceName", "stun-service", "ClusterName", "awestruck"],
+                ["AWS/ECS", "CPUUtilization", "ServiceName", "turn-service", "ClusterName", "awestruck"],
                 [".", "MemoryUtilization", ".", ".", ".", "."]
               ],
               region: awsRegion,
-              title: "STUN Server Resources",
+              title: "TURN Server Resources",
               period: 300,
               stat: "Average",
             },
           },
         ],
       }),
+    });
+
+    // Attach ECR read policy to allow pulling images
+    new IamRolePolicyAttachment(this, "ecs-ecr-policy", {
+      role: ecsTaskExecutionRole.name,
+      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    });
+
+    // Add CloudWatch metrics permissions to task role
+    new IamRolePolicyAttachment(this, "cloudwatch-metrics-policy", {
+      role: ecsTaskRole.name,
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
     });
   }
 }

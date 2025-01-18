@@ -531,26 +531,37 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 }
 
 // why we need ice configuration validation:
-// - ensures STUN servers are properly configured
-// - validates URL format
+// - ensures STUN/TURN servers are properly configured
+// - validates URL format and credentials
 // - verifies required parameters are present
 func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 	logWithTime("[ICE] Verifying ICE configuration with %d servers", len(iceServers))
-	hasSTUN := false
+	hasSTUNorTURN := false
 
 	for _, server := range iceServers {
 		logWithTime("[ICE] Checking server URLs: %v", server.URLs)
 		for _, url := range server.URLs {
 			if strings.HasPrefix(url, "stun:") {
-				hasSTUN = true
+				hasSTUNorTURN = true
 				logWithTime("[ICE] Found valid STUN URL: %s", url)
+			} else if strings.HasPrefix(url, "turn:") {
+				hasSTUNorTURN = true
+				// why we validate turn credentials:
+				// - ensures proper authentication
+				// - prevents connection failures
+				// - maintains security requirements
+				if server.Username == "" || server.Credential == nil {
+					logWithTime("[ICE][ERROR] TURN server missing credentials")
+					return fmt.Errorf("TURN server missing credentials")
+				}
+				logWithTime("[ICE] Found valid TURN URL: %s", url)
 			}
 		}
 	}
 
-	if !hasSTUN {
-		logWithTime("[ICE][ERROR] No valid STUN URLs found")
-		return fmt.Errorf("no valid STUN URLs found in ICE configuration")
+	if !hasSTUNorTURN {
+		logWithTime("[ICE][ERROR] No valid STUN/TURN URLs found")
+		return fmt.Errorf("no valid STUN/TURN URLs found in ICE configuration")
 	}
 
 	return nil
@@ -579,13 +590,21 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 	logWithTime("[ICE] Set timeouts: disconnected=%v, failed=%v, keepalive=%v",
 		iceDisconnectedTimeout, iceFailedTimeout, iceKeepaliveInterval)
 
+	// why we enable relay candidates:
+	// - allows TURN server usage
+	// - improves NAT traversal
+	// - supports symmetric NAT scenarios
 	s.SetIncludeLoopbackCandidate(false)
 	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
 	logWithTime("[ICE] Configured NAT and candidate settings")
 
-	s.SetHostAcceptanceMinWait(1000 * time.Millisecond)
-	s.SetSrflxAcceptanceMinWait(3000 * time.Millisecond)
-	s.SetPrflxAcceptanceMinWait(1000 * time.Millisecond)
+	// why we adjust candidate timing:
+	// - allows time for TURN allocation
+	// - improves connection reliability
+	// - handles cloud networking delays
+	s.SetHostAcceptanceMinWait(500 * time.Millisecond)
+	s.SetSrflxAcceptanceMinWait(1000 * time.Millisecond)
+	s.SetRelayAcceptanceMinWait(2000 * time.Millisecond)
 	logWithTime("[ICE] Set candidate acceptance delays")
 
 	s.SetLite(false)
@@ -609,8 +628,10 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// when using ICETransportPolicyRelay, a TURN server is required as only relayed candidates will be used
-		// since we only have STUN configured, we should use ICETransportPolicyAll to allow all candidate types
+		// why we use ICETransportPolicyAll:
+		// - allows both STUN and TURN candidates
+		// - provides fallback options
+		// - improves connection success rate
 		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)

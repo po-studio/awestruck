@@ -1,6 +1,10 @@
 version: '3.8'
 
 services:
+  # why we need a webrtc service:
+  # - handles audio synthesis and streaming
+  # - manages webrtc connections
+  # - provides api endpoints
   webrtc-server:
     platform: linux/arm64
     build:
@@ -26,41 +30,42 @@ services:
         hard: 67108864
       rtprio: 99
     environment:
+      - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
+      - AWESTRUCK_ENV=development
       - JACK_NO_AUDIO_RESERVATION=1
       - JACK_PORT_MAX=128
       - GST_DEBUG=2
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
-      - AWESTRUCK_ENV=development
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
       - STUN_SERVER=localhost:3478
+      - GST_BUFFER_SIZE=4194304
     cap_add:
       - SYS_NICE
     network_mode: host
     depends_on:
-      stun-server:
+      turn-server:
         condition: service_healthy
-
-  stun-server:
-    platform: linux/arm64
+  # why we need a turn service:
+  # - provides both stun and turn functionality
+  # - enables nat traversal for webrtc
+  # - improves connection reliability
+  turn-server:
     build:
       context: .
-      dockerfile: Dockerfile.stun
-      platforms:
-        - linux/arm64
-    container_name: stun-server-arm64
+      dockerfile: Dockerfile.turn
+    platform: linux/arm64
+    container_name: turn-server-linux-arm64-instance
     ports:
       - "3478:3478/udp"
-      - "3479:3479/tcp"
-    network_mode: host
-    restart: unless-stopped
-    # why we use more aggressive healthcheck timing in development:
-    # - faster feedback loop for local development
-    # - less resource constrained than production
-    # - quicker container replacement on failure
+      - "3479:3479"
+    environment:
+      - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
+    volumes:
+      - ./turn:/app/turn
     healthcheck:
-      test: ["CMD-SHELL", "nc -zv localhost 3479 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD", "curl", "-f", "http://localhost:3479/health"]
+      interval: 30s
+      timeout: 10s
       retries: 5
-      start_period: 2s
+      start_period: 5s
