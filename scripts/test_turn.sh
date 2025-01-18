@@ -7,7 +7,7 @@
 
 echo "Testing TURN server connectivity..."
 
-# Test STUN binding
+# Test STUN binding (provided by TURN server)
 echo "Testing STUN binding request..."
 turnutils_stunclient localhost 3478
 

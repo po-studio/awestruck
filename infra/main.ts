@@ -460,8 +460,8 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     // why we need a single udp listener:
-    // - handles both stun and turn protocols
-    // - standard port 3478 for both services
+    // - handles both stun and turn protocols on standard port 3478
+    // - provides nat traversal and relay capabilities
     // - simplifies client configuration
     const turnUdpListener = new LbListener(this, "turn-udp-listener", {
       loadBalancerArn: turnNlb.arn,
@@ -474,7 +474,7 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     // why we need dns records for the turn server:
-    // - enables client discovery of turn services
+    // - enables client discovery of turn/stun services
     // - allows for future ip changes without client updates
     // - supports geographic dns routing if needed
     new Route53Record(this, "turn-dns", {

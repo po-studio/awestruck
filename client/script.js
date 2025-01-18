@@ -147,48 +147,48 @@ window.TURN_SERVERS = window.location.hostname === 'localhost'
 const TURN_CREDENTIAL = 'awestruck-turn-static-auth-key';
 
 // why we need ice configuration:
-// - enables discovery through our STUN/TURN server
+// - enables discovery through our TURN server (which also provides STUN)
 // - allows host candidates for container communication
 // - ensures consistent behavior across environments
 const ICE_CONFIG = {
-    development: {
-        iceServers: [
-            {
-                urls: window.TURN_SERVERS.map(server => [
-                    `stun:${server}`,
-                    `turn:${server}`
-                ]).flat(),
-                username: 'default',
-                credential: TURN_CREDENTIAL
-            }
-        ],
-        iceCandidatePoolSize: 1,
-        rtcpMuxPolicy: 'require',
-        bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all'
-    },
-    production: {
-        iceServers: [
-            {
-                urls: window.TURN_SERVERS.map(server => [
-                    `stun:${server}`,
-                    `turn:${server}`
-                ]).flat(),
-                username: 'default',
-                credential: TURN_CREDENTIAL
-            },
-            {
-                urls: [
-                    "stun:stun.l.google.com:19302",
-                    "stun:stun1.l.google.com:19302"
-                ]
-            }
-        ],
-        iceCandidatePoolSize: 1,
-        rtcpMuxPolicy: 'require',
-        bundlePolicy: 'max-bundle',
-        iceTransportPolicy: 'all'
-    }
+  development: {
+    iceServers: [
+      {
+        urls: window.TURN_SERVERS.map(server => [
+          `stun:${server}`,
+          `turn:${server}`
+        ]).flat(),
+        username: 'default',
+        credential: TURN_CREDENTIAL
+      }
+    ],
+    iceCandidatePoolSize: 1,
+    rtcpMuxPolicy: 'require',
+    bundlePolicy: 'max-bundle',
+    iceTransportPolicy: 'all'
+  },
+  production: {
+    iceServers: [
+      {
+        urls: window.TURN_SERVERS.map(server => [
+          `stun:${server}`,
+          `turn:${server}`
+        ]).flat(),
+        username: 'default',
+        credential: TURN_CREDENTIAL
+      },
+      {
+        urls: [
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302"
+        ]
+      }
+    ],
+    iceCandidatePoolSize: 1,
+    rtcpMuxPolicy: 'require',
+    bundlePolicy: 'max-bundle',
+    iceTransportPolicy: 'all'
+  }
 };
 
 // why we need flexible ice validation:
@@ -196,39 +196,39 @@ const ICE_CONFIG = {
 // - supports container-to-container communication
 // - maintains logging for monitoring
 function validateIceConfig(config) {
-    if (!config || !config.iceServers) {
-        console.error('[ICE] Invalid ICE configuration');
-        return false;
+  if (!config || !config.iceServers) {
+    console.error('[ICE] Invalid ICE configuration');
+    return false;
+  }
+
+  const hasValidServer = config.iceServers.some(server => {
+    if (!server.urls) {
+      console.error('[ICE] Missing URLs');
+      return false;
     }
 
-    const hasValidServer = config.iceServers.some(server => {
-        if (!server.urls) {
-            console.error('[ICE] Missing URLs');
-            return false;
+    // Log all URL types for monitoring
+    server.urls.forEach(url => {
+      if (url.startsWith('stun:')) {
+        console.log('[ICE] Found STUN URL:', url);
+      } else if (url.startsWith('turn:')) {
+        console.log('[ICE] Found TURN URL:', url);
+        if (!server.username || !server.credential) {
+          console.error('[ICE] TURN server missing credentials');
+          return false;
         }
-
-        // Log all URL types for monitoring
-        server.urls.forEach(url => {
-            if (url.startsWith('stun:')) {
-                console.log('[ICE] Found STUN URL:', url);
-            } else if (url.startsWith('turn:')) {
-                console.log('[ICE] Found TURN URL:', url);
-                if (!server.username || !server.credential) {
-                    console.error('[ICE] TURN server missing credentials');
-                    return false;
-                }
-            }
-        });
-
-        return true;
+      }
     });
 
-    if (!hasValidServer) {
-        console.error('[ICE] No valid server configuration found');
-        return false;
-    }
-
     return true;
+  });
+
+  if (!hasValidServer) {
+    console.error('[ICE] No valid server configuration found');
+    return false;
+  }
+
+  return true;
 }
 
 // Manual click handler (e.g., if not using HTMX for some flows)
