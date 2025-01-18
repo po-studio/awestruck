@@ -24,28 +24,13 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - production: use task ENI IP for ECS/NLB
-// - local docker: use host machine IP
-// - prevents using internal container IPs
+// - bind to all interfaces (0.0.0.0) to let AWS handle routing
+// - client configuration will use NLB DNS name
+// - prevents hardcoding of IPs that may change
 func getRelayAddress() (net.IP, error) {
 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		// In ECS, the task ENI IP is the first non-loopback IP on eth0
-		iface, err := net.InterfaceByName("eth0")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get eth0 interface: %v", err)
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get eth0 addresses: %v", err)
-		}
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
-					return ipv4, nil
-				}
-			}
-		}
-		return nil, fmt.Errorf("no IPv4 address found on eth0")
+		// In production, bind to all interfaces and let AWS handle routing
+		return net.ParseIP("0.0.0.0"), nil
 	}
 
 	// For local development in Docker, try to get host IP via environment
@@ -62,7 +47,7 @@ func getRelayAddress() (net.IP, error) {
 	}
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok {
-			if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !isDockerIP(ipv4) {
+			if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !ipv4.IsLinkLocalUnicast() && !isDockerIP(ipv4) {
 				return ipv4, nil
 			}
 		}

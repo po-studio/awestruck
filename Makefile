@@ -118,9 +118,11 @@ aws-push-turn: aws-login
 
 deploy-all: aws-login build build-turn
 	@echo "Deploying all services..."
-	# Tag TURN server image for ECR
+	# Tag and push WebRTC server
+	@docker tag $(IMAGE_NAME) $(ECR_WEBRTC_URL):latest
+	@docker push $(ECR_WEBRTC_URL):latest
+	# Tag and push TURN server
 	@docker tag $(TURN_IMAGE_NAME) $(ECR_TURN_URL):latest
-	# Push TURN server to ECR
 	@docker push $(ECR_TURN_URL):latest
 	# Deploy infrastructure
 	@cd infra && npm install && npm run deploy
