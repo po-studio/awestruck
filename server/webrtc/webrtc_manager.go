@@ -50,8 +50,8 @@ type portManager struct {
 var (
 	pm = &portManager{
 		ports:    make(map[int]string),
-		basePort: 10000,
-		maxPort:  10010,
+		basePort: 10000, // TODO: make this an env variable that is shared by main.ts
+		maxPort:  10010, // TODO: make this an env variable that is shared by main.ts
 	}
 )
 

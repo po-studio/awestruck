@@ -131,9 +131,12 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // Where clients connect from
-          fromPort: 32768, // 10000
-          toPort: 65535, // 10010
+          // why we need turn relay ports:
+          // - used by turn server for media relay
+          // - matches container port mappings
+          // - supports multiple simultaneous relays
+          fromPort: 49152,
+          toPort: 65535,  // matches container definition
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
