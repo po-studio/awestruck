@@ -1,13 +1,9 @@
 package turn
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -28,65 +24,38 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - production: use container's IP from ECS metadata
+// - production: use eth0 IP from container
 // - local docker: use host machine IP
 // - prevents using wrong IPs in each environment
 func getRelayAddress() (net.IP, error) {
 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		log.Printf("Running in production mode, checking ECS metadata endpoint")
+		log.Printf("Running in production mode, getting eth0 IP")
 
-		// Get container IP from ECS metadata endpoint
-		metadataEndpoint := os.Getenv("ECS_CONTAINER_METADATA_URI_V4")
-		if metadataEndpoint == "" {
-			log.Printf("ECS_CONTAINER_METADATA_URI_V4 not set")
-			metadataEndpoint = "http://169.254.170.2/v2/metadata"
-		}
-
-		log.Printf("Using metadata endpoint: %s", metadataEndpoint)
-		client := http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Get(metadataEndpoint)
+		// In ECS with awsvpc mode, eth0 is our primary interface
+		iface, err := net.InterfaceByName("eth0")
 		if err != nil {
-			log.Printf("Failed to get metadata: %v", err)
-			return nil, fmt.Errorf("failed to get container metadata: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			log.Printf("Metadata endpoint returned status %d", resp.StatusCode)
-			return nil, fmt.Errorf("metadata endpoint returned status %d", resp.StatusCode)
+			log.Printf("Failed to get eth0 interface: %v", err)
+			return nil, fmt.Errorf("failed to get eth0 interface: %v", err)
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		addrs, err := iface.Addrs()
 		if err != nil {
-			log.Printf("Failed to read metadata response: %v", err)
-			return nil, fmt.Errorf("failed to read metadata response: %v", err)
+			log.Printf("Failed to get eth0 addresses: %v", err)
+			return nil, fmt.Errorf("failed to get eth0 addresses: %v", err)
 		}
 
-		log.Printf("Got metadata response: %s", string(body))
-
-		var metadata struct {
-			Networks []struct {
-				IPv4Addresses []string `json:"IPv4Addresses"`
-			} `json:"Networks"`
-		}
-
-		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&metadata); err != nil {
-			log.Printf("Failed to decode metadata: %v", err)
-			return nil, fmt.Errorf("failed to decode metadata: %v", err)
-		}
-
-		for _, network := range metadata.Networks {
-			for _, ipStr := range network.IPv4Addresses {
-				ip := net.ParseIP(ipStr)
-				if ip != nil && ip.To4() != nil {
-					log.Printf("Found container IP: %s", ip.String())
-					return ip, nil
+		for _, addr := range addrs {
+			log.Printf("Found eth0 address: %v", addr)
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					log.Printf("Using eth0 IP for relay: %s", ipv4.String())
+					return ipv4, nil
 				}
 			}
 		}
 
-		log.Printf("No IPv4 address found in metadata")
-		return nil, fmt.Errorf("no IPv4 address found in metadata")
+		log.Printf("No IPv4 address found on eth0")
+		return nil, fmt.Errorf("no IPv4 address found on eth0")
 	}
 
 	// For local development in Docker, try to get host IP via environment
