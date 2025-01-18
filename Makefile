@@ -11,9 +11,7 @@ TURN_IMAGE_NAME = turn-server-$(subst /,-,$(PLATFORM))
 AWS_REGION ?= us-east-1
 AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output text)
 ECR_WEBRTC_REPO = po-studio/awestruck/services/webrtc
-ECR_STUN_REPO = po-studio/awestruck/services/stun
 ECR_WEBRTC_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_WEBRTC_REPO)
-ECR_STUN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_STUN_REPO)
 ECR_TURN_REPO = po-studio/awestruck/services/turn
 ECR_TURN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_TURN_REPO)
 

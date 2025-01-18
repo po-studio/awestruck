@@ -138,10 +138,7 @@ function waitForICEConnection(pc) {
 // - improves connection reliability
 window.TURN_SERVERS = window.location.hostname === 'localhost'
   ? ['127.0.0.1:3478']
-  : [
-      'turn1.awestruck.io:3478',  // Primary TURN server
-      'turn2.awestruck.io:3478'   // Secondary TURN server for redundancy
-    ];
+  : ['turn.awestruck.io:3478'];
 
 // why we use a static credential:
 // - simplifies initial implementation
@@ -168,7 +165,7 @@ const ICE_CONFIG = {
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay'  // Use relay in both environments for consistency
+    iceTransportPolicy: 'relay'
   },
   production: {
     iceServers: [
