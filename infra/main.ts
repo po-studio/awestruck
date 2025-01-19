@@ -378,11 +378,11 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need a single listener for webrtc:
-    // - handles all udp traffic on ports 10000-10010
-    // - routes to single target group
-    // - simplifies load balancer configuration
-    const webrtcUdpListener = new LbListener(this, "webrtc-udp-listener", {
+    // why we need multiple nlb listeners:
+    // - each webrtc port needs its own listener
+    // - enables proper routing of udp traffic
+    // - matches container port mappings
+    const webrtcUdpListener = new LbListener(this, "webrtc-udp-listener-10000", {
       loadBalancerArn: webrtcNlb.arn,
       port: 10000,
       protocol: "UDP",
@@ -391,6 +391,19 @@ class AwestruckInfrastructure extends TerraformStack {
         targetGroupArn: webrtcUdpTargetGroup.arn
       }]
     });
+
+    // Create additional listeners for ports 10001-10010
+    for (let port = 10001; port <= 10010; port++) {
+      new LbListener(this, `webrtc-udp-listener-${port}`, {
+        loadBalancerArn: webrtcNlb.arn,
+        port: port,
+        protocol: "UDP",
+        defaultAction: [{
+          type: "forward",
+          targetGroupArn: webrtcUdpTargetGroup.arn
+        }]
+      });
+    }
 
     // Update awestruck-service to use both load balancers
     new EcsService(this, "awestruck-service", {
@@ -559,7 +572,7 @@ class AwestruckInfrastructure extends TerraformStack {
       forceNewDeployment: true,
       networkConfiguration: {
         assignPublicIp: true,
-        subnets: [subnet1.id],
+        subnets: [subnet1.id, subnet2.id],
         securityGroups: [turnSecurityGroup.id],
       }
     });

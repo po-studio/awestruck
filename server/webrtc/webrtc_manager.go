@@ -572,11 +572,15 @@ func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
 				// - ensures proper authentication
 				// - prevents connection failures
 				// - maintains security requirements
-				if server.Username == "" || server.Credential == nil {
+				if server.Username == "" {
+					logWithTime("[ICE][ERROR] TURN server missing username")
+					return fmt.Errorf("TURN server missing username")
+				}
+				if server.Credential == nil && server.Username != "user" {
 					logWithTime("[ICE][ERROR] TURN server missing credentials")
 					return fmt.Errorf("TURN server missing credentials")
 				}
-				logWithTime("[ICE] Found valid TURN URL: %s", url)
+				logWithTime("[ICE] Found valid TURN URL: %s with username: %s", url, server.Username)
 			}
 		}
 	}

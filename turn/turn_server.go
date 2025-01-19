@@ -143,10 +143,11 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 			if username == "user" {
 				key := turn.GenerateAuthKey(username, realm, "pass")
 				log.Printf("[AUTH] Generated key for user: %x", key)
+				log.Printf("[AUTH] Realm: %s, Username: %s, Password: %s", realm, username, "pass")
 				return key, true
 			}
 
-			log.Printf("[AUTH] Unknown user: %s", username)
+			log.Printf("[AUTH] Unknown user: %s (expected: user)", username)
 			return nil, false
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
