@@ -177,7 +177,7 @@ const ICE_CONFIG = {
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'all',
+    iceTransportPolicy: 'relay',  // Force relay-only in production
     iceCheckingTimeout: 5000,
     gatheringTimeout: 5000
   }

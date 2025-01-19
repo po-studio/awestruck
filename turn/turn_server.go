@@ -137,17 +137,13 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		// - logs auth attempts for debugging
 		// - supports static credentials for testing
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-			log.Printf("[AUTH] Request from %v username: %s realm: %s", srcAddr, username, realm)
-
-			// For local development, use static credentials
+			log.Printf("[AUTH] Received auth request: username=%q realm=%q from=%v", username, realm, srcAddr)
 			if username == "user" {
 				key := turn.GenerateAuthKey(username, realm, "pass")
-				log.Printf("[AUTH] Generated key for user: %x", key)
-				log.Printf("[AUTH] Realm: %s, Username: %s, Password: %s", realm, username, "pass")
+				log.Printf("[AUTH] Generated key for user=%q realm=%q", username, realm)
 				return key, true
 			}
-
-			log.Printf("[AUTH] Unknown user: %s (expected: user)", username)
+			log.Printf("[AUTH] Unknown user: %q (expected: user)", username)
 			return nil, false
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{

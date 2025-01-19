@@ -488,27 +488,7 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 	peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
 			candidateStr := candidate.String()
-
-			// why we need strict candidate filtering in production:
-			// - fargate requires relay candidates
-			// - host/srflx candidates won't work
-			// - prevents unnecessary ice checks
-			if os.Getenv("AWESTRUCK_ENV") == "production" {
-				if !strings.Contains(candidateStr, "typ relay") {
-					log.Printf("[ICE] Filtering non-relay candidate in production: %s", candidateStr)
-					return
-				}
-				log.Printf("[ICE] Allowing relay candidate in production: %s", candidateStr)
-			} else {
-				// In development, log all candidates but prefer STUN
-				if strings.Contains(candidateStr, "typ srflx") {
-					log.Printf("[ICE] Processing STUN candidate: %s", candidateStr)
-				} else if strings.Contains(candidateStr, "typ host") {
-					log.Printf("[ICE] Processing host candidate: %s", candidateStr)
-				} else if strings.Contains(candidateStr, "typ relay") {
-					log.Printf("[ICE] Processing relay candidate: %s", candidateStr)
-				}
-			}
+			log.Printf("[ICE] Processing candidate: %s", candidateStr)
 
 			// Only send candidates after remote description is set
 			if peerConnection.RemoteDescription() == nil {
@@ -654,11 +634,16 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// why we need ICETransportPolicyAll:
-		// - allows direct media connections through NLB
-		// - uses TURN only for connection establishment
-		// - enables efficient audio streaming
-		ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		// why we need ICETransportPolicyRelay in production:
+		// - fargate requires relay candidates due to container networking
+		// - host/srflx candidates won't work in ECS
+		// - ensures consistent behavior in production
+		ICETransportPolicy: func() webrtc.ICETransportPolicy {
+			if os.Getenv("AWESTRUCK_ENV") == "production" {
+				return webrtc.ICETransportPolicyRelay
+			}
+			return webrtc.ICETransportPolicyAll
+		}(),
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 
