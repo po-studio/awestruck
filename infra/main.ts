@@ -558,7 +558,7 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     // Output Elastic IP for reference
-    new TerraformOutput(this, "turn-elastic-ip", {
+    new TerraformOutput(this, "turn-elastic-ip-output", {
       value: turnElasticIp.publicIp,
       description: "Elastic IP for TURN server",
     });
