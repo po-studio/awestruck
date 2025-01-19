@@ -563,30 +563,6 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "Elastic IP for TURN server",
     });
 
-    // why we need a separate target group for relay ports:
-    // - handles media relay traffic on ephemeral ports 49152-49252
-    // - enables proper health checks
-    // - supports multiple simultaneous relay sessions through port range
-    const turnRelayTargetGroup = new LbTargetGroup(this, "awestruck-turn-relay-tg", {
-      name: "awestruck-turn-relay-tg",
-      port: 49152,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        protocol: "TCP",
-        port: "3479",
-        healthyThreshold: 3,
-        unhealthyThreshold: 5,
-        interval: 30,
-        timeout: 10
-      },
-      lifecycle: {
-        createBeforeDestroy: true
-      }
-    });
-
     // why we need a turn service:
     // - runs our pion turn implementation
     // - enables proper monitoring
