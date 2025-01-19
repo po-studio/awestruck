@@ -130,7 +130,7 @@ class AwestruckInfrastructure extends TerraformStack {
           // - port range supports up to 11 concurrent sessions
           // - matches webrtc_manager allocation (10000-10010)
           fromPort: 10000,
-          toPort: 10004,
+          toPort: 10010,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -357,51 +357,39 @@ class AwestruckInfrastructure extends TerraformStack {
       enableCrossZoneLoadBalancing: true,
     });
 
-    // why we need webrtc media ports:
-    // - each session needs exactly one port
-    // - port range supports up to 11 concurrent sessions
-    // - matches webrtc_manager allocation (10000-10010)
-    const webrtcUdpTargetGroups = Array.from({ length: 5 }, (_, i) => {
-      const port = 10000 + i;
-      return new LbTargetGroup(this, `awestruck-webrtc-udp-tg-${port}`, {
-        name: `awestruck-webrtc-tg-${port}`,
-        port: port,
-        protocol: "UDP",
-        targetType: "ip",
-        vpcId: vpc.id,
-        healthCheck: {
-          enabled: true,
-          protocol: "TCP",
-          port: "8080",
-          healthyThreshold: 3,
-          unhealthyThreshold: 5,
-          interval: 30,
-          timeout: 10
-        },
-        lifecycle: {
-          createBeforeDestroy: true
-        }
-      });
+    // why we need a single target group for webrtc:
+    // - aws limits services to 5 load balancer target groups
+    // - single target group handles all webrtc ports (10000-10010)
+    // - enables proper session routing through nlb
+    const webrtcUdpTargetGroup = new LbTargetGroup(this, "awestruck-webrtc-udp-tg", {
+      name: "awestruck-webrtc-tg",
+      port: 10000,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "8080",
+        protocol: "TCP",
+        interval: 30,
+        timeout: 10,
+        healthyThreshold: 3,
+        unhealthyThreshold: 5
+      }
     });
 
-    // why we need a listener per port:
-    // - each session gets its own dedicated port
-    // - enables proper session isolation
-    // - supports up to 11 concurrent sessions
-    const webrtcUdpListeners = webrtcUdpTargetGroups.map((tg, i) => {
-      const port = 10000 + i;
-      return new LbListener(this, `webrtc-udp-listener-${port}`, {
-        loadBalancerArn: webrtcNlb.arn,
-        port: port,
-        protocol: "UDP",
-        defaultAction: [{
-          type: "forward",
-          targetGroupArn: tg.arn,
-        }],
-        lifecycle: {
-          createBeforeDestroy: true
-        }
-      });
+    // why we need a single listener for webrtc:
+    // - handles all udp traffic on ports 10000-10010
+    // - routes to single target group
+    // - simplifies load balancer configuration
+    const webrtcUdpListener = new LbListener(this, "webrtc-udp-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 10000,
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: webrtcUdpTargetGroup.arn
+      }]
     });
 
     // Update awestruck-service to use both load balancers
@@ -425,17 +413,13 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         },
         // WebRTC UDP traffic through NLB
-        // why we need all port mappings:
-        // - each target group handles a specific port
-        // - matches webrtc_manager port allocation
-        // - enables proper session routing
-        ...webrtcUdpTargetGroups.map((tg, i) => ({
-          targetGroupArn: tg.arn,
+        {
+          targetGroupArn: webrtcUdpTargetGroup.arn,
           containerName: "server-arm64",
-          containerPort: 10000 + i,
-        }))
+          containerPort: 10000,
+        }
       ],
-      dependsOn: [listener, ...webrtcUdpListeners],
+      dependsOn: [listener, webrtcUdpListener],
     });
 
     // why we need a separate security group for turn:

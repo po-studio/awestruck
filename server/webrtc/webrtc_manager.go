@@ -52,7 +52,7 @@ var (
 	pm = &portManager{
 		ports:    make(map[int]string),
 		basePort: 10000,
-		maxPort:  10004, // supports up to 100 concurrent sessions
+		maxPort:  10010, // supports up to 100 concurrent sessions
 	}
 )
 
