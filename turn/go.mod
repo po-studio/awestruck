@@ -2,7 +2,7 @@ module github.com/po/awestruck/turn
 
 go 1.21
 
-require github.com/pion/turn/v2 v2.1.4
+require github.com/pion/turn/v2 v2.1.5
 
 require (
 	github.com/pion/dtls/v2 v2.2.7 // indirect

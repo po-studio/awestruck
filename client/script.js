@@ -137,54 +137,13 @@ function waitForICEConnection(pc) {
 // - turn as fallback for symmetric nat
 // - improves connection reliability
 window.TURN_SERVERS = window.location.hostname === 'localhost'
-  ? ['127.0.0.1:3478']
+  ? ['localhost:3478']  // Use localhost for local development
   : ['turn.awestruck.io:3478'];
 
-// why we need environment-based realm:
-// - matches server configuration
-// - ensures consistent auth across environments
-// - prevents credential mismatch
-// 
-// TODO: set this in env
-const TURN_REALM = window.location.hostname === 'localhost' ? 'localhost' : 'awestruck.io';
-
-// why we need hmac-based turn auth:
-// - follows turn protocol spec
-// - ensures credential integrity
-// - prevents mitm attacks
-function generateTurnCredentials(username, key) {
-  // TURN username is timestamp:username
-  const timestamp = Math.floor(Date.now() / 1000) + 24 * 3600;  // Valid for 24 hours
-  const turnUsername = `${timestamp}:${username}`;
-  
-  // TURN credential is HMAC-SHA1 of username using key
-  const hmac = CryptoJS.HmacSHA1(turnUsername, key);
-  const credential = hmac.toString(CryptoJS.enc.Base64);
-  
-  console.log('[TURN] Generated credentials:', {
-    username: turnUsername,
-    timestamp: timestamp,
-    credentialLength: credential.length,
-    realm: TURN_REALM,
-    hmacInput: turnUsername  // Log what we're hashing for debugging
-  });
-  
-  return {
-    username: turnUsername,
-    credential: credential
-  };
-}
-
-// why we use a static credential:
-// - simplifies initial implementation
-// - can be replaced with dynamic auth later
-// - allows for testing and development
-const TURN_CREDENTIAL = 'awestruck-turn-static-auth-key';
-
-// why we need ice configuration:
-// - enables discovery through our TURN server (which also provides STUN)
-// - allows host candidates for container communication
-// - ensures consistent behavior across environments
+// why we need optimized ice configuration:
+// - improves connection reliability
+// - handles retransmissions better
+// - provides better debugging info
 const ICE_CONFIG = {
   development: {
     iceServers: [
@@ -193,14 +152,16 @@ const ICE_CONFIG = {
           `stun:${server}`,
           `turn:${server}`
         ]).flat(),
-        ...generateTurnCredentials('default', TURN_CREDENTIAL),
-        realm: TURN_REALM
+        username: 'user',     // Static username matching server
+        credential: 'pass'    // Static password matching server
       }
     ],
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'all'
+    iceTransportPolicy: 'all',
+    iceCheckingTimeout: 5000,
+    gatheringTimeout: 5000
   },
   production: {
     iceServers: [
@@ -209,14 +170,16 @@ const ICE_CONFIG = {
           `stun:${server}`,
           `turn:${server}`
         ]).flat(),
-        ...generateTurnCredentials('default', TURN_CREDENTIAL),
-        realm: TURN_REALM
+        username: 'user',     // Static username matching server
+        credential: 'pass'    // Static password matching server
       }
     ],
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'all'  // Force TURN relay for consistent behavior
+    iceTransportPolicy: 'all',
+    iceCheckingTimeout: 5000,
+    gatheringTimeout: 5000
   }
 };
 

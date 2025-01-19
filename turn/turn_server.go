@@ -6,14 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"strconv"
-	"strings"
-	"sync"
 	"time"
-
-	"crypto/hmac"
-	"crypto/sha1"
-	"crypto/subtle"
 
 	"github.com/pion/turn/v2"
 )
@@ -23,24 +16,29 @@ import (
 // - enables reliable WebRTC connections through symmetric NATs
 // - allows for custom configuration and monitoring
 type TurnServer struct {
-	server      *turn.Server
-	realm       string
-	udpPort     int
-	stopped     bool
-	credentials sync.Map // thread-safe map for credential management
-	authKey     []byte   // static auth key
+	server  *turn.Server
+	realm   string
+	udpPort int
+	stopped bool
 }
 
 // why we need proper relay address detection:
 // - production: use container's network interface
-// - local docker: use host machine IP
-// - prevents using wrong IPs in each environment
+// - local docker: use localhost for testing
+// - prevents binding errors in development
 func getRelayAddress() (net.IP, error) {
 	log.Printf("getRelayAddress: Starting IP detection")
 
 	env := os.Getenv("AWESTRUCK_ENV")
 	log.Printf("getRelayAddress: Environment is %q", env)
 
+	// For local development, just use localhost
+	if env == "" || env == "development" {
+		log.Printf("getRelayAddress: Using localhost for local development")
+		return net.ParseIP("127.0.0.1"), nil
+	}
+
+	// Production logic remains unchanged
 	if env == "production" {
 		log.Printf("getRelayAddress: Running in production mode")
 
@@ -91,26 +89,8 @@ func getRelayAddress() (net.IP, error) {
 		return nil, fmt.Errorf("no suitable IPv4 address found on any interface")
 	}
 
-	// For local development in Docker, try to get host IP via environment
-	if hostIP := os.Getenv("HOST_IP"); hostIP != "" {
-		if ip := net.ParseIP(hostIP); ip != nil {
-			return ip, nil
-		}
-	}
-
-	// Fallback: try to find a suitable IP address for local development
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get interface addresses: %v", err)
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok {
-			if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !ipv4.IsLinkLocalUnicast() && !isDockerIP(ipv4) {
-				return ipv4, nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("no suitable IPv4 address found")
+	// Fallback to localhost if nothing else works
+	return net.ParseIP("127.0.0.1"), nil
 }
 
 // why we need docker ip detection:
@@ -138,17 +118,14 @@ func isDockerIP(ip net.IP) bool {
 	return false
 }
 
+// why we need proper turn auth:
+// - follows RFC 5389/5766 TURN protocol
+// - uses MD5 hash of username:realm:password
+// - matches pion/turn's GenerateAuthKey implementation
 func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
-	// why we need enhanced auth logging:
-	// - tracks credential validation steps
-	// - helps diagnose auth failures
-	// - monitors timestamp validation
-	authKey := []byte("awestruck-turn-static-auth-key")
-
 	server := &TurnServer{
 		realm:   realm,
 		udpPort: udpPort,
-		authKey: authKey,
 	}
 
 	log.Printf("[TURN] Starting server with realm: %q, port: %d", realm, udpPort)
@@ -176,44 +153,21 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 	s, err := turn.NewServer(turn.ServerConfig{
 		Realm: realm,
 		// why we need optimized server config:
-		// - improves connection stability
-		// - reduces resource usage
-		// - supports high concurrency
-		LoggerFactory: nil, // Use our own logging
+		// - uses turn.GenerateAuthKey for proper auth
+		// - logs auth attempts for debugging
+		// - supports static credentials for testing
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-			log.Printf("[AUTH] Request from %v - username: %s, realm: %s", srcAddr, username, realm)
+			log.Printf("[AUTH] Request from %v username: %s realm: %s", srcAddr, username, realm)
 
-			parts := strings.Split(username, ":")
-			if len(parts) != 2 {
-				log.Printf("[AUTH] ❌ Invalid username format: %s (expected timestamp:identifier)", username)
-				return nil, false
+			// For local development, use static credentials
+			if username == "user" {
+				key := turn.GenerateAuthKey(username, realm, "pass")
+				log.Printf("[AUTH] Generated key for user: %x", key)
+				return key, true
 			}
 
-			timestamp, err := strconv.ParseInt(parts[0], 10, 64)
-			if err != nil {
-				log.Printf("[AUTH] ❌ Invalid timestamp in username %s: %v", username, err)
-				return nil, false
-			}
-
-			now := time.Now().Unix()
-			if now > timestamp {
-				log.Printf("[AUTH] ❌ Credential expired: now=%d > timestamp=%d (diff=%d seconds)",
-					now, timestamp, now-timestamp)
-				return nil, false
-			}
-
-			// Log HMAC key details
-			hmacKey := server.authKey
-			log.Printf("[AUTH] ✓ Credential validation passed for %s:", username)
-			log.Printf("  - Timestamp valid until: %s", time.Unix(timestamp, 0))
-			log.Printf("  - Client realm: %s, Server realm: %s", realm, server.realm)
-			log.Printf("  - Source address: %v", srcAddr)
-			log.Printf("  - Auth key length: %d bytes", len(hmacKey))
-			log.Printf("  - Auth key first 4 bytes: %x", hmacKey[:4])
-			log.Printf("  - Username for HMAC: %s", username)
-			log.Printf("  - HMAC input data: %s:%s", username, realm)
-
-			return hmacKey, true
+			log.Printf("[AUTH] Unknown user: %s", username)
+			return nil, false
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
 			{
@@ -229,38 +183,13 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		return nil, fmt.Errorf("failed to create TURN server: %v", err)
 	}
 
-	// why we need to validate hmac on server start:
-	// - ensures auth key is working
-	// - validates hmac calculation
-	// - catches configuration issues early
-	testUsername := fmt.Sprintf("%d:test", time.Now().Unix()+3600)
-	testHMAC := []byte("test-hmac")
-	if !validateHMAC(testUsername, realm, testHMAC, server.authKey) {
-		log.Printf("[WARN] HMAC validation test failed on server start")
-	}
-
 	server.server = s
 	return server, nil
-}
-
-// why we need credential management:
-// - enables future dynamic auth
-// - allows per-user permissions
-// - supports credential rotation
-func (s *TurnServer) AddCredentials(username string, password []byte) {
-	s.credentials.Store(username, password)
-	log.Printf("Added credentials for user: %s", username)
-}
-
-func (s *TurnServer) RemoveCredentials(username string) {
-	s.credentials.Delete(username)
-	log.Printf("Removed credentials for user: %s", username)
 }
 
 func (s *TurnServer) Start() error {
 	log.Printf("[TURN] Starting server on UDP port %d with:", s.udpPort)
 	log.Printf("  - Realm: %s", s.realm)
-	log.Printf("  - Auth key length: %d bytes", len(s.authKey))
 
 	// why we need enhanced monitoring:
 	// - tracks connection states
@@ -314,7 +243,6 @@ func (s *TurnServer) logServerStats() {
 	// Basic stats logging - expand based on pion/turn capabilities
 	log.Printf("[STATS] TURN Server status:")
 	log.Printf("  - Server running: %v", !s.stopped)
-	log.Printf("  - Active credentials: %d", s.countCredentials())
 
 	// Log memory stats
 	var mem runtime.MemStats
@@ -324,15 +252,6 @@ func (s *TurnServer) logServerStats() {
 	log.Printf("    • TotalAlloc: %v MiB", mem.TotalAlloc/1024/1024)
 	log.Printf("    • Sys: %v MiB", mem.Sys/1024/1024)
 	log.Printf("    • NumGC: %v", mem.NumGC)
-}
-
-func (s *TurnServer) countCredentials() int {
-	count := 0
-	s.credentials.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	return count
 }
 
 func (s *TurnServer) Stop() error {
@@ -375,85 +294,4 @@ func (s *TurnServer) IsHealthy() bool {
 
 	log.Printf("[HEALTH] ✓ Server is healthy")
 	return true
-}
-
-// why we need enhanced hmac validation logging:
-// - tracks each step of the integrity check
-// - helps identify where validation fails
-// - logs key parameters for debugging
-func validateHMAC(username string, realm string, hmacBytes []byte, authKey []byte) bool {
-	log.Printf("[HMAC] Starting validation for username: %s", username)
-	log.Printf("[HMAC] Using realm: %s", realm)
-	log.Printf("[HMAC] Received HMAC length: %d bytes", len(hmacBytes))
-
-	// Log key derivation inputs
-	parts := strings.Split(username, ":")
-	if len(parts) != 2 {
-		log.Printf("[HMAC] ❌ Invalid username format: expected timestamp:identifier, got %s", username)
-		return false
-	}
-	timestamp := parts[0]
-	identifier := parts[1]
-	log.Printf("[HMAC] Parsed timestamp: %s, identifier: %s", timestamp, identifier)
-
-	// Calculate expected HMAC
-	data := []byte(username + ":" + realm)
-	mac := hmac.New(sha1.New, authKey)
-	mac.Write(data)
-	expectedHMAC := mac.Sum(nil)
-
-	// Log HMAC calculation details
-	log.Printf("[HMAC] Expected HMAC length: %d bytes", len(expectedHMAC))
-	log.Printf("[HMAC] First 4 bytes received : %x", hmacBytes[:4])
-	log.Printf("[HMAC] First 4 bytes expected: %x", expectedHMAC[:4])
-	log.Printf("[HMAC] Data used for HMAC: %s", string(data))
-
-	// Compare HMACs
-	if subtle.ConstantTimeCompare(hmacBytes, expectedHMAC) != 1 {
-		log.Printf("[HMAC] ❌ HMAC validation failed")
-		return false
-	}
-
-	log.Printf("[HMAC] ✓ HMAC validation successful")
-	return true
-}
-
-// why we need detailed auth logging:
-// - tracks credential validation steps
-// - helps diagnose auth failures
-// - monitors timestamp validation
-func (s *TurnServer) AuthHandler(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-	log.Printf("[AUTH] Request from %v - username: %s, realm: %s", srcAddr, username, realm)
-
-	parts := strings.Split(username, ":")
-	if len(parts) != 2 {
-		log.Printf("[AUTH] ❌ Invalid username format: %s (expected timestamp:identifier)", username)
-		return nil, false
-	}
-
-	timestamp, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		log.Printf("[AUTH] ❌ Invalid timestamp in username %s: %v", username, err)
-		return nil, false
-	}
-
-	now := time.Now().Unix()
-	if now > timestamp {
-		log.Printf("[AUTH] ❌ Credential expired: now=%d > timestamp=%d (diff=%d seconds)",
-			now, timestamp, now-timestamp)
-		return nil, false
-	}
-
-	// Log HMAC key details
-	hmacKey := s.authKey
-	log.Printf("[AUTH] ✓ Credential validation passed for %s:", username)
-	log.Printf("  - Timestamp valid until: %s", time.Unix(timestamp, 0))
-	log.Printf("  - Client realm: %s, Server realm: %s", realm, s.realm)
-	log.Printf("  - Source address: %v", srcAddr)
-	log.Printf("  - Auth key length: %d bytes", len(hmacKey))
-	log.Printf("  - Auth key first 4 bytes: %x", hmacKey[:4])
-	log.Printf("  - Username for HMAC: %s", username)
-	log.Printf("  - HMAC input data: %s:%s", username, realm)
-
-	return hmacKey, true
 }
