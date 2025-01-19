@@ -125,18 +125,12 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // why we need expanded webrtc media ports:
-          // - supports multiple simultaneous audio streams
-          // - allows for rtcp feedback
-          // - matches container port mappings
+          // why we need webrtc media ports:
+          // - each session needs exactly one port
+          // - port range supports up to 100 concurrent sessions
+          // - matches webrtc_manager allocation (10000-10010)
           fromPort: 10000,
-          toPort: 10010,  // expanded from 10010 to 10100
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          fromPort: 49152,
-          toPort: 49252,
+          toPort: 10010,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -299,7 +293,11 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              ...Array.from({ length: 101 }, (_, i) => ({
+              // why we map all ports:
+              // - each session needs one unique port
+              // - supports up to 100 concurrent sessions
+              // - matches webrtc_manager port range
+              ...Array.from({ length: 11 }, (_, i) => ({
                 containerPort: 10000 + i,
                 hostPort: 10000 + i,
                 protocol: "udp",
@@ -347,10 +345,10 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
-    // why we need both ALB and NLB for awestruck-service:
-    // - ALB handles HTTP/HTTPS signaling traffic (8080/443)
-    // - NLB handles WebRTC UDP media traffic (10000-10010)
-    // - this split architecture provides optimal handling for each protocol
+    // why we need a network load balancer for webrtc:
+    // - handles udp traffic for media streams
+    // - provides stable networking for webrtc
+    // - enables proper port forwarding
     const webrtcNlb = new Lb(this, "awestruck-webrtc-nlb", {
       name: "awestruck-webrtc-nlb",
       internal: false,
@@ -359,36 +357,43 @@ class AwestruckInfrastructure extends TerraformStack {
       enableCrossZoneLoadBalancing: true,
     });
 
-    // why we use a single target group with multiple listeners:
-    // - one target group can handle multiple ports
-    // - each listener maps to a specific port in our range
-    // - allows for multiple simultaneous webrtc connections
-    const webrtcUdpTargetGroup = new LbTargetGroup(this, "awestruck-webrtc-udp-tg", {
-      name: "awestruck-webrtc-udp-tg",
-      port: 10000,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        protocol: "TCP",
-        port: "8080",
-        healthyThreshold: 3,
-        unhealthyThreshold: 5,
-        interval: 30,
-        timeout: 10
-      }
+    // why we need webrtc media ports:
+    // - each session needs exactly one port
+    // - port range supports multiple concurrent sessions
+    // - matches webrtc_manager port allocation
+    const webrtcUdpTargetGroups = Array.from({ length: 101 }, (_, i) => {
+      const port = 10000 + i;
+      return new LbTargetGroup(this, `awestruck-webrtc-udp-tg-${port}`, {
+        name: `awestruck-webrtc-tg-${port}`,
+        port: port,
+        protocol: "UDP",
+        targetType: "ip",
+        vpcId: vpc.id,
+        healthCheck: {
+          enabled: true,
+          protocol: "TCP",
+          port: "8080",
+          healthyThreshold: 3,
+          unhealthyThreshold: 5,
+          interval: 30,
+          timeout: 10
+        }
+      });
     });
 
-    // Create UDP listeners for each port in the WebRTC range
-    const webrtcListeners = Array.from({ length: 101 }, (_, i) => {
-      return new LbListener(this, `webrtc-udp-listener-${10000 + i}`, {
+    // why we need a listener per port:
+    // - each session gets its own dedicated port
+    // - enables proper session isolation
+    // - supports up to 100 concurrent sessions
+    const webrtcUdpListeners = webrtcUdpTargetGroups.map((tg, i) => {
+      const port = 10000 + i;
+      return new LbListener(this, `webrtc-udp-listener-${port}`, {
         loadBalancerArn: webrtcNlb.arn,
-        port: 10000 + i,
+        port: port,
         protocol: "UDP",
         defaultAction: [{
           type: "forward",
-          targetGroupArn: webrtcUdpTargetGroup.arn,
+          targetGroupArn: tg.arn,
         }],
       });
     });
@@ -414,17 +419,17 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         },
         // WebRTC UDP traffic through NLB
-        // why we only need one mapping:
-        // - the nlb listeners will forward traffic to the correct container port
-        // - container exposes all ports 10000-10010
-        // - security group allows the full port range
-        {
-          targetGroupArn: webrtcUdpTargetGroup.arn,
+        // why we need all port mappings:
+        // - each target group handles a specific port
+        // - matches webrtc_manager port allocation
+        // - enables proper session routing
+        ...webrtcUdpTargetGroups.map((tg, i) => ({
+          targetGroupArn: tg.arn,
           containerName: "server-arm64",
-          containerPort: 10000,
-        }
+          containerPort: 10000 + i,
+        }))
       ],
-      dependsOn: [listener, ...webrtcListeners],
+      dependsOn: [listener, ...webrtcUdpListeners],
     });
 
     // why we need a separate security group for turn:

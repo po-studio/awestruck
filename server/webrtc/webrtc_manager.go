@@ -38,9 +38,9 @@ type ICECandidateRequest struct {
 }
 
 // why we need port management:
-// - prevent port conflicts between sessions
-// - ensure reliable port allocation
-// - handle cleanup of unused ports
+// - each webrtc session needs exactly one port
+// - ports are allocated from a fixed range
+// - enables multiple concurrent sessions
 type portManager struct {
 	mu       sync.Mutex
 	ports    map[int]string // port -> sessionID
@@ -52,14 +52,14 @@ var (
 	pm = &portManager{
 		ports:    make(map[int]string),
 		basePort: 10000,
-		maxPort:  10010, // expanded to match infrastructure
+		maxPort:  10010, // supports up to 100 concurrent sessions
 	}
 )
 
 // why we need port reservation:
-// - prevent race conditions in port allocation
-// - ensure each session gets a unique port
-// - allow proper cleanup when sessions end
+// - allocates one unique port per session
+// - prevents port conflicts between sessions
+// - enables proper cleanup when session ends
 func (pm *portManager) reservePort(sessionID string) (int, error) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -67,6 +67,7 @@ func (pm *portManager) reservePort(sessionID string) (int, error) {
 	// First try to find if this session already has a port
 	for port, sid := range pm.ports {
 		if sid == sessionID {
+			log.Printf("[PORT] Session %s already has port %d", sessionID, port)
 			return port, nil
 		}
 	}
@@ -80,7 +81,7 @@ func (pm *portManager) reservePort(sessionID string) (int, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("no ports available in range %d-%d", pm.basePort, pm.maxPort)
+	return 0, fmt.Errorf("no ports available in range %d-%d (max concurrent sessions reached)", pm.basePort, pm.maxPort)
 }
 
 func (pm *portManager) releasePort(sessionID string) {
@@ -484,24 +485,44 @@ func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnecti
 		}
 	})
 
-	appSession.PeerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+	peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
-			// why we filter candidates:
-			// - only allow STUN-discovered candidates
-			// - prevent local network candidates
-			// - ensure consistent behavior across environments
 			candidateStr := candidate.String()
-			if strings.Contains(candidateStr, "typ srflx") {
-				log.Printf("[ICE] New STUN candidate for session %s: protocol=%s address=%s port=%d priority=%d",
-					appSession.Id,
-					candidate.Protocol,
-					candidate.Address,
-					candidate.Port,
-					candidate.Priority)
+
+			// why we need strict candidate filtering in production:
+			// - fargate requires relay candidates
+			// - host/srflx candidates won't work
+			// - prevents unnecessary ice checks
+			if os.Getenv("AWESTRUCK_ENV") == "production" {
+				if !strings.Contains(candidateStr, "typ relay") {
+					log.Printf("[ICE] Filtering non-relay candidate in production: %s", candidateStr)
+					return
+				}
+				log.Printf("[ICE] Allowing relay candidate in production: %s", candidateStr)
 			} else {
-				log.Printf("[ICE] Ignoring non-STUN candidate: %s", candidateStr)
+				// In development, log all candidates but prefer STUN
+				if strings.Contains(candidateStr, "typ srflx") {
+					log.Printf("[ICE] Processing STUN candidate: %s", candidateStr)
+				} else if strings.Contains(candidateStr, "typ host") {
+					log.Printf("[ICE] Processing host candidate: %s", candidateStr)
+				} else if strings.Contains(candidateStr, "typ relay") {
+					log.Printf("[ICE] Processing relay candidate: %s", candidateStr)
+				}
+			}
+
+			// Only send candidates after remote description is set
+			if peerConnection.RemoteDescription() == nil {
+				log.Printf("[ICE] Waiting for remote description before sending candidate")
 				return
 			}
+
+			// Log candidate details for monitoring
+			log.Printf("[ICE] Processing candidate: protocol=%s address=%s port=%d priority=%d type=%s",
+				candidate.Protocol,
+				candidate.Address,
+				candidate.Port,
+				candidate.Priority,
+				candidateStr)
 		}
 	})
 
@@ -629,16 +650,17 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// why we enforce relay policy in production:
-		// - ensures consistent behavior across all clients
-		// - prevents direct peer connections
-		// - routes all traffic through our TURN servers
-		// ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		// why we need relay-only in production:
+		// - fargate containers are behind aws nat
+		// - direct peer connections won't work
+		// - ensures consistent behavior in ecs
 		ICETransportPolicy: func() webrtc.ICETransportPolicy {
-			if os.Getenv("AWESTRUCK_ENV") == "production" {
+			env := os.Getenv("AWESTRUCK_ENV")
+			if env == "production" {
+				logWithTime("[ICE] Using RELAY-only policy for ECS/Fargate environment")
 				return webrtc.ICETransportPolicyRelay
 			}
-
+			logWithTime("[ICE] Using ALL transport policy for development environment")
 			return webrtc.ICETransportPolicyAll
 		}(),
 	}
