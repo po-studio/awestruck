@@ -24,72 +24,72 @@ type TurnServer struct {
 
 // why we need proper relay address detection:
 // - production: use container's network interface
-// - local docker: use localhost for testing
-// - prevents binding errors in development
+// - local: use host's network interface
+// - ensures consistent behavior between environments
 func getRelayAddress() (net.IP, error) {
 	log.Printf("getRelayAddress: Starting IP detection")
 
 	env := os.Getenv("AWESTRUCK_ENV")
 	log.Printf("getRelayAddress: Environment is %q", env)
 
-	// For local development, just use localhost
-	if env == "" || env == "development" {
-		log.Printf("getRelayAddress: Using localhost for local development")
-		return net.ParseIP("127.0.0.1"), nil
-	}
-
-	// Production logic remains unchanged
-	if env == "production" {
-		log.Printf("getRelayAddress: Running in production mode")
-
-		// List all interfaces first
-		interfaces, err := net.Interfaces()
-		if err != nil {
-			log.Printf("getRelayAddress: Failed to list interfaces: %v", err)
-		} else {
-			for _, iface := range interfaces {
-				log.Printf("getRelayAddress: Found interface: %s (flags: %v)", iface.Name, iface.Flags)
-				addrs, err := iface.Addrs()
-				if err == nil {
-					for _, addr := range addrs {
-						log.Printf("getRelayAddress: Interface %s has address: %v", iface.Name, addr)
-					}
-				}
-			}
-		}
-
-		// Try common interface names in ECS/Docker
-		interfaceNames := []string{"eth0", "ens5", "en0", "eth1"}
-		for _, name := range interfaceNames {
-			log.Printf("getRelayAddress: Trying interface %s", name)
-			iface, err := net.InterfaceByName(name)
-			if err != nil {
-				log.Printf("getRelayAddress: Interface %s not found: %v", name, err)
-				continue
-			}
-
+	// List all interfaces first for debugging
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		log.Printf("getRelayAddress: Failed to list interfaces: %v", err)
+	} else {
+		for _, iface := range interfaces {
+			log.Printf("getRelayAddress: Found interface: %s (flags: %v)", iface.Name, iface.Flags)
 			addrs, err := iface.Addrs()
-			if err != nil {
-				log.Printf("getRelayAddress: Failed to get addresses for %s: %v", name, err)
-				continue
-			}
-
-			for _, addr := range addrs {
-				log.Printf("getRelayAddress: Found address on %s: %v", name, addr)
-				if ipnet, ok := addr.(*net.IPNet); ok {
-					if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() && !ipv4.IsLinkLocalUnicast() {
-						log.Printf("getRelayAddress: Using IP from %s for relay: %s", name, ipv4.String())
-						return ipv4, nil
-					}
+			if err == nil {
+				for _, addr := range addrs {
+					log.Printf("getRelayAddress: Interface %s has address: %v", iface.Name, addr)
 				}
 			}
 		}
-
-		log.Printf("getRelayAddress: No suitable IPv4 address found on any interface")
-		return nil, fmt.Errorf("no suitable IPv4 address found on any interface")
 	}
 
-	// Fallback to localhost if nothing else works
+	// Try to find a suitable interface
+	interfaceNames := []string{"en0", "eth0", "ens5", "eth1"}
+	for _, name := range interfaceNames {
+		log.Printf("getRelayAddress: Trying interface %s", name)
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			log.Printf("getRelayAddress: Interface %s not found: %v", name, err)
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			log.Printf("getRelayAddress: Failed to get addresses for %s: %v", name, err)
+			continue
+		}
+
+		for _, addr := range addrs {
+			log.Printf("getRelayAddress: Found address on %s: %v", name, addr)
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
+					log.Printf("getRelayAddress: Using IP from %s for relay: %s", name, ipv4.String())
+					return ipv4, nil
+				}
+			}
+		}
+	}
+
+	// If no suitable interface found, try to get the default outbound IP
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Printf("getRelayAddress: Failed to get default route: %v", err)
+	} else {
+		defer conn.Close()
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		if ipv4 := localAddr.IP.To4(); ipv4 != nil {
+			log.Printf("getRelayAddress: Using default route IP: %s", ipv4.String())
+			return ipv4, nil
+		}
+	}
+
+	// Last resort: use localhost, but warn about it
+	log.Printf("WARNING: Could not find suitable network interface, falling back to localhost")
 	return net.ParseIP("127.0.0.1"), nil
 }
 
@@ -142,8 +142,14 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 
 	log.Printf("[TURN] Using relay address: %s", relayIP.String())
 
+	// why we need proper external IP handling:
+	// - allows NAT traversal in production
+	// - supports local testing with real IPs
+	// - maintains consistency with production
 	externalIP := os.Getenv("EXTERNAL_IP")
 	if externalIP == "" {
+		// For local development, use the same IP as relay
+		// This ensures the TURN server advertises an address it can actually bind to
 		log.Printf("[TURN] No EXTERNAL_IP set, using relay IP %s for external address", relayIP.String())
 		externalIP = relayIP.String()
 	} else {
@@ -173,8 +179,8 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 			{
 				PacketConn: udpListener,
 				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: relayIP,
-					Address:      externalIP,
+					RelayAddress: relayIP,    // IP we bind to for relaying
+					Address:      externalIP, // IP we advertise to clients
 				},
 			},
 		},
