@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -134,10 +135,10 @@ func isDockerIP(ip net.IP) bool {
 }
 
 func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
-	// why we need proper hmac auth:
-	// - follows turn protocol spec
-	// - prevents mitm attacks
-	// - ensures credential integrity
+	// why we need enhanced auth logging:
+	// - tracks credential validation steps
+	// - helps diagnose auth failures
+	// - monitors timestamp validation
 	authKey := []byte("awestruck-turn-static-auth-key")
 
 	server := &TurnServer{
@@ -146,10 +147,8 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		authKey: authKey,
 	}
 
-	// why we need to bind to all interfaces:
-	// - allows connections from any network interface
-	// - works for both local and cloud environments
-	// - supports container networking
+	log.Printf("[TURN] Starting server with realm: %q, port: %d", realm, udpPort)
+
 	udpListener, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", udpPort))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TURN listener: %v", err)
@@ -160,48 +159,50 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		return nil, fmt.Errorf("failed to get relay address: %v", err)
 	}
 
-	log.Printf("TURN server using relay address: %s", relayIP.String())
+	log.Printf("[TURN] Using relay address: %s", relayIP.String())
 
-	// why we need external ip handling:
-	// - enables proper nat traversal
-	// - matches nlb's public ip
-	// - supports ice candidate generation
 	externalIP := os.Getenv("EXTERNAL_IP")
 	if externalIP == "" {
-		log.Printf("No EXTERNAL_IP set, using relay IP for external address")
+		log.Printf("[TURN] No EXTERNAL_IP set, using relay IP %s for external address", relayIP.String())
 		externalIP = relayIP.String()
 	} else {
-		log.Printf("Using EXTERNAL_IP for address: %s", externalIP)
+		log.Printf("[TURN] Using EXTERNAL_IP for address: %s", externalIP)
 	}
 
 	s, err := turn.NewServer(turn.ServerConfig{
 		Realm: realm,
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-			log.Printf("[AUTH] Received auth request from %v - username: %s, realm: %s", srcAddr, username, realm)
+			log.Printf("[AUTH] Request from %v - username: %s, realm: %s", srcAddr, username, realm)
 
-			// Split username into timestamp:identifier
 			parts := strings.Split(username, ":")
 			if len(parts) != 2 {
-				log.Printf("[AUTH] Invalid username format: %s", username)
+				log.Printf("[AUTH] ❌ Invalid username format: %s (expected timestamp:identifier)", username)
 				return nil, false
 			}
 
-			// Verify timestamp is within 24 hours
 			timestamp, err := strconv.ParseInt(parts[0], 10, 64)
 			if err != nil {
-				log.Printf("[AUTH] Invalid timestamp: %v", err)
+				log.Printf("[AUTH] ❌ Invalid timestamp in username %s: %v", username, err)
 				return nil, false
 			}
 
-			// Check if timestamp is within 24 hours
 			now := time.Now().Unix()
 			if now > timestamp {
-				log.Printf("[AUTH] Credential expired: %d seconds ago", now-timestamp)
+				log.Printf("[AUTH] ❌ Credential expired: now=%d > timestamp=%d (diff=%d seconds)",
+					now, timestamp, now-timestamp)
 				return nil, false
 			}
 
-			// Use the static auth key for HMAC verification
-			log.Printf("[AUTH] Using static key for user %s", username)
+			// why we log hmac details:
+			// - helps verify client/server key match
+			// - validates timestamp parsing
+			// - confirms realm matching
+			log.Printf("[AUTH] ✓ Credential validation passed for %s:", username)
+			log.Printf("  - Timestamp valid until: %s", time.Unix(timestamp, 0))
+			log.Printf("  - Client realm: %s, Server realm: %s", realm, server.realm)
+			log.Printf("  - Source address: %v", srcAddr)
+			log.Printf("  - Auth key length: %d bytes", len(server.authKey))
+
 			return server.authKey, true
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
@@ -237,8 +238,51 @@ func (s *TurnServer) RemoveCredentials(username string) {
 }
 
 func (s *TurnServer) Start() error {
-	log.Printf("Starting TURN/STUN server on UDP port %d", s.udpPort)
+	log.Printf("[TURN] Starting server on UDP port %d with:", s.udpPort)
+	log.Printf("  - Realm: %s", s.realm)
+	log.Printf("  - Auth key length: %d bytes", len(s.authKey))
+
+	// Monitor server state periodically
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		for range ticker.C {
+			if s.stopped {
+				return
+			}
+			s.logServerStats()
+		}
+	}()
+
 	return nil
+}
+
+// why we need server stats:
+// - monitors resource usage
+// - tracks active allocations
+// - helps identify memory leaks
+func (s *TurnServer) logServerStats() {
+	// Basic stats logging - expand based on pion/turn capabilities
+	log.Printf("[STATS] TURN Server status:")
+	log.Printf("  - Server running: %v", !s.stopped)
+	log.Printf("  - Active credentials: %d", s.countCredentials())
+
+	// Log memory stats
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	log.Printf("  - Memory usage:")
+	log.Printf("    • Alloc: %v MiB", mem.Alloc/1024/1024)
+	log.Printf("    • TotalAlloc: %v MiB", mem.TotalAlloc/1024/1024)
+	log.Printf("    • Sys: %v MiB", mem.Sys/1024/1024)
+	log.Printf("    • NumGC: %v", mem.NumGC)
+}
+
+func (s *TurnServer) countCredentials() int {
+	count := 0
+	s.credentials.Range(func(key, value interface{}) bool {
+		count++
+		return true
+	})
+	return count
 }
 
 func (s *TurnServer) Stop() error {
@@ -266,5 +310,19 @@ func (s *TurnServer) HealthCheck() error {
 // - enables ECS health checks
 // - provides consistent health reporting
 func (s *TurnServer) IsHealthy() bool {
-	return s.server != nil && !s.stopped
+	if s.server == nil || s.stopped {
+		log.Printf("[HEALTH] ❌ Unhealthy - server is nil or stopped")
+		return false
+	}
+
+	// Test UDP listener
+	conn, err := net.DialTimeout("udp", fmt.Sprintf("127.0.0.1:%d", s.udpPort), time.Second)
+	if err != nil {
+		log.Printf("[HEALTH] ❌ Unhealthy - UDP test failed: %v", err)
+		return false
+	}
+	conn.Close()
+
+	log.Printf("[HEALTH] ✓ Server is healthy")
+	return true
 }

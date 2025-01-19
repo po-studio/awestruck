@@ -140,6 +140,14 @@ window.TURN_SERVERS = window.location.hostname === 'localhost'
   ? ['127.0.0.1:3478']
   : ['turn.awestruck.io:3478'];
 
+// why we need environment-based realm:
+// - matches server configuration
+// - ensures consistent auth across environments
+// - prevents credential mismatch
+// 
+// TODO: set this in env
+const TURN_REALM = window.location.hostname === 'localhost' ? 'localhost' : 'awestruck.io';
+
 // why we need hmac-based turn auth:
 // - follows turn protocol spec
 // - ensures credential integrity
@@ -157,7 +165,7 @@ function generateTurnCredentials(username, key) {
     username: turnUsername,
     timestamp: timestamp,
     credentialLength: credential.length,
-    realm: 'localhost',  // Match the server's realm
+    realm: TURN_REALM,
     hmacInput: turnUsername  // Log what we're hashing for debugging
   });
   
@@ -185,7 +193,8 @@ const ICE_CONFIG = {
           `stun:${server}`,
           `turn:${server}`
         ]).flat(),
-        ...generateTurnCredentials('default', TURN_CREDENTIAL)
+        ...generateTurnCredentials('default', TURN_CREDENTIAL),
+        realm: TURN_REALM
       }
     ],
     iceCandidatePoolSize: 2,
@@ -200,7 +209,8 @@ const ICE_CONFIG = {
           `stun:${server}`,
           `turn:${server}`
         ]).flat(),
-        ...generateTurnCredentials('default', TURN_CREDENTIAL)
+        ...generateTurnCredentials('default', TURN_CREDENTIAL),
+        realm: TURN_REALM
       }
     ],
     iceCandidatePoolSize: 2,
@@ -514,6 +524,35 @@ async function setupWebRTC(config) {
     console.log('[WebRTC] Created and set local description');
 
     await sendOffer(offer);
+
+    pc.oniceconnectionstatechange = () => {
+        console.log('[ICE] Connection state changed:', pc.iceConnectionState);
+        
+        if (pc.iceConnectionState === 'failed') {
+            console.error('[ICE] Connection failed - gathering diagnostics...');
+            console.log('[ICE] Local description:', pc.localDescription);
+            console.log('[ICE] Remote description:', pc.remoteDescription);
+            console.log('[ICE] ICE gathering state:', pc.iceGatheringState);
+            console.log('[ICE] Signaling state:', pc.signalingState);
+        }
+    };
+
+    pc.onicegatheringstatechange = () => {
+        console.log('[ICE] Gathering state changed:', pc.iceGatheringState);
+    };
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            console.log('[ICE] New candidate:', {
+                type: event.candidate.type,
+                protocol: event.candidate.protocol,
+                address: event.candidate.address,
+                port: event.candidate.port,
+                priority: event.candidate.priority,
+                usernameFragment: event.candidate.usernameFragment
+            });
+        }
+    };
 }
 
 async function sendOffer(offer) {
