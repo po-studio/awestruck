@@ -105,6 +105,14 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		// For local development, use the same IP as relay
 		log.Printf("[TURN] No EXTERNAL_IP set, using relay IP %s for external address", relayIP.String())
 		externalIP = relayIP.String()
+	} else if externalIP == "{{DETECT_AT_RUNTIME}}" {
+		// Detect which AZ we're in and use the corresponding IP
+		detectedIP, err := GetExternalIP()
+		if err != nil {
+			log.Printf("[TURN] Failed to detect external IP: %v", err)
+			return nil, fmt.Errorf("failed to detect external IP: %v", err)
+		}
+		externalIP = detectedIP
 	} else {
 		// Check if EXTERNAL_IP is a DNS name and resolve it
 		if ips, err := net.LookupHost(externalIP); err == nil && len(ips) > 0 {

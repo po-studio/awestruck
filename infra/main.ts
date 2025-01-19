@@ -514,8 +514,11 @@ class AwestruckInfrastructure extends TerraformStack {
         {
           subnetId: subnet2.id,
           allocationId: turnElasticIp2.allocationId,
-        },
+        }
       ],
+      lifecycle: {
+        createBeforeDestroy: true
+      }
     });
 
     // Output both Elastic IPs for reference
@@ -525,63 +528,6 @@ class AwestruckInfrastructure extends TerraformStack {
         az2: turnElasticIp2.publicIp,
       },
       description: "Elastic IPs for TURN server in each AZ",
-    });
-
-    // why we use a single target group for turn:
-    // - handles both stun and turn traffic on same port
-    // - simplifies load balancer configuration
-    // - enables health checks for the service
-    const turnUdpTargetGroup = new LbTargetGroup(this, "awestruck-turn-udp-tg", {
-      name: "awestruck-turn-udp-tg",
-      port: 3478,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        protocol: "TCP",
-        port: "3479",
-        healthyThreshold: 3,
-        unhealthyThreshold: 5,
-        interval: 30,
-        timeout: 10
-      },
-      lifecycle: {
-        createBeforeDestroy: true
-      }
-    });
-
-    // why we need a single udp listener:
-    // - handles both stun and turn protocols on standard port 3478
-    // - provides nat traversal and relay capabilities
-    // - simplifies client configuration
-    const turnUdpListener = new LbListener(this, "turn-udp-listener", {
-      loadBalancerArn: turnNlb.arn,
-      port: 3478,
-      protocol: "UDP",
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: turnUdpTargetGroup.arn,
-      }],
-      lifecycle: {
-        createBeforeDestroy: true
-      }
-    });
-
-    // why we need dns records for the turn server:
-    // - enables client discovery of turn/stun services
-    // - allows for future ip changes without client updates
-    // - supports geographic dns routing if needed
-    new Route53Record(this, "turn-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "turn.awestruck.io",
-      type: "A",
-      allowOverwrite: true,
-      alias: {
-        name: turnNlb.dnsName,
-        zoneId: turnNlb.zoneId,
-        evaluateTargetHealth: true,
-      },
     });
 
     // why we need a turn log group:
@@ -633,7 +579,14 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "MIN_PORT", value: "49152" },
               { name: "MAX_PORT", value: "49252" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              { name: "EXTERNAL_IP", value: turnElasticIp1.publicIp }
+              // why we need both elastic ips:
+              // - tasks can run in either AZ
+              // - each AZ uses its own elastic ip
+              // - ensures correct external ip is used
+              { name: "EXTERNAL_IP_AZ1", value: turnElasticIp1.publicIp },
+              { name: "EXTERNAL_IP_AZ2", value: turnElasticIp2.publicIp },
+              // we'll detect which AZ we're in at runtime
+              { name: "EXTERNAL_IP", value: "{{DETECT_AT_RUNTIME}}" }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
@@ -654,6 +607,63 @@ class AwestruckInfrastructure extends TerraformStack {
         ]),
       }
     );
+
+    // why we need dns records for the turn server:
+    // - enables client discovery of turn/stun services
+    // - allows for future ip changes without client updates
+    // - supports geographic dns routing if needed
+    new Route53Record(this, "turn-dns", {
+      zoneId: hostedZone.zoneId,
+      name: "turn.awestruck.io",
+      type: "A",
+      allowOverwrite: true,
+      alias: {
+        name: turnNlb.dnsName,
+        zoneId: turnNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
+    });
+
+    // why we use a single target group for turn:
+    // - handles both stun and turn traffic on same port
+    // - simplifies load balancer configuration
+    // - enables health checks for the service
+    const turnUdpTargetGroup = new LbTargetGroup(this, "awestruck-turn-udp-tg", {
+      name: "awestruck-turn-udp-tg",
+      port: 3478,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        protocol: "TCP",
+        port: "3479",
+        healthyThreshold: 3,
+        unhealthyThreshold: 5,
+        interval: 30,
+        timeout: 10
+      },
+      lifecycle: {
+        createBeforeDestroy: true
+      }
+    });
+
+    // why we need a single udp listener:
+    // - handles both stun and turn protocols on standard port 3478
+    // - provides nat traversal and relay capabilities
+    // - simplifies client configuration
+    const turnUdpListener = new LbListener(this, "turn-udp-listener", {
+      loadBalancerArn: turnNlb.arn,
+      port: 3478,
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: turnUdpTargetGroup.arn,
+      }],
+      lifecycle: {
+        createBeforeDestroy: true
+      }
+    });
 
     // why we need a separate target group for relay ports:
     // - handles media relay traffic on ephemeral ports 49152-49252
