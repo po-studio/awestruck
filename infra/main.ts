@@ -1,6 +1,6 @@
 import { App } from "cdktf";
 import { Construct } from "constructs";
-import { TerraformStack } from "cdktf";
+import { TerraformStack, TerraformOutput } from "cdktf";
 import { AwsProvider } from "@cdktf/provider-aws/lib/provider";
 import { Vpc } from "@cdktf/provider-aws/lib/vpc";
 import { SecurityGroup } from "@cdktf/provider-aws/lib/security-group";
@@ -22,6 +22,7 @@ import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
 import { CloudwatchDashboard } from "@cdktf/provider-aws/lib/cloudwatch-dashboard";
+import { Eip } from "@cdktf/provider-aws/lib/eip";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -124,31 +125,28 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // WebRTC media ports
-          fromPort: 10000,
-          toPort: 10010,
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          // why we need turn relay ports:
-          // - used by turn server for media relay
+          // why we need expanded webrtc media ports:
+          // - supports multiple simultaneous audio streams
+          // - allows for rtcp feedback
           // - matches container port mappings
-          // - supports multiple simultaneous relays
-          fromPort: 49152,
-          toPort: 49252,  // reduced range for testing
+          fromPort: 10000,
+          toPort: 10100,  // expanded from 10010 to 10100
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // STUN server UDP port
+          fromPort: 49152,
+          toPort: 49252,
+          protocol: "udp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          // STUN server TCP port [healthcheck only]
           fromPort: 3479,
           toPort: 3479,
           protocol: "tcp",
@@ -301,7 +299,7 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              ...Array.from({ length: 11 }, (_, i) => ({
+              ...Array.from({ length: 101 }, (_, i) => ({
                 containerPort: 10000 + i,
                 hostPort: 10000 + i,
                 protocol: "udp",
@@ -313,7 +311,7 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
               { name: "JACK_PORT_MAX", value: "128" },
               { name: "GST_DEBUG", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "4194304" },
+              { name: "GST_BUFFER_SIZE", value: "8388608" },
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
@@ -383,7 +381,7 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     // Create UDP listeners for each port in the WebRTC range
-    const webrtcListeners = Array.from({ length: 11 }, (_, i) => {
+    const webrtcListeners = Array.from({ length: 101 }, (_, i) => {
       return new LbListener(this, `webrtc-udp-listener-${10000 + i}`, {
         loadBalancerArn: webrtcNlb.arn,
         port: 10000 + i,
@@ -470,6 +468,24 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
+    // why we need a static elastic ip:
+    // - ensures turn server can bind to the external ip
+    // - prevents "cannot assign requested address" errors
+    // - provides stable ip for ice candidates
+    const turnElasticIp1 = new Eip(this, "turn-elastic-ip-1", {
+      vpc: true,
+      tags: {
+        Name: "awestruck-turn-eip-1",
+      },
+    });
+
+    const turnElasticIp2 = new Eip(this, "turn-elastic-ip-2", {
+      vpc: true,
+      tags: {
+        Name: "awestruck-turn-eip-2",
+      },
+    });
+
     // why we need a network load balancer for turn:
     // - supports udp protocol required for turn/stun
     // - preserves client ip addresses for nat traversal
@@ -478,8 +494,30 @@ class AwestruckInfrastructure extends TerraformStack {
       name: "awestruck-turn-nlb",
       internal: false,
       loadBalancerType: "network",
-      subnets: [subnet1.id, subnet2.id],
       enableCrossZoneLoadBalancing: true,
+      // why we need subnet mappings with elastic ips:
+      // - automatically associates eips with nlb
+      // - provides static ips for each availability zone
+      // - enables proper nat traversal across azs
+      subnetMapping: [
+        {
+          subnetId: subnet1.id,
+          allocationId: turnElasticIp1.allocationId,
+        },
+        {
+          subnetId: subnet2.id,
+          allocationId: turnElasticIp2.allocationId,
+        },
+      ],
+    });
+
+    // Output both Elastic IPs for reference
+    new TerraformOutput(this, "turn-elastic-ips", {
+      value: {
+        az1: turnElasticIp1.publicIp,
+        az2: turnElasticIp2.publicIp,
+      },
+      description: "Elastic IPs for TURN server in each AZ",
     });
 
     // why we use a single target group for turn:
@@ -568,15 +606,11 @@ class AwestruckInfrastructure extends TerraformStack {
             portMappings: [
               { containerPort: 3478, hostPort: 3478, protocol: "udp" },
               { containerPort: 3479, hostPort: 3479, protocol: "tcp" },
-              // why we use a minimal port range for testing:
-              // - reduces task definition size
-              // - sufficient for development testing
-              // - faster deployment and updates
               ...Array.from({ length: 101 }, (_, i) => ({
                 containerPort: 49152 + i,
                 hostPort: 49152 + i,
                 protocol: "udp"
-              }))
+              })),
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
@@ -586,11 +620,7 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "MIN_PORT", value: "49152" },
               { name: "MAX_PORT", value: "49252" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              // why we need external ip:
-              // - tells turn server what ip to use for ice candidates
-              // - matches nlb's public ip
-              // - enables proper nat traversal
-              { name: "EXTERNAL_IP", value: "${aws_lb.awestruck-turn-nlb.dns_name}" }
+              { name: "EXTERNAL_IP", value: turnElasticIp1.publicIp }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -50,8 +51,8 @@ type portManager struct {
 var (
 	pm = &portManager{
 		ports:    make(map[int]string),
-		basePort: 10000, // TODO: make this an env variable that is shared by main.ts
-		maxPort:  10010, // TODO: make this an env variable that is shared by main.ts
+		basePort: 10000,
+		maxPort:  10100, // expanded to match infrastructure
 	}
 )
 
@@ -632,14 +633,14 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		// - ensures consistent behavior across all clients
 		// - prevents direct peer connections
 		// - routes all traffic through our TURN servers
-		ICETransportPolicy: webrtc.ICETransportPolicyAll,
-		// ICETransportPolicy: func() webrtc.ICETransportPolicy {
-		// 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		// 		return webrtc.ICETransportPolicyRelay
-		// 	}
+		// ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		ICETransportPolicy: func() webrtc.ICETransportPolicy {
+			if os.Getenv("AWESTRUCK_ENV") == "production" {
+				return webrtc.ICETransportPolicyRelay
+			}
 
-		// 	return webrtc.ICETransportPolicyAll
-		// }(),
+			return webrtc.ICETransportPolicyAll
+		}(),
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 
