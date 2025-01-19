@@ -23,99 +23,47 @@ type TurnServer struct {
 }
 
 // why we need proper relay address detection:
-// - production: use container's network interface
-// - local: use host's network interface
-// - ensures consistent behavior between environments
+// - production: use container's internal IP for relay binding
+// - local: use localhost for development
+// - ensures TURN server only binds to addresses it can use
 func getRelayAddress() (net.IP, error) {
 	log.Printf("getRelayAddress: Starting IP detection")
 
 	env := os.Getenv("AWESTRUCK_ENV")
 	log.Printf("getRelayAddress: Environment is %q", env)
 
-	// List all interfaces first for debugging
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		log.Printf("getRelayAddress: Failed to list interfaces: %v", err)
-	} else {
-		for _, iface := range interfaces {
-			log.Printf("getRelayAddress: Found interface: %s (flags: %v)", iface.Name, iface.Flags)
+	if env == "production" {
+		// In production, try to get the container's internal IP
+		conn, err := net.Dial("udp", "8.8.8.8:80")
+		if err == nil {
+			defer conn.Close()
+			localAddr := conn.LocalAddr().(*net.UDPAddr)
+			if ipv4 := localAddr.IP.To4(); ipv4 != nil {
+				log.Printf("getRelayAddress: Using container IP: %s", ipv4.String())
+				return ipv4, nil
+			}
+		}
+
+		// Fallback to eth0 if Dial method fails
+		iface, err := net.InterfaceByName("eth0")
+		if err == nil {
 			addrs, err := iface.Addrs()
 			if err == nil {
 				for _, addr := range addrs {
-					log.Printf("getRelayAddress: Interface %s has address: %v", iface.Name, addr)
+					if ipnet, ok := addr.(*net.IPNet); ok {
+						if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
+							log.Printf("getRelayAddress: Using eth0 IP: %s", ipv4.String())
+							return ipv4, nil
+						}
+					}
 				}
 			}
 		}
 	}
 
-	// Try to find a suitable interface
-	interfaceNames := []string{"en0", "eth0", "ens5", "eth1"}
-	for _, name := range interfaceNames {
-		log.Printf("getRelayAddress: Trying interface %s", name)
-		iface, err := net.InterfaceByName(name)
-		if err != nil {
-			log.Printf("getRelayAddress: Interface %s not found: %v", name, err)
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			log.Printf("getRelayAddress: Failed to get addresses for %s: %v", name, err)
-			continue
-		}
-
-		for _, addr := range addrs {
-			log.Printf("getRelayAddress: Found address on %s: %v", name, addr)
-			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
-					log.Printf("getRelayAddress: Using IP from %s for relay: %s", name, ipv4.String())
-					return ipv4, nil
-				}
-			}
-		}
-	}
-
-	// If no suitable interface found, try to get the default outbound IP
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		log.Printf("getRelayAddress: Failed to get default route: %v", err)
-	} else {
-		defer conn.Close()
-		localAddr := conn.LocalAddr().(*net.UDPAddr)
-		if ipv4 := localAddr.IP.To4(); ipv4 != nil {
-			log.Printf("getRelayAddress: Using default route IP: %s", ipv4.String())
-			return ipv4, nil
-		}
-	}
-
-	// Last resort: use localhost, but warn about it
-	log.Printf("WARNING: Could not find suitable network interface, falling back to localhost")
+	// For local development or if no other IP found, use localhost
+	log.Printf("getRelayAddress: Using localhost for development or fallback")
 	return net.ParseIP("127.0.0.1"), nil
-}
-
-// why we need docker ip detection:
-// - only used in local development
-// - prevents using container network IPs locally
-// - not used in production where we want VPC IPs
-func isDockerIP(ip net.IP) bool {
-	// Only used in local development
-	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		return false
-	}
-
-	// Common Docker network ranges
-	dockerRanges := []string{
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"10.0.0.0/8",
-	}
-	for _, cidr := range dockerRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err == nil && network.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 // why we need proper turn auth:
@@ -143,16 +91,33 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 	log.Printf("[TURN] Using relay address: %s", relayIP.String())
 
 	// why we need proper external IP handling:
-	// - allows NAT traversal in production
-	// - supports local testing with real IPs
-	// - maintains consistency with production
+	// - allows NAT traversal in production via NLB
+	// - supports both IP and DNS format for EXTERNAL_IP
+	// - prevents address mismatch issues
 	externalIP := os.Getenv("EXTERNAL_IP")
 	if externalIP == "" {
+		if os.Getenv("AWESTRUCK_ENV") == "production" {
+			log.Printf("[TURN] ERROR: EXTERNAL_IP must be set in production")
+			return nil, fmt.Errorf("EXTERNAL_IP environment variable is required in production")
+		}
 		// For local development, use the same IP as relay
-		// This ensures the TURN server advertises an address it can actually bind to
 		log.Printf("[TURN] No EXTERNAL_IP set, using relay IP %s for external address", relayIP.String())
 		externalIP = relayIP.String()
 	} else {
+		// Check if EXTERNAL_IP is a DNS name and resolve it
+		if ips, err := net.LookupHost(externalIP); err == nil && len(ips) > 0 {
+			log.Printf("[TURN] Resolved EXTERNAL_IP %s to IPs: %v", externalIP, ips)
+			// Find first IPv4 address
+			for _, ip := range ips {
+				if parsedIP := net.ParseIP(ip); parsedIP != nil {
+					if ipv4 := parsedIP.To4(); ipv4 != nil {
+						log.Printf("[TURN] Using IPv4 address: %s", ipv4.String())
+						externalIP = ipv4.String()
+						break
+					}
+				}
+			}
+		}
 		log.Printf("[TURN] Using EXTERNAL_IP for address: %s", externalIP)
 	}
 
