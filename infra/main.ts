@@ -127,7 +127,7 @@ class AwestruckInfrastructure extends TerraformStack {
         {
           // why we need webrtc media ports:
           // - each session needs exactly one port
-          // - port range supports up to 100 concurrent sessions
+          // - port range supports up to 11 concurrent sessions
           // - matches webrtc_manager allocation (10000-10010)
           fromPort: 10000,
           toPort: 10010,
@@ -295,7 +295,7 @@ class AwestruckInfrastructure extends TerraformStack {
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
               // why we map all ports:
               // - each session needs one unique port
-              // - supports up to 100 concurrent sessions
+              // - supports up to 11 concurrent sessions
               // - matches webrtc_manager port range
               ...Array.from({ length: 11 }, (_, i) => ({
                 containerPort: 10000 + i,
@@ -359,9 +359,9 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need webrtc media ports:
     // - each session needs exactly one port
-    // - port range supports multiple concurrent sessions
-    // - matches webrtc_manager port allocation
-    const webrtcUdpTargetGroups = Array.from({ length: 101 }, (_, i) => {
+    // - port range supports up to 11 concurrent sessions
+    // - matches webrtc_manager allocation (10000-10010)
+    const webrtcUdpTargetGroups = Array.from({ length: 11 }, (_, i) => {
       const port = 10000 + i;
       return new LbTargetGroup(this, `awestruck-webrtc-udp-tg-${port}`, {
         name: `awestruck-webrtc-tg-${port}`,
@@ -384,7 +384,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // why we need a listener per port:
     // - each session gets its own dedicated port
     // - enables proper session isolation
-    // - supports up to 100 concurrent sessions
+    // - supports up to 11 concurrent sessions
     const webrtcUdpListeners = webrtcUdpTargetGroups.map((tg, i) => {
       const port = 10000 + i;
       return new LbListener(this, `webrtc-udp-listener-${port}`, {
@@ -458,7 +458,7 @@ class AwestruckInfrastructure extends TerraformStack {
         {
           // turn relay ports
           fromPort: 49152,
-          toPort: 49252,
+          toPort: 49162,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         }
@@ -611,7 +611,7 @@ class AwestruckInfrastructure extends TerraformStack {
             portMappings: [
               { containerPort: 3478, hostPort: 3478, protocol: "udp" },
               { containerPort: 3479, hostPort: 3479, protocol: "tcp" },
-              ...Array.from({ length: 101 }, (_, i) => ({
+              ...Array.from({ length: 11 }, (_, i) => ({
                 containerPort: 49152 + i,
                 hostPort: 49152 + i,
                 protocol: "udp"
