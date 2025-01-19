@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -633,13 +632,14 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		// - ensures consistent behavior across all clients
 		// - prevents direct peer connections
 		// - routes all traffic through our TURN servers
-		ICETransportPolicy: func() webrtc.ICETransportPolicy {
-			if os.Getenv("AWESTRUCK_ENV") == "production" {
-				return webrtc.ICETransportPolicyRelay
-			}
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		// ICETransportPolicy: func() webrtc.ICETransportPolicy {
+		// 	if os.Getenv("AWESTRUCK_ENV") == "production" {
+		// 		return webrtc.ICETransportPolicyRelay
+		// 	}
 
-			return webrtc.ICETransportPolicyAll
-		}(),
+		// 	return webrtc.ICETransportPolicyAll
+		// }(),
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 

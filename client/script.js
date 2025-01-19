@@ -216,7 +216,7 @@ const ICE_CONFIG = {
     iceCandidatePoolSize: 2,
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay'  // Force TURN relay for consistent behavior
+    iceTransportPolicy: 'all'  // Force TURN relay for consistent behavior
   }
 };
 
