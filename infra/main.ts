@@ -480,60 +480,19 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     // why we need a static elastic ip:
-    // - ensures turn server can bind to the external ip
-    // - prevents "cannot assign requested address" errors
-    // - provides stable ip for ice candidates
-    const turnElasticIp1 = new Eip(this, "turn-elastic-ip-1", {
+    // - ensures turn server has stable public ip
+    // - enables reliable nat traversal
+    // - simplifies client configuration
+    const turnElasticIp = new Eip(this, "turn-elastic-ip", {
       vpc: true,
       tags: {
-        Name: "awestruck-turn-eip-1",
+        Name: "awestruck-turn-eip",
       },
-    });
-
-    const turnElasticIp2 = new Eip(this, "turn-elastic-ip-2", {
-      vpc: true,
-      tags: {
-        Name: "awestruck-turn-eip-2",
-      },
-    });
-
-    // why we need a network load balancer for turn:
-    // - supports udp protocol required for turn/stun
-    // - preserves client ip addresses for nat traversal
-    // - provides lower latency than application load balancer
-    const turnNlb = new Lb(this, "awestruck-turn-nlb", {
-      name: "awestruck-turn-nlb",
-      internal: false,
-      loadBalancerType: "network",
-      enableCrossZoneLoadBalancing: true,
-      subnetMapping: [
-        {
-          subnetId: subnet1.id,
-          allocationId: turnElasticIp1.allocationId,
-        },
-        {
-          subnetId: subnet2.id,
-          allocationId: turnElasticIp2.allocationId,
-        }
-      ],
-      lifecycle: {
-        createBeforeDestroy: true
-      }
-    });
-
-    // Output both Elastic IPs for reference
-    new TerraformOutput(this, "turn-elastic-ips", {
-      value: {
-        az1: turnElasticIp1.publicIp,
-        az2: turnElasticIp2.publicIp,
-      },
-      description: "Elastic IPs for TURN server in each AZ",
     });
 
     // why we need a turn log group:
     // - centralizes turn server logs
-    // - enables log retention policies
-    // - supports cloudwatch monitoring
+    // - enables log retention policies 
     const turnLogGroup = new CloudwatchLogGroup(this, "turn-log-group", {
       name: `/ecs/turn-server`,
       retentionInDays: 30,
@@ -541,8 +500,7 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a turn task definition:
     // - runs our pion turn implementation
-    // - consistent with other services
-    // - enables proper monitoring and scaling
+    // - enables proper monitoring
     const turnTaskDefinition = new EcsTaskDefinition(
       this,
       "turn-task-definition",
@@ -577,16 +535,9 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_PORT", value: "3478" },
               { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "MIN_PORT", value: "49152" },
-              { name: "MAX_PORT", value: "49252" },
+              { name: "MAX_PORT", value: "49162" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              // why we need both elastic ips:
-              // - tasks can run in either AZ
-              // - each AZ uses its own elastic ip
-              // - ensures correct external ip is used
-              { name: "EXTERNAL_IP_AZ1", value: turnElasticIp1.publicIp },
-              { name: "EXTERNAL_IP_AZ2", value: turnElasticIp2.publicIp },
-              // we'll detect which AZ we're in at runtime
-              { name: "EXTERNAL_IP", value: "{{DETECT_AT_RUNTIME}}" }
+              { name: "EXTERNAL_IP", value: turnElasticIp.publicIp }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
@@ -608,61 +559,21 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // why we need dns records for the turn server:
-    // - enables client discovery of turn/stun services
+    // why we need dns records for turn:
+    // - enables client discovery of turn services
     // - allows for future ip changes without client updates
-    // - supports geographic dns routing if needed
     new Route53Record(this, "turn-dns", {
       zoneId: hostedZone.zoneId,
       name: "turn.awestruck.io",
       type: "A",
-      allowOverwrite: true,
-      alias: {
-        name: turnNlb.dnsName,
-        zoneId: turnNlb.zoneId,
-        evaluateTargetHealth: true,
-      },
+      ttl: 60,
+      records: [turnElasticIp.publicIp],
     });
 
-    // why we use a single target group for turn:
-    // - handles both stun and turn traffic on same port
-    // - simplifies load balancer configuration
-    // - enables health checks for the service
-    const turnUdpTargetGroup = new LbTargetGroup(this, "awestruck-turn-udp-tg", {
-      name: "awestruck-turn-udp-tg",
-      port: 3478,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        protocol: "TCP",
-        port: "3479",
-        healthyThreshold: 3,
-        unhealthyThreshold: 5,
-        interval: 30,
-        timeout: 10
-      },
-      lifecycle: {
-        createBeforeDestroy: true
-      }
-    });
-
-    // why we need a single udp listener:
-    // - handles both stun and turn protocols on standard port 3478
-    // - provides nat traversal and relay capabilities
-    // - simplifies client configuration
-    const turnUdpListener = new LbListener(this, "turn-udp-listener", {
-      loadBalancerArn: turnNlb.arn,
-      port: 3478,
-      protocol: "UDP",
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: turnUdpTargetGroup.arn,
-      }],
-      lifecycle: {
-        createBeforeDestroy: true
-      }
+    // Output Elastic IP for reference
+    new TerraformOutput(this, "turn-elastic-ip", {
+      value: turnElasticIp.publicIp,
+      description: "Elastic IP for TURN server",
     });
 
     // why we need a separate target group for relay ports:
@@ -694,7 +605,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - stays within aws limit of 50 listeners per nlb
     // - maintains same functionality as individual port listeners
     const turnRelayListener = new LbListener(this, "turn-relay-listener", {
-      loadBalancerArn: turnNlb.arn,
+      loadBalancerArn: webrtcNlb.arn,
       port: 49152,
       protocol: "UDP",
       defaultAction: [{
@@ -708,50 +619,19 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a turn service:
     // - runs our pion turn implementation
-    // - enables proper monitoring and scaling
-    // - handles both control and relay traffic
+    // - enables proper monitoring
     new EcsService(this, "turn-service", {
       name: "awestruck-turn-service",
       cluster: ecsCluster.arn,
       taskDefinition: turnTaskDefinition.arn,
-      desiredCount: 2,
+      desiredCount: 1,
       launchType: "FARGATE",
       forceNewDeployment: true,
       networkConfiguration: {
         assignPublicIp: true,
-        subnets: [subnet1.id, subnet2.id],
+        subnets: [subnet1.id],
         securityGroups: [turnSecurityGroup.id],
-      },
-      loadBalancer: [
-        {
-          targetGroupArn: turnUdpTargetGroup.arn,
-          containerName: "turn-server",
-          containerPort: 3478,
-        },
-        {
-          targetGroupArn: turnRelayTargetGroup.arn,
-          containerName: "turn-server",
-          containerPort: 49152,
-        }
-      ],
-      dependsOn: [turnUdpListener, turnRelayListener],
-    });
-
-    // why we need dns records for each turn instance:
-    // - enables direct instance access if needed
-    // - supports client-side load balancing
-    // - provides fallback options
-    ["turn1", "turn2"].forEach((name, index) => {
-      new Route53Record(this, `turn-instance-dns-${index + 1}`, {
-        zoneId: hostedZone.zoneId,
-        name: `${name}.${hostedZone.name}`,
-        type: "A",
-        alias: {
-          name: turnNlb.dnsName,
-          zoneId: turnNlb.zoneId,
-          evaluateTargetHealth: true,
-        },
-      });
+      }
     });
 
     // Add CloudWatch dashboard for monitoring both services
