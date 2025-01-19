@@ -650,19 +650,11 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// why we need relay-only in production:
-		// - fargate containers are behind aws nat
-		// - direct peer connections won't work
-		// - ensures consistent behavior in ecs
-		ICETransportPolicy: func() webrtc.ICETransportPolicy {
-			env := os.Getenv("AWESTRUCK_ENV")
-			if env == "production" {
-				logWithTime("[ICE] Using RELAY-only policy for ECS/Fargate environment")
-				return webrtc.ICETransportPolicyRelay
-			}
-			logWithTime("[ICE] Using ALL transport policy for development environment")
-			return webrtc.ICETransportPolicyAll
-		}(),
+		// why we need ICETransportPolicyAll:
+		// - allows direct media connections through NLB
+		// - uses TURN only for connection establishment
+		// - enables efficient audio streaming
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 

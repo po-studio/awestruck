@@ -440,15 +440,15 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a separate security group for turn:
     // - isolates turn server network access
-    // - allows specific ports for stun/turn protocols
-    // - enables proper security monitoring
+    // - handles only stun/turn control traffic
+    // - no media relay needed as audio goes through nlb
     const turnSecurityGroup = new SecurityGroup(this, "turn-security-group", {
       name: "awestruck-turn-sg",
       description: "Security group for TURN server",
       vpcId: vpc.id,
       ingress: [
         {
-          // stun/turn control port
+          // stun/turn control port only
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
@@ -459,13 +459,6 @@ class AwestruckInfrastructure extends TerraformStack {
           fromPort: 3479,
           toPort: 3479,
           protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          // turn relay ports
-          fromPort: 49152,
-          toPort: 49162,
-          protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         }
       ],
@@ -500,14 +493,15 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a turn task definition:
     // - runs our pion turn implementation
-    // - enables proper monitoring
+    // - handles only connection establishment
+    // - no media relay as audio goes through nlb
     const turnTaskDefinition = new EcsTaskDefinition(
       this,
       "turn-task-definition",
       {
         family: "turn-server",
-        cpu: "1024",
-        memory: "2048",
+        cpu: "512",  // Reduced as no media relay needed
+        memory: "1024",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
         executionRoleArn: ecsTaskExecutionRole.arn,
@@ -522,20 +516,13 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/turn:latest`,
             portMappings: [
               { containerPort: 3478, hostPort: 3478, protocol: "udp" },
-              { containerPort: 3479, hostPort: 3479, protocol: "tcp" },
-              ...Array.from({ length: 11 }, (_, i) => ({
-                containerPort: 49152 + i,
-                hostPort: 49152 + i,
-                protocol: "udp"
-              })),
+              { containerPort: 3479, hostPort: 3479, protocol: "tcp" }
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "TURN_REALM", value: "awestruck.io" },
               { name: "TURN_PORT", value: "3478" },
               { name: "HEALTH_CHECK_PORT", value: "3479" },
-              { name: "MIN_PORT", value: "49152" },
-              { name: "MAX_PORT", value: "49162" },
               { name: "AWESTRUCK_ENV", value: "production" },
               { name: "EXTERNAL_IP", value: turnElasticIp.publicIp }
             ],
