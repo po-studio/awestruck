@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/pion/turn/v2"
@@ -108,15 +109,22 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		// Check if EXTERNAL_IP is a DNS name and resolve it
 		if ips, err := net.LookupHost(externalIP); err == nil && len(ips) > 0 {
 			log.Printf("[TURN] Resolved EXTERNAL_IP %s to IPs: %v", externalIP, ips)
-			// Find first IPv4 address
+			// Find first valid IPv4 address (must be a host address, not network)
 			for _, ip := range ips {
 				if parsedIP := net.ParseIP(ip); parsedIP != nil {
-					if ipv4 := parsedIP.To4(); ipv4 != nil {
-						log.Printf("[TURN] Using external IPv4 address: %s", ipv4.String())
-						externalIP = ipv4.String()
-						break
+					if ipv4 := parsedIP.To4(); ipv4 != nil && !ipv4.IsUnspecified() {
+						// Ensure it's not a network address (last octet should not be 0)
+						if ipv4[3] != 0 {
+							log.Printf("[TURN] Using external IPv4 address: %s", ipv4.String())
+							externalIP = ipv4.String()
+							break
+						}
 					}
 				}
+			}
+			if strings.HasSuffix(externalIP, ".0") {
+				log.Printf("[TURN] WARNING: External IP %s appears to be a network address", externalIP)
+				return nil, fmt.Errorf("external IP %s is not a valid host address", externalIP)
 			}
 		}
 		log.Printf("[TURN] Using EXTERNAL_IP for client advertisement: %s", externalIP)
@@ -145,8 +153,8 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 			{
 				PacketConn: udpListener,
 				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: relayIP,    // Internal IP we bind to for relaying
-					Address:      externalIP, // External IP we advertise to clients
+					RelayAddress: relayIP,    // Internal IP for actual relay binding
+					Address:      externalIP, // External IP for client advertisement only
 				},
 			},
 		},

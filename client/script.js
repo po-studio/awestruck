@@ -435,19 +435,29 @@ async function setupWebRTC(config) {
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
+            const candidateObj = event.candidate.toJSON();
+            const candidateType = candidateObj.type;
+            
             // in production, only allow srflx, prflx, and relay candidates
             const isProduction = window.location.hostname !== 'localhost';
             if (isProduction) {
-                const candidateObj = event.candidate.toJSON();
-                if (candidateObj.type === 'host') {
-                    console.log('[ICE] Filtering out host candidate in production:', candidateObj);
+                if (candidateType === 'host') {
+                    console.log('[ICE] Filtering out host candidate:', candidateObj);
                     return;
                 }
-                console.log('[ICE] Allowing candidate type:', candidateObj.type);
+                
+                // Log allowed candidate details
+                console.log(`[ICE] Processing ${candidateType} candidate:`, {
+                    address: candidateObj.address || 'privacy-masked',
+                    port: candidateObj.port,
+                    type: candidateType,
+                    protocol: candidateObj.protocol,
+                    relatedAddress: candidateObj.relatedAddress,
+                    url: candidateObj.url
+                });
             }
 
             iceProgress.trackCandidate();
-            console.log('[ICE] New candidate:', event.candidate);
             
             // Only send candidates after remote description is set
             if (!pc.remoteDescription) {
