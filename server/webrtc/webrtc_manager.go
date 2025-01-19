@@ -52,7 +52,7 @@ var (
 	pm = &portManager{
 		ports:    make(map[int]string),
 		basePort: 10000,
-		maxPort:  10100, // expanded to match infrastructure
+		maxPort:  10010, // expanded to match infrastructure
 	}
 )
 

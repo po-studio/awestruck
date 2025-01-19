@@ -130,7 +130,7 @@ class AwestruckInfrastructure extends TerraformStack {
           // - allows for rtcp feedback
           // - matches container port mappings
           fromPort: 10000,
-          toPort: 10100,  // expanded from 10010 to 10100
+          toPort: 10010,  // expanded from 10010 to 10100
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
