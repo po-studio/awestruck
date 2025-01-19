@@ -587,23 +587,6 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need a single listener with port range for relay:
-    // - handles entire relay port range (49152-49252) in one listener
-    // - stays within aws limit of 50 listeners per nlb
-    // - maintains same functionality as individual port listeners
-    const turnRelayListener = new LbListener(this, "turn-relay-listener", {
-      loadBalancerArn: webrtcNlb.arn,
-      port: 49152,
-      protocol: "UDP",
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: turnRelayTargetGroup.arn,
-      }],
-      lifecycle: {
-        createBeforeDestroy: true
-      }
-    });
-
     // why we need a turn service:
     // - runs our pion turn implementation
     // - enables proper monitoring

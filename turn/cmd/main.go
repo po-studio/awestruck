@@ -34,6 +34,14 @@ func main() {
 		}
 	}
 
+	// why we need to log external ip:
+	// - helps debug NAT traversal issues
+	// - verifies elastic ip is set correctly
+	// - confirms environment variable passing
+	externalIP := os.Getenv("EXTERNAL_IP")
+	log.Printf("[TURN] External IP: %q", externalIP)
+	log.Printf("[TURN] Environment: %q", os.Getenv("AWESTRUCK_ENV"))
+
 	server, err := turn.NewTurnServer(*port, realm)
 	if err != nil {
 		log.Fatalf("Failed to create TURN server: %v", err)
