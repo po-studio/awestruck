@@ -435,14 +435,15 @@ async function setupWebRTC(config) {
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            // in production, only allow srflx candidates
+            // in production, only allow srflx, prflx, and relay candidates
             const isProduction = window.location.hostname !== 'localhost';
             if (isProduction) {
                 const candidateObj = event.candidate.toJSON();
-                if (candidateObj.type !== 'srflx') {
-                    console.log('[ICE] Filtering out non-srflx candidate in production:', candidateObj);
+                if (candidateObj.type === 'host') {
+                    console.log('[ICE] Filtering out host candidate in production:', candidateObj);
                     return;
                 }
+                console.log('[ICE] Allowing candidate type:', candidateObj.type);
             }
 
             iceProgress.trackCandidate();

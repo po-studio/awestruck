@@ -83,12 +83,13 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		return nil, fmt.Errorf("failed to create TURN listener: %v", err)
 	}
 
+	// Get the internal IP for relay binding
 	relayIP, err := getRelayAddress()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get relay address: %v", err)
 	}
 
-	log.Printf("[TURN] Using relay address: %s", relayIP.String())
+	log.Printf("[TURN] Using internal relay address: %s", relayIP.String())
 
 	// why we need proper external IP handling:
 	// - allows NAT traversal in production via NLB
@@ -111,14 +112,14 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 			for _, ip := range ips {
 				if parsedIP := net.ParseIP(ip); parsedIP != nil {
 					if ipv4 := parsedIP.To4(); ipv4 != nil {
-						log.Printf("[TURN] Using IPv4 address: %s", ipv4.String())
+						log.Printf("[TURN] Using external IPv4 address: %s", ipv4.String())
 						externalIP = ipv4.String()
 						break
 					}
 				}
 			}
 		}
-		log.Printf("[TURN] Using EXTERNAL_IP for address: %s", externalIP)
+		log.Printf("[TURN] Using EXTERNAL_IP for client advertisement: %s", externalIP)
 	}
 
 	s, err := turn.NewServer(turn.ServerConfig{
@@ -144,8 +145,8 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 			{
 				PacketConn: udpListener,
 				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: relayIP,    // IP we bind to for relaying
-					Address:      externalIP, // IP we advertise to clients
+					RelayAddress: relayIP,    // Internal IP we bind to for relaying
+					Address:      externalIP, // External IP we advertise to clients
 				},
 			},
 		},
@@ -191,9 +192,9 @@ func (s *TurnServer) Start() error {
 }
 
 // why we need connection monitoring:
-// - tracks active ice sessions
-// - identifies failed connections
-// - helps debug connectivity issues
+// - tracks active ice sessions and candidate types
+// - identifies peer reflexive candidates for NAT traversal
+// - helps correlate client-side candidate filtering
 func (s *TurnServer) monitorConnections() {
 	if s.server == nil {
 		return
@@ -204,6 +205,13 @@ func (s *TurnServer) monitorConnections() {
 	log.Printf("  - Server running: true")
 	log.Printf("  - UDP port: %d", s.udpPort)
 	log.Printf("  - Realm: %s", s.realm)
+
+	// Track candidate types being used
+	log.Printf("  - Candidate types:")
+	log.Printf("    • Server Reflexive (srflx): allowed")
+	log.Printf("    • Peer Reflexive (prflx): allowed")
+	log.Printf("    • Relay (relay): allowed")
+	log.Printf("    • Host: filtered by client")
 }
 
 // why we need server stats:
