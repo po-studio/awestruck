@@ -377,6 +377,9 @@ class AwestruckInfrastructure extends TerraformStack {
           unhealthyThreshold: 5,
           interval: 30,
           timeout: 10
+        },
+        lifecycle: {
+          createBeforeDestroy: true
         }
       });
     });
@@ -395,6 +398,9 @@ class AwestruckInfrastructure extends TerraformStack {
           type: "forward",
           targetGroupArn: tg.arn,
         }],
+        lifecycle: {
+          createBeforeDestroy: true
+        }
       });
     });
 
@@ -500,10 +506,6 @@ class AwestruckInfrastructure extends TerraformStack {
       internal: false,
       loadBalancerType: "network",
       enableCrossZoneLoadBalancing: true,
-      // why we need subnet mappings with elastic ips:
-      // - automatically associates eips with nlb
-      // - provides static ips for each availability zone
-      // - enables proper nat traversal across azs
       subnetMapping: [
         {
           subnetId: subnet1.id,
@@ -543,6 +545,9 @@ class AwestruckInfrastructure extends TerraformStack {
         unhealthyThreshold: 5,
         interval: 30,
         timeout: 10
+      },
+      lifecycle: {
+        createBeforeDestroy: true
       }
     });
 
@@ -558,6 +563,9 @@ class AwestruckInfrastructure extends TerraformStack {
         type: "forward",
         targetGroupArn: turnUdpTargetGroup.arn,
       }],
+      lifecycle: {
+        createBeforeDestroy: true
+      }
     });
 
     // why we need dns records for the turn server:
@@ -665,6 +673,9 @@ class AwestruckInfrastructure extends TerraformStack {
         unhealthyThreshold: 5,
         interval: 30,
         timeout: 10
+      },
+      lifecycle: {
+        createBeforeDestroy: true
       }
     });
 
@@ -680,6 +691,9 @@ class AwestruckInfrastructure extends TerraformStack {
         type: "forward",
         targetGroupArn: turnRelayTargetGroup.arn,
       }],
+      lifecycle: {
+        createBeforeDestroy: true
+      }
     });
 
     // why we need a turn service:
