@@ -79,9 +79,32 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 
 	log.Printf("[TURN] Starting server with realm: %q, port: %d", realm, udpPort)
 
-	udpListener, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", udpPort))
+	// Create UDP listener with logging
+	addr := fmt.Sprintf("0.0.0.0:%d", udpPort)
+	log.Printf("[TURN] Creating UDP listener on %s", addr)
+	udpListener, err := net.ListenPacket("udp4", addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TURN listener: %v", err)
+		return nil, fmt.Errorf("failed to create UDP listener: %v", err)
+	}
+
+	// Create a buffered channel for packet logging
+	packetChan := make(chan struct {
+		data []byte
+		addr net.Addr
+	}, 100)
+
+	// Start packet logging goroutine
+	go func() {
+		for packet := range packetChan {
+			log.Printf("[PACKET] Received %d bytes from %v", len(packet.data), packet.addr)
+			log.Printf("[PACKET] Content: %x", packet.data)
+		}
+	}()
+
+	// Create a logging UDP listener
+	loggingListener := &loggingPacketConn{
+		PacketConn: udpListener,
+		ch:         packetChan,
 	}
 
 	// Get the internal IP for relay binding
@@ -140,15 +163,19 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 			log.Printf("[AUTH] Received auth request: username=%q realm=%q from=%v", username, realm, srcAddr)
 			if username == "user" {
 				key := turn.GenerateAuthKey(username, realm, "pass")
-				log.Printf("[AUTH] Generated key for user=%q realm=%q", username, realm)
+				log.Printf("[AUTH] Generated key for user=%q realm=%q key=%x", username, realm, key)
 				return key, true
 			}
 			log.Printf("[AUTH] Unknown user: %q (expected: user)", username)
 			return nil, false
 		},
+		// why we need to log all packets:
+		// - helps debug stun binding requests
+		// - shows if server receives any traffic
+		// - identifies potential protocol issues
 		PacketConnConfigs: []turn.PacketConnConfig{
 			{
-				PacketConn: udpListener,
+				PacketConn: loggingListener,
 				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
 					RelayAddress: relayIP,    // Internal IP for actual relay binding
 					Address:      externalIP, // External IP for client advertisement only
@@ -278,4 +305,44 @@ func (s *TurnServer) IsHealthy() bool {
 
 	log.Printf("[HEALTH] ✓ Server is healthy")
 	return true
+}
+
+// why we need packet logging:
+// - debug incoming stun/turn requests
+// - verify server receives traffic
+// - identify protocol issues
+type loggingPacketConn struct {
+	net.PacketConn
+	ch chan<- struct {
+		data []byte
+		addr net.Addr
+	}
+}
+
+func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = l.PacketConn.ReadFrom(p)
+	if err == nil && n > 0 {
+		l.ch <- struct {
+			data []byte
+			addr net.Addr
+		}{
+			data: append([]byte{}, p[:n]...),
+			addr: addr,
+		}
+	}
+	return
+}
+
+func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	n, err = l.PacketConn.WriteTo(p, addr)
+	if err == nil && n > 0 {
+		l.ch <- struct {
+			data []byte
+			addr net.Addr
+		}{
+			data: append([]byte{}, p[:n]...),
+			addr: addr,
+		}
+	}
+	return
 }
