@@ -130,7 +130,7 @@ class AwestruckInfrastructure extends TerraformStack {
           // - port range supports up to 11 concurrent sessions
           // - matches webrtc_manager allocation (10000-10010)
           fromPort: 10000,
-          toPort: 10010,
+          toPort: 10004,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -361,7 +361,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - each session needs exactly one port
     // - port range supports up to 11 concurrent sessions
     // - matches webrtc_manager allocation (10000-10010)
-    const webrtcUdpTargetGroups = Array.from({ length: 11 }, (_, i) => {
+    const webrtcUdpTargetGroups = Array.from({ length: 5 }, (_, i) => {
       const port = 10000 + i;
       return new LbTargetGroup(this, `awestruck-webrtc-udp-tg-${port}`, {
         name: `awestruck-webrtc-tg-${port}`,
