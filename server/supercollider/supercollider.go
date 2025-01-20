@@ -125,23 +125,34 @@ func (s *SuperColliderSynth) setupCmd() error {
 	// - bind to all interfaces for ECS networking
 	// - optimize for container environment
 	// - ensure stable audio processing
+	// s.Cmd = exec.Command(
+	// 	"scsynth",
+	// 	"-u", strconv.Itoa(s.Port),
+	// 	"-H", "0.0.0.0", // Listen on all interfaces
+	// 	"-a", "1024", // Audio bus channels
+	// 	"-i", "0", // Input channels
+	// 	"-o", "2", // Output channels
+	// 	"-b", "1026", // Number of buffers
+	// 	"-R", "0", // Real-time memory size
+	// 	"-C", "0", // Control bus channels
+	// 	"-l", "1", // Max logins
+	// 	"-z", "128", // Block size (increased for network stability)
+	// 	"-Z", "2", // Hardware buffer size in blocks
+	// 	"-S", "48000", // Sample rate
+	// 	"-B", "0.0.0.0", // Bind address
+	// 	"-P", "70", // Real-time priority
+	// 	"-V", "0", // Verbosity level
+	// )
 	s.Cmd = exec.Command(
 		"scsynth",
 		"-u", strconv.Itoa(s.Port),
-		"-H", "0.0.0.0", // Listen on all interfaces
-		"-a", "1024", // Audio bus channels
-		"-i", "0", // Input channels
-		"-o", "2", // Output channels
-		"-b", "1026", // Number of buffers
-		"-R", "0", // Real-time memory size
-		"-C", "0", // Control bus channels
-		"-l", "1", // Max logins
-		"-z", "128", // Block size (increased for network stability)
-		"-Z", "2", // Hardware buffer size in blocks
-		"-S", "48000", // Sample rate
-		"-B", "0.0.0.0", // Bind address
-		"-P", "70", // Real-time priority
-		"-V", "0", // Verbosity level
+		"-a", "1024",
+		"-i", "0",
+		"-o", "2",
+		"-b", "1026",
+		"-R", "0",
+		"-C", "0",
+		"-l", "1",
 	)
 
 	s.Cmd.Stdout = io.MultiWriter(logFile, pipeWriter)

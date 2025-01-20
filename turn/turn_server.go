@@ -145,18 +145,104 @@ func isPublicIP(ip net.IP) bool {
 	return true
 }
 
-// why we need a custom relay address generator:
-// - ensures turn server only binds to local ip
-// - advertises external ip to clients
-// - prevents binding to nlb ip directly
+// why we need custom relay address generation:
+// - ensures turn server only binds to container ip
+// - advertises nlb ip to clients
+// - handles aws network load balancer setup
 type customRelayAddressGenerator struct {
 	relayIP     net.IP
 	addrManager *externalAddressManager
+	portManager *portRangeManager
+}
+
+// why we need port range management:
+// - matches nlb configured ports
+// - ensures deterministic port allocation
+// - prevents port conflicts
+type portRangeManager struct {
+	mu        sync.Mutex
+	nextPort  int
+	minPort   int
+	maxPort   int
+	usedPorts map[int]bool
+}
+
+func newPortRangeManager(minPort, maxPort int) *portRangeManager {
+	return &portRangeManager{
+		minPort:   minPort,
+		maxPort:   maxPort,
+		nextPort:  minPort,
+		usedPorts: make(map[int]bool),
+	}
+}
+
+func (p *portRangeManager) allocatePort() (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Try to find an available port
+	for i := 0; i <= p.maxPort-p.minPort; i++ {
+		port := p.nextPort
+		p.nextPort++
+		if p.nextPort > p.maxPort {
+			p.nextPort = p.minPort
+		}
+
+		if !p.usedPorts[port] {
+			p.usedPorts[port] = true
+			logWithTime("[PORT] Allocated relay port %d", port)
+			return port, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no available ports in range %d-%d", p.minPort, p.maxPort)
+}
+
+func (p *portRangeManager) releasePort(port int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if port >= p.minPort && port <= p.maxPort {
+		delete(p.usedPorts, port)
+		logWithTime("[PORT] Released relay port %d", port)
+	}
+}
+
+// why we need connection cleanup:
+// - ensures ports are released when done
+// - prevents port leaks
+// - maintains port availability
+type cleanupPacketConn struct {
+	net.PacketConn
+	port        int
+	portManager *portRangeManager
+}
+
+func (c *cleanupPacketConn) Close() error {
+	if c.portManager != nil {
+		c.portManager.releasePort(c.port)
+	}
+	return c.PacketConn.Close()
 }
 
 func (g *customRelayAddressGenerator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
-	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:%d", g.relayIP.String(), requestedPort))
+	if g.portManager == nil {
+		// TODO: set these media ports in config inherited throughout the app
+		g.portManager = newPortRangeManager(10000, 10010)
+		logWithTime("[TURN] Initialized port manager with range 10000-10010")
+	}
+
+	port, err := g.portManager.allocatePort()
 	if err != nil {
+		logWithTime("[TURN][ERROR] Failed to allocate port: %v", err)
+		return nil, nil, err
+	}
+
+	logWithTime("[TURN] Allocating relay on %s:%d", g.relayIP.String(), port)
+	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:%d", g.relayIP.String(), port))
+	if err != nil {
+		g.portManager.releasePort(port)
+		logWithTime("[TURN][ERROR] Failed to listen: %v", err)
 		return nil, nil, err
 	}
 
@@ -164,14 +250,25 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 	g.addrManager.mu.RLock()
 	if len(g.addrManager.ips) == 0 {
 		g.addrManager.mu.RUnlock()
+		g.portManager.releasePort(port)
+		logWithTime("[TURN][ERROR] No external IPs available")
 		return nil, nil, fmt.Errorf("no external IPs available")
 	}
 	externalIP := g.addrManager.ips[0]
 	g.addrManager.mu.RUnlock()
 
-	return conn, &net.UDPAddr{
+	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d", g.relayIP, port, externalIP, port)
+
+	// Wrap connection with cleanup
+	cleanupConn := &cleanupPacketConn{
+		PacketConn:  conn,
+		port:        port,
+		portManager: g.portManager,
+	}
+
+	return cleanupConn, &net.UDPAddr{
 		IP:   externalIP,
-		Port: conn.LocalAddr().(*net.UDPAddr).Port,
+		Port: port,
 	}, nil
 }
 
@@ -211,12 +308,12 @@ func getContainerIP() (net.IP, error) {
 }
 
 // why we need periodic dns resolution:
-// - handles ip changes in nlb
+// - handles nlb ip changes
 // - maintains up-to-date external addresses
 // - ensures continuous service
 func (m *externalAddressManager) startPeriodicResolution(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(30 * time.Second) // More frequent checks for NLB
 		defer ticker.Stop()
 
 		for {
@@ -266,8 +363,9 @@ func NewTurnServer(config ServerConfig) (*TurnServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container IP: %v", err)
 	}
+	log.Printf("[TURN] Using container IP for relay binding: %v", relayIP)
 
-	// Initialize external IP manager with proper development fallback
+	// Initialize external IP manager
 	externalAddr := config.ExternalIP
 	if externalAddr == "" {
 		if config.Environment == "production" {
@@ -282,30 +380,27 @@ func NewTurnServer(config ServerConfig) (*TurnServer, error) {
 		dnsName: externalAddr,
 	}
 
-	// Verify and resolve external IP with retries
+	// Always verify and resolve external IP with retries
 	if err := externalIPManager.resolveIPsWithRetry(); err != nil {
-		// For development with IP address, initialize directly
-		if config.Environment != "production" {
-			if ip := net.ParseIP(externalAddr); ip != nil {
-				if !isPublicIP(ip) {
-					log.Printf("[TURN][WARN] Using private IP in development mode: %s", ip)
-				}
-				externalIPManager.mu.Lock()
-				externalIPManager.ips = []net.IP{ip}
-				externalIPManager.mu.Unlock()
-				log.Printf("[TURN] Development mode: using direct IP %s", ip)
-			} else {
-				return nil, fmt.Errorf("invalid IP address in development mode: %s", externalAddr)
-			}
-		} else {
+		if config.Environment == "production" {
 			return nil, fmt.Errorf("failed to resolve external IPs: %v", err)
+		}
+		// For development with IP address, initialize directly
+		if ip := net.ParseIP(externalAddr); ip != nil {
+			if !isPublicIP(ip) {
+				log.Printf("[TURN][WARN] Using private IP in development mode: %s", ip)
+			}
+			externalIPManager.mu.Lock()
+			externalIPManager.ips = []net.IP{ip}
+			externalIPManager.mu.Unlock()
+			log.Printf("[TURN] Development mode: using direct IP %s", ip)
+		} else {
+			return nil, fmt.Errorf("invalid IP address in development mode: %s", externalAddr)
 		}
 	}
 
-	// Start periodic DNS resolution only in production
-	if config.Environment == "production" {
-		externalIPManager.startPeriodicResolution(ctx)
-	}
+	// Always start periodic DNS resolution to handle NLB changes
+	externalIPManager.startPeriodicResolution(ctx)
 
 	// Store credentials for auth handler
 	username := config.Credentials.Username
@@ -459,4 +554,12 @@ func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) 
 		}
 	}
 	return
+}
+
+// why we need focused logging:
+// - tracks critical turn server events
+// - includes timestamps for correlation
+// - maintains consistent log format
+func logWithTime(format string, v ...interface{}) {
+	log.Printf("[%s] %s", time.Now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), fmt.Sprintf(format, v...))
 }
