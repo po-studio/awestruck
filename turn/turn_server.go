@@ -25,45 +25,40 @@ type TurnServer struct {
 
 // why we need proper relay address detection:
 // - production: use container's internal IP for relay binding
-// - local: use localhost for development
+// - local: use container IP for development too
 // - ensures TURN server only binds to addresses it can use
 func getRelayAddress() (net.IP, error) {
 	log.Printf("getRelayAddress: Starting IP detection")
 
-	env := os.Getenv("AWESTRUCK_ENV")
-	log.Printf("getRelayAddress: Environment is %q", env)
-
-	if env == "production" {
-		// In production, try to get the container's internal IP
-		conn, err := net.Dial("udp", "8.8.8.8:80")
-		if err == nil {
-			defer conn.Close()
-			localAddr := conn.LocalAddr().(*net.UDPAddr)
-			if ipv4 := localAddr.IP.To4(); ipv4 != nil {
-				log.Printf("getRelayAddress: Using container IP: %s", ipv4.String())
-				return ipv4, nil
-			}
+	// Try to get the container's IP by dialing out
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err == nil {
+		defer conn.Close()
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		if ipv4 := localAddr.IP.To4(); ipv4 != nil {
+			log.Printf("getRelayAddress: Using container IP: %s", ipv4.String())
+			return ipv4, nil
 		}
+	}
 
-		// Fallback to eth0 if Dial method fails
-		iface, err := net.InterfaceByName("eth0")
+	// Fallback to eth0 if Dial method fails
+	iface, err := net.InterfaceByName("eth0")
+	if err == nil {
+		addrs, err := iface.Addrs()
 		if err == nil {
-			addrs, err := iface.Addrs()
-			if err == nil {
-				for _, addr := range addrs {
-					if ipnet, ok := addr.(*net.IPNet); ok {
-						if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
-							log.Printf("getRelayAddress: Using eth0 IP: %s", ipv4.String())
-							return ipv4, nil
-						}
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok {
+					if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
+						log.Printf("getRelayAddress: Using eth0 IP: %s", ipv4.String())
+						return ipv4, nil
 					}
 				}
 			}
 		}
 	}
 
-	// For local development or if no other IP found, use localhost
-	log.Printf("getRelayAddress: Using localhost for development or fallback")
+	// Last resort: use localhost
+	log.Printf("getRelayAddress: Using localhost as last resort")
 	return net.ParseIP("127.0.0.1"), nil
 }
 
@@ -304,21 +299,16 @@ type loggingPacketConn struct {
 
 func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	// Log immediately when we get any packet
-	log.Printf("[UDP] ReadFrom called with buffer size: %d", len(p))
+	log.Printf("[UDP] ReadFrom called")
 	n, addr, err = l.PacketConn.ReadFrom(p)
 	if err != nil {
 		log.Printf("[UDP] Error reading: %v", err)
 		return
 	}
-	log.Printf("[UDP] Read %d bytes from %v (local addr: %v)", n, addr, l.PacketConn.LocalAddr())
+	log.Printf("[UDP] Read %d bytes from %v", n, addr)
 	if n > 0 {
 		// Log first 4 bytes to identify STUN messages (0x00 0x01 for binding request)
 		log.Printf("[UDP] First 4 bytes: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
-		// Log STUN message type if it appears to be STUN
-		if n >= 2 && p[0] < 0x02 {
-			messageType := uint16(p[0])<<8 | uint16(p[1])
-			log.Printf("[UDP] Possible STUN message type: 0x%04x", messageType)
-		}
 		log.Printf("[UDP] Full content: %x", p[:n])
 	}
 	return
@@ -326,7 +316,7 @@ func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error)
 
 func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	// Log immediately when we try to send any packet
-	log.Printf("[UDP] WriteTo called for %v (local addr: %v)", addr, l.PacketConn.LocalAddr())
+	log.Printf("[UDP] WriteTo called for %v", addr)
 	n, err = l.PacketConn.WriteTo(p, addr)
 	if err != nil {
 		log.Printf("[UDP] Error writing: %v", err)
@@ -334,9 +324,9 @@ func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) 
 	}
 	log.Printf("[UDP] Wrote %d bytes to %v", n, addr)
 	if n > 0 {
-		// Log first 4 bytes of response
-		log.Printf("[UDP] First 4 bytes of response: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
-		log.Printf("[UDP] Full response: %x", p[:n])
+		// Log first 4 bytes to identify STUN messages (0x00 0x01 for binding request)
+		log.Printf("[UDP] First 4 bytes: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
+		log.Printf("[UDP] Full content: %x", p[:n])
 	}
 	return
 }

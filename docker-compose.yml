@@ -51,6 +51,8 @@ services:
       - JACK_BUFFER_SIZE=2048
     # cap_add:
     #   - SYS_NICE
+    ports:
+      - "8080:8080"
     # network_mode: host
     depends_on:
       turn-server:
@@ -68,7 +70,7 @@ services:
     container_name: turn-server-linux-arm64-instance
     ports:
       - "3478:3478/udp"
-      - "3479:3479"
+      - "3479:3479/tcp"
     environment:
       - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
       - AWESTRUCK_ENV=${AWESTRUCK_ENV:-development}
@@ -80,10 +82,10 @@ services:
       - TURN_REALM=localhost
     volumes:
       - ./turn:/app/turn
-    # # why we need host networking for turn:
-    # # - enables proper nat traversal
-    # # - allows direct ip access
-    # # - improves connection reliability
+    # why we need host networking for turn:
+    # - enables proper nat traversal
+    # - allows direct ip access
+    # - improves connection reliability
     # network_mode: host
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3479/health"]
