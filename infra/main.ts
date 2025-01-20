@@ -391,7 +391,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // why we need a turn target group:
     // - handles stun/turn control traffic on port 3478
     // - enables health checks for turn service
-    // - routes turn traffic to fargate tasks
+    // - routes turn traffic and media relay through fargate tasks
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
       name: "awestruck-turn-tg",
       port: 3478,
@@ -450,7 +450,7 @@ class AwestruckInfrastructure extends TerraformStack {
       });
     }
 
-    // Update awestruck-service to use both load balancers
+    // Update awestruck-service to use only ALB
     new EcsService(this, "awestruck-service", {
       name: "awestruck-service",
       cluster: ecsCluster.arn,
@@ -476,15 +476,15 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a separate security group for turn:
     // - isolates turn server network access
-    // - handles only stun/turn control traffic
-    // - no media relay needed as audio goes through nlb
+    // - handles stun/turn control traffic and media relay
+    // - enables proper port forwarding through nlb
     const turnSecurityGroup = new SecurityGroup(this, "turn-security-group", {
       name: "awestruck-turn-sg",
       description: "Security group for TURN server",
       vpcId: vpc.id,
       ingress: [
         {
-          // stun/turn control port only
+          // stun/turn control port
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
@@ -495,6 +495,13 @@ class AwestruckInfrastructure extends TerraformStack {
           fromPort: 3479,
           toPort: 3479,
           protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          // media relay ports
+          fromPort: 10000,
+          toPort: 10010,
+          protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         }
       ],
