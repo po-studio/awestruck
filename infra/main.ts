@@ -357,6 +357,41 @@ class AwestruckInfrastructure extends TerraformStack {
       enableCrossZoneLoadBalancing: true,
     });
 
+    // why we need a turn target group:
+    // - handles stun/turn control traffic on port 3478
+    // - enables health checks for turn service
+    // - routes turn traffic to fargate tasks
+    const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
+      name: "awestruck-turn-tg",
+      port: 3478,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "3479",
+        protocol: "TCP",
+        interval: 30,
+        timeout: 10,
+        healthyThreshold: 3,
+        unhealthyThreshold: 5
+      }
+    });
+
+    // why we need a turn listener:
+    // - forwards stun/turn traffic to turn service
+    // - enables nat traversal via turn
+    // - maintains persistent turn connections
+    const turnListener = new LbListener(this, "turn-udp-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 3478,
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: turnTargetGroup.arn
+      }]
+    });
+
     // why we need a single target group for webrtc:
     // - aws limits services to 5 load balancer target groups
     // - single target group handles all webrtc ports (10000-10010)
@@ -560,42 +595,7 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "Elastic IP for TURN server",
     });
 
-    // why we need a turn target group:
-    // - enables health checks for turn server
-    // - routes stun/turn traffic to correct container
-    // - supports udp protocol for turn control
-    const turnUdpTargetGroup = new LbTargetGroup(this, "turn-udp-tg", {
-      name: "awestruck-turn-tg",
-      port: 3478,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        port: "3479",
-        protocol: "TCP",
-        interval: 30,
-        timeout: 10,
-        healthyThreshold: 3,
-        unhealthyThreshold: 5
-      }
-    });
-
-    // why we need a turn nlb listener:
-    // - forwards stun/turn control traffic
-    // - uses udp protocol for nat traversal
-    // - connects to turn target group
-    new LbListener(this, "turn-udp-listener", {
-      loadBalancerArn: webrtcNlb.arn,
-      port: 3478,
-      protocol: "UDP",
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: turnUdpTargetGroup.arn
-      }]
-    });
-
-    // Update turn-service to use the NLB
+    // Update turn-service to use the NLB target group
     new EcsService(this, "turn-service", {
       name: "awestruck-turn-service",
       cluster: ecsCluster.arn,
@@ -608,13 +608,12 @@ class AwestruckInfrastructure extends TerraformStack {
         subnets: [subnet1.id, subnet2.id],
         securityGroups: [turnSecurityGroup.id],
       },
-      loadBalancer: [
-        {
-          targetGroupArn: turnUdpTargetGroup.arn,
-          containerName: "turn-server",
-          containerPort: 3478
-        }
-      ]
+      loadBalancer: [{
+        targetGroupArn: turnTargetGroup.arn,
+        containerName: "turn-server",
+        containerPort: 3478
+      }],
+      dependsOn: [turnListener]
     });
 
     // Add CloudWatch dashboard for monitoring both services
