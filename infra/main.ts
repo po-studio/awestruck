@@ -362,7 +362,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - enables health checks for turn service
     // - routes turn traffic to fargate tasks
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
-      name: "awestruck-turn-tg",
+      name: "awestruck-turn-tg-v2",
       port: 3478,
       protocol: "UDP",
       targetType: "ip",
