@@ -316,11 +316,11 @@ class AwestruckInfrastructure extends TerraformStack {
             //   }
             // },
             portMappings: [
+              // why we map these ports:
+              // - http port (8080) for web traffic and signaling
+              // - udp ports (10000-10010) for sending audio to clients via turn
+              // - turn server relays between clients and these ports
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              // why we map all ports:
-              // - each session needs one unique port
-              // - supports up to 11 concurrent sessions
-              // - matches webrtc_manager port range
               ...Array.from({ length: 11 }, (_, i) => ({
                 containerPort: 10000 + i,
                 hostPort: 10000 + i,
@@ -391,7 +391,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // why we need a turn target group:
     // - handles stun/turn control traffic on port 3478
     // - enables health checks for turn service
-    // - routes turn traffic and media relay through fargate tasks
+    // - routes turn traffic through fargate tasks
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
       name: "awestruck-turn-tg",
       port: 3478,
@@ -401,6 +401,27 @@ class AwestruckInfrastructure extends TerraformStack {
       healthCheck: {
         enabled: true,
         port: "3479",
+        protocol: "TCP",
+        interval: 30,
+        timeout: 10,
+        healthyThreshold: 3,
+        unhealthyThreshold: 5
+      }
+    });
+
+    // why we need a webrtc target group:
+    // - handles direct media traffic on ports 10000-10010
+    // - enables health checks for webrtc service
+    // - routes audio streams to fargate tasks
+    const webrtcTargetGroup = new LbTargetGroup(this, "awestruck-webrtc-tg", {
+      name: "awestruck-webrtc-tg",
+      port: 10000,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "8080",
         protocol: "TCP",
         interval: 30,
         timeout: 10,
@@ -426,14 +447,14 @@ class AwestruckInfrastructure extends TerraformStack {
     // why we need multiple nlb listeners:
     // - each webrtc port needs its own listener
     // - enables proper routing of udp traffic
-    // - matches container port mappings and turn server relay ports
+    // - matches container port mappings
     new LbListener(this, "webrtc-udp-listener-10000", {
       loadBalancerArn: webrtcNlb.arn,
       port: 10000,
       protocol: "UDP",
       defaultAction: [{
         type: "forward",
-        targetGroupArn: turnTargetGroup.arn
+        targetGroupArn: webrtcTargetGroup.arn  // Forward media to WebRTC service
       }]
     });
 
@@ -445,12 +466,12 @@ class AwestruckInfrastructure extends TerraformStack {
         protocol: "UDP",
         defaultAction: [{
           type: "forward",
-          targetGroupArn: turnTargetGroup.arn
+          targetGroupArn: webrtcTargetGroup.arn  // Forward media to WebRTC service
         }]
       });
     }
 
-    // Update awestruck-service to use only ALB
+    // Update awestruck-service to use both ALB and NLB
     new EcsService(this, "awestruck-service", {
       name: "awestruck-service",
       cluster: ecsCluster.arn,
@@ -469,7 +490,17 @@ class AwestruckInfrastructure extends TerraformStack {
           targetGroupArn: targetGroup.arn,
           containerName: "server-arm64",
           containerPort: 8080,
-        }
+        },
+        // UDP media traffic through NLB
+        // why we map all ports:
+        // - each port needs to be explicitly mapped
+        // - matches container port mappings
+        // - enables media relay through turn
+        ...Array.from({ length: 11 }, (_, i) => ({
+          targetGroupArn: webrtcTargetGroup.arn,
+          containerName: "server-arm64",
+          containerPort: 10000 + i,
+        }))
       ],
       dependsOn: [listener],
     });
