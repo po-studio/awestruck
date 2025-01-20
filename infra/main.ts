@@ -427,7 +427,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - each webrtc port needs its own listener
     // - enables proper routing of udp traffic
     // - matches container port mappings and turn server relay ports
-    const webrtcUdpListener = new LbListener(this, "webrtc-udp-listener-10000", {
+    new LbListener(this, "webrtc-udp-listener-10000", {
       loadBalancerArn: webrtcNlb.arn,
       port: 10000,
       protocol: "UDP",
@@ -471,7 +471,7 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         }
       ],
-      dependsOn: [listener, webrtcUdpListener],
+      dependsOn: [listener],
     });
 
     // why we need a separate security group for turn:
