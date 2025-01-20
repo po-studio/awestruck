@@ -135,16 +135,25 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
+          // why we need turn control port:
+          // - allows stun/turn control traffic from nlb
+          // - enables nat traversal via turn
+          // - required for webrtc ice connectivity
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          fromPort: 3479,
-          toPort: 3479,
-          protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
+          // why we need internal vpc traffic:
+          // - allows nlb health checks
+          // - enables turn server communication
+          // - required for service discovery
+          // TODO: review security here
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: [vpc.cidrBlock],
         }
       ],
       egress: [
