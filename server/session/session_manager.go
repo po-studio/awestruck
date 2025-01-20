@@ -51,7 +51,6 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 
 	appSession := &AppSession{}
 	appSession.Id = id
-
 	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
 	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s connect=0 buffer-time=100000 ! audio/x-raw,rate=48000,channels=2,format=F32LE ! audioconvert ! audioresample quality=10 ! audio/x-raw,rate=48000 ! queue max-size-buffers=1024 max-size-time=0 max-size-bytes=0 ! audioconvert", id)
 

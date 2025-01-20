@@ -331,19 +331,15 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "AWESTRUCK_ENV", value: "production" },
               // why we need these jack settings:
-              // - maximizes stability over latency to get audio flowing
-              // - much larger buffers to handle scheduling issues
-              // - longer timeouts to prevent dropouts
+              // - matches dummy driver's default configuration
+              // - ensures consistent audio buffering
+              // - maintains stability in non-realtime environment
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_PORT_MAX", value: "128" },
-              { name: "JACK_PERIOD_SIZE", value: "4096" },
-              { name: "JACK_PERIODS", value: "4" },
-              { name: "JACK_PRIORITY", value: "60" },
-              { name: "JACK_REALTIME_PRIORITY", value: "60" },
-              { name: "JACK_TIMEOUT", value: "10000" },
-              { name: "JACK_BUFFER_SIZE", value: "8192" },
-              { name: "GST_DEBUG", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "16777216" },
+              { name: "JACK_RATE", value: "48000" },
+              { name: "JACK_PERIOD_SIZE", value: "1024" },
+              { name: "JACK_WAIT_TIME", value: "21333" },
+              { name: "JACK_PLAYBACK_PORTS", value: "2" },
+              { name: "JACK_CAPTURE_PORTS", value: "2" },
               // "secrets" ... adjust later
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
