@@ -285,12 +285,12 @@ class AwestruckInfrastructure extends TerraformStack {
       "awestruck-task-definition",
       {
         family: "server-arm64",
-        // why we need more cpu:
-        // - ensures enough processing power for real-time audio
-        // - reduces xruns from processing delays
-        // - supports multiple concurrent sessions
+        // why we need these resources:
+        // - 2 vCPU (2048) for audio processing
+        // - 4GB memory (4096) is the minimum valid for 2 vCPU
+        // - follows fargate supported cpu/memory combinations
         cpu: "2048",
-        memory: "2048",
+        memory: "4096",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
         executionRoleArn: ecsTaskExecutionRole.arn,
