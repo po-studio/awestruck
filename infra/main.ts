@@ -361,7 +361,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - handles stun/turn control traffic on port 3478
     // - enables health checks for turn service
     // - routes turn traffic to fargate tasks
-    const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
+    const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg-v2", {
       name: "awestruck-turn-tg-v2",
       port: 3478,
       protocol: "UDP",
@@ -382,7 +382,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - forwards stun/turn traffic to turn service
     // - enables nat traversal via turn
     // - maintains persistent turn connections
-    const turnListener = new LbListener(this, "turn-udp-listener", {
+    const turnListener = new LbListener(this, "turn-udp-listener-v2", {
       loadBalancerArn: webrtcNlb.arn,
       port: 3478,
       protocol: "UDP",
