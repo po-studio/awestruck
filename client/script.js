@@ -756,108 +756,88 @@ function startConnectionMonitoring() {
 }
 
 // why we need enhanced audio monitoring:
-// - track audio pipeline health
-// - detect playback issues early
-// - monitor network impact on audio
+// - track each stage of the audio pipeline
+// - detect exact point of failure
+// - measure actual audio data flow
 function startAudioStatsMonitoring() {
     if (audioStatsInterval) {
         clearInterval(audioStatsInterval);
     }
 
-    audioStatsInterval = setInterval(() => {
+    let lastBytesReceived = 0;
+    let noDataCount = 0;
+    const MAX_NO_DATA_COUNT = 10; // Alert after 10 intervals without data
+
+    audioStatsInterval = setInterval(async () => {
         if (!pc) return;
 
-        pc.getStats().then(stats => {
+        try {
+            const stats = await pc.getStats();
             let audioStats = {
-                inbound: {},
-                track: {},
-                transport: {},
-                candidatePair: {}
+                inbound: null,
+                transport: null,
+                candidatePair: null
             };
 
             stats.forEach(stat => {
                 if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
                     audioStats.inbound = {
-                        packetsReceived: stat.packetsReceived,
-                        packetsLost: stat.packetsLost,
-                        jitter: stat.jitter,
                         bytesReceived: stat.bytesReceived,
-                        timestamp: stat.timestamp,
-                        audioLevel: stat.audioLevel,
-                        totalSamplesReceived: stat.totalSamplesReceived,
-                        concealedSamples: stat.concealedSamples,
-                        silentConcealedSamples: stat.silentConcealedSamples,
-                        codecId: stat.codecId,
-                        fecPacketsReceived: stat.fecPacketsReceived,
-                        fecPacketsDiscarded: stat.fecPacketsDiscarded,
-                        packetsDiscarded: stat.packetsDiscarded,
-                        nackCount: stat.nackCount
+                        packetsReceived: stat.packetsReceived,
+                        jitter: stat.jitter,
+                        timestamp: stat.timestamp
                     };
-                    
-                    // Calculate packet loss percentage
-                    if (stat.packetsReceived > 0) {
-                        audioStats.inbound.packetLossPercent = 
-                            (stat.packetsLost / (stat.packetsReceived + stat.packetsLost)) * 100;
-                    }
-                    
-                    console.log('[AUDIO][STATS] Inbound RTP:', audioStats.inbound);
-                } else if (stat.type === 'track' && stat.kind === 'audio') {
-                    audioStats.track = {
-                        audioLevel: stat.audioLevel,
-                        totalAudioEnergy: stat.totalAudioEnergy,
-                        totalSamplesDuration: stat.totalSamplesDuration,
-                        detached: stat.detached,
-                        ended: stat.ended,
-                        remoteSource: stat.remoteSource,
-                        jitterBufferDelay: stat.jitterBufferDelay,
-                        jitterBufferEmittedCount: stat.jitterBufferEmittedCount
-                    };
-                    
-                    // Calculate effective jitter buffer in ms
-                    if (stat.jitterBufferEmittedCount > 0) {
-                        audioStats.track.avgJitterBufferMs = 
-                            (stat.jitterBufferDelay / stat.jitterBufferEmittedCount) * 1000;
-                    }
-                    
-                    console.log('[AUDIO][STATS] Media Track:', audioStats.track);
                 } else if (stat.type === 'transport') {
                     audioStats.transport = {
-                        bytesReceived: stat.bytesReceived,
-                        bytesSent: stat.bytesSent,
                         dtlsState: stat.dtlsState,
                         selectedCandidatePairId: stat.selectedCandidatePairId,
-                        iceRole: stat.iceRole,
-                        iceState: stat.iceState
+                        bytesReceived: stat.bytesReceived
                     };
-                    console.log('[AUDIO][STATS] Transport:', audioStats.transport);
-                } else if (stat.type === 'candidate-pair' && stat.selected) {
+                } else if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
                     audioStats.candidatePair = {
-                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
-                        currentRoundTripTime: stat.currentRoundTripTime,
-                        localCandidateType: stat.localCandidateType,
-                        remoteCandidateType: stat.remoteCandidateType,
-                        state: stat.state,
-                        totalRoundTripTime: stat.totalRoundTripTime,
-                        responsesReceived: stat.responsesReceived
+                        localCandidate: stat.localCandidateId,
+                        remoteCandidate: stat.remoteCandidateId,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent
                     };
-                    console.log('[AUDIO][STATS] Active Candidate Pair:', audioStats.candidatePair);
                 }
             });
 
-            // Log critical metrics that might affect audio quality
-            if (audioStats.inbound.packetLossPercent > 5) {
-                console.warn('[AUDIO][QUALITY] High packet loss detected:', 
-                    audioStats.inbound.packetLossPercent.toFixed(2) + '%');
+            // Check if we're actually receiving new audio data
+            if (audioStats.inbound) {
+                const newBytes = audioStats.inbound.bytesReceived - lastBytesReceived;
+                console.log('[AUDIO][FLOW]', {
+                    newBytesReceived: newBytes,
+                    totalBytesReceived: audioStats.inbound.bytesReceived,
+                    packetsReceived: audioStats.inbound.packetsReceived,
+                    jitter: audioStats.inbound.jitter,
+                    dtlsState: audioStats.transport?.dtlsState,
+                    candidatePair: audioStats.candidatePair ? 'active' : 'none'
+                });
+
+                if (newBytes === 0) {
+                    noDataCount++;
+                    if (noDataCount >= MAX_NO_DATA_COUNT) {
+                        console.warn('[AUDIO][ALERT] No new audio data received for', noDataCount * 2, 'seconds');
+                        // Log detailed connection state
+                        console.log('[AUDIO][DEBUG] Connection state:', {
+                            iceConnectionState: pc.iceConnectionState,
+                            connectionState: pc.connectionState,
+                            signalingState: pc.signalingState,
+                            transport: audioStats.transport,
+                            candidatePair: audioStats.candidatePair
+                        });
+                    }
+                } else {
+                    noDataCount = 0;
+                }
+                lastBytesReceived = audioStats.inbound.bytesReceived;
+            } else {
+                console.warn('[AUDIO][WARN] No inbound audio stats found');
             }
-            if (audioStats.inbound.jitter > 50) {
-                console.warn('[AUDIO][QUALITY] High jitter detected:', 
-                    audioStats.inbound.jitter.toFixed(2) + 'ms');
-            }
-            if (audioStats.track.avgJitterBufferMs > 250) {
-                console.warn('[AUDIO][QUALITY] Large jitter buffer:', 
-                    audioStats.track.avgJitterBufferMs.toFixed(2) + 'ms');
-            }
-        });
+        } catch (error) {
+            console.error('[AUDIO][ERROR] Failed to get audio stats:', error);
+        }
     }, 2000);
 }
 

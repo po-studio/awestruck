@@ -492,15 +492,15 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         },
         // UDP media traffic through NLB
-        // why we map all ports:
-        // - each port needs to be explicitly mapped
-        // - matches container port mappings
-        // - enables media relay through turn
-        ...Array.from({ length: 11 }, (_, i) => ({
+        // why we use a single target group:
+        // - aws limits services to 5 load balancer attachments
+        // - container still listens on all ports 10000-10010
+        // - nlb listeners forward to correct container ports
+        {
           targetGroupArn: webrtcTargetGroup.arn,
           containerName: "server-arm64",
-          containerPort: 10000 + i,
-        }))
+          containerPort: 10000,
+        }
       ],
       dependsOn: [listener],
     });

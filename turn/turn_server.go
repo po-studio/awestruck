@@ -156,7 +156,7 @@ type customRelayAddressGenerator struct {
 }
 
 // why we need port range management:
-// - matches nlb configured ports
+// - matches nlb configured ports (10000-10010)
 // - ensures deterministic port allocation
 // - prevents port conflicts
 type portRangeManager struct {
@@ -168,6 +168,7 @@ type portRangeManager struct {
 }
 
 func newPortRangeManager(minPort, maxPort int) *portRangeManager {
+	logWithTime("[PORT] Initializing port manager with range %d-%d", minPort, maxPort)
 	return &portRangeManager{
 		minPort:   minPort,
 		maxPort:   maxPort,
@@ -190,11 +191,12 @@ func (p *portRangeManager) allocatePort() (int, error) {
 
 		if !p.usedPorts[port] {
 			p.usedPorts[port] = true
-			logWithTime("[PORT] Allocated relay port %d", port)
+			logWithTime("[PORT] Allocated relay port %d (available: %d/%d)", port, p.maxPort-p.minPort+1-len(p.usedPorts), p.maxPort-p.minPort+1)
 			return port, nil
 		}
 	}
 
+	logWithTime("[PORT][ERROR] No available ports in range %d-%d (all %d ports in use)", p.minPort, p.maxPort, p.maxPort-p.minPort+1)
 	return 0, fmt.Errorf("no available ports in range %d-%d", p.minPort, p.maxPort)
 }
 
@@ -204,7 +206,7 @@ func (p *portRangeManager) releasePort(port int) {
 
 	if port >= p.minPort && port <= p.maxPort {
 		delete(p.usedPorts, port)
-		logWithTime("[PORT] Released relay port %d", port)
+		logWithTime("[PORT] Released relay port %d (available: %d/%d)", port, p.maxPort-p.minPort+1-len(p.usedPorts), p.maxPort-p.minPort+1)
 	}
 }
 

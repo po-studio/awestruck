@@ -39,7 +39,7 @@ type ICECandidateRequest struct {
 
 // why we need port management:
 // - each webrtc session needs exactly one port
-// - ports are allocated from a fixed range
+// - ports are allocated from fixed range (10000-10010)
 // - enables multiple concurrent sessions
 type portManager struct {
 	mu       sync.Mutex
@@ -52,7 +52,7 @@ var (
 	pm = &portManager{
 		ports:    make(map[int]string),
 		basePort: 10000,
-		maxPort:  10010, // supports up to 100 concurrent sessions
+		maxPort:  10010, // matches turn server and nlb ports
 	}
 )
 
@@ -67,7 +67,8 @@ func (pm *portManager) reservePort(sessionID string) (int, error) {
 	// First try to find if this session already has a port
 	for port, sid := range pm.ports {
 		if sid == sessionID {
-			log.Printf("[PORT] Session %s already has port %d", sessionID, port)
+			log.Printf("[PORT] Session %s already has port %d (available: %d/%d)",
+				sessionID, port, pm.maxPort-pm.basePort+1-len(pm.ports), pm.maxPort-pm.basePort+1)
 			return port, nil
 		}
 	}
@@ -76,11 +77,14 @@ func (pm *portManager) reservePort(sessionID string) (int, error) {
 	for port := pm.basePort; port <= pm.maxPort; port++ {
 		if _, inUse := pm.ports[port]; !inUse {
 			pm.ports[port] = sessionID
-			log.Printf("[PORT] Reserved port %d for session %s", port, sessionID)
+			log.Printf("[PORT] Reserved port %d for session %s (available: %d/%d)",
+				port, sessionID, pm.maxPort-pm.basePort+1-len(pm.ports), pm.maxPort-pm.basePort+1)
 			return port, nil
 		}
 	}
 
+	log.Printf("[PORT][ERROR] No ports available in range %d-%d (all %d ports in use)",
+		pm.basePort, pm.maxPort, pm.maxPort-pm.basePort+1)
 	return 0, fmt.Errorf("no ports available in range %d-%d (max concurrent sessions reached)", pm.basePort, pm.maxPort)
 }
 
@@ -91,7 +95,8 @@ func (pm *portManager) releasePort(sessionID string) {
 	for port, sid := range pm.ports {
 		if sid == sessionID {
 			delete(pm.ports, port)
-			log.Printf("[PORT] Released port %d from session %s", port, sessionID)
+			log.Printf("[PORT] Released port %d from session %s (available: %d/%d)",
+				port, sessionID, pm.maxPort-pm.basePort+1-len(pm.ports), pm.maxPort-pm.basePort+1)
 			return
 		}
 	}
