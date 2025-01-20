@@ -22,7 +22,6 @@ import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
 import { CloudwatchDashboard } from "@cdktf/provider-aws/lib/cloudwatch-dashboard";
-import { Eip } from "@cdktf/provider-aws/lib/eip";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -517,12 +516,12 @@ class AwestruckInfrastructure extends TerraformStack {
     // - ensures turn server has stable public ip
     // - enables reliable nat traversal
     // - simplifies client configuration
-    const turnElasticIp = new Eip(this, "turn-elastic-ip", {
-      vpc: true,
-      tags: {
-        Name: "awestruck-turn-eip",
-      },
-    });
+    // const turnElasticIp = new Eip(this, "turn-elastic-ip", {
+    //   vpc: true,
+    //   tags: {
+    //     Name: "awestruck-turn-eip",
+    //   },
+    // });
 
     // why we need a turn log group:
     // - centralizes turn server logs

@@ -15,7 +15,7 @@ ECR_WEBRTC_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_WEB
 ECR_TURN_REPO = po-studio/awestruck/services/turn
 ECR_TURN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_TURN_REPO)
 
-.PHONY: build build-turn up down test-generate-synth aws-login aws-push aws-push-turn deploy-all
+.PHONY: build build-turn up down test-generate-synth aws-login aws-push aws-push-turn deploy-all deploy-infra build-all
 
 # ---------------------------------------
 # local dev only
@@ -36,33 +36,43 @@ upb:
 # deployment build, push, and deploy
 # ---------------------------------------
 build:
+	@echo "Building WebRTC server..."
 	@if ! docker buildx inspect mybuilder > /dev/null 2>&1; then \
 		docker buildx create --use --name mybuilder; \
 	else \
 		docker buildx use mybuilder; \
 	fi
-	docker buildx inspect --bootstrap
-	DOCKER_BUILDKIT=1 docker buildx build \
+	@docker buildx inspect --bootstrap
+	@docker pull $(ECR_WEBRTC_URL):latest || true
+	@mkdir -p /tmp/.buildx-cache
+	@DOCKER_BUILDKIT=1 docker buildx build \
 		--platform $(PLATFORM) \
 		--cache-from type=local,src=/tmp/.buildx-cache \
+		--cache-from $(ECR_WEBRTC_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-new \
-		-t $(IMAGE_NAME) \
+		-t $(IMAGE_NAME):latest \
 		--load .
-	# Move the new cache to replace the old cache
-	rm -rf /tmp/.buildx-cache
-	mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+	@rm -rf /tmp/.buildx-cache
+	@mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
 build-turn:
 	@echo "Building TURN server..."
+	@if ! docker buildx inspect mybuilder > /dev/null 2>&1; then \
+		docker buildx create --use --name mybuilder; \
+	else \
+		docker buildx use mybuilder; \
+	fi
+	@docker buildx inspect --bootstrap
+	@docker pull $(ECR_TURN_URL):latest || true
 	@mkdir -p /tmp/.buildx-cache-turn
 	@docker buildx build \
 		--platform $(PLATFORM) \
 		--cache-from type=local,src=/tmp/.buildx-cache-turn \
+		--cache-from $(ECR_TURN_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-turn-new \
-		-t $(TURN_IMAGE_NAME) \
+		-t $(TURN_IMAGE_NAME):latest \
 		-f Dockerfile.turn \
-		--load \
-		.
+		--load .
 	@rm -rf /tmp/.buildx-cache-turn
 	@mv /tmp/.buildx-cache-turn-new /tmp/.buildx-cache-turn
 
@@ -77,54 +87,23 @@ aws-login:
 	done
 
 aws-push: aws-login
-	# Pull the latest image from ECR to use as cache
-	docker pull $(ECR_WEBRTC_URL):latest || true
-	
-	# Build with cache from both local and ECR
-	DOCKER_BUILDKIT=1 docker buildx build \
-		--platform $(PLATFORM) \
-		--cache-from type=local,src=/tmp/.buildx-cache \
-		--cache-from $(ECR_WEBRTC_URL):latest \
-		--cache-to type=local,dest=/tmp/.buildx-cache-new \
-		-t $(IMAGE_NAME):latest \
-		-t $(ECR_WEBRTC_URL):latest \
-		--load .
-	
-	# Push to ECR with all layers
+	@echo "Pushing WebRTC server to ECR..."
+	# Tag the already built image
+	docker tag $(IMAGE_NAME):latest $(ECR_WEBRTC_URL):latest
+	# Push to ECR
 	docker push $(ECR_WEBRTC_URL):latest
-	
-	# Move the new cache
-	rm -rf /tmp/.buildx-cache
-	mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
 aws-push-turn: aws-login
-	@echo "Building and pushing TURN server to ECR..."
-	@docker pull $(ECR_TURN_URL):latest || true
-	@mkdir -p /tmp/.buildx-cache-turn
-	@docker buildx build \
-		--platform $(PLATFORM) \
-		--push \
-		--cache-from type=local,src=/tmp/.buildx-cache-turn \
-		--cache-from $(ECR_TURN_URL):latest \
-		--cache-to type=local,dest=/tmp/.buildx-cache-turn-new \
-		-t $(TURN_IMAGE_NAME):latest \
-		-t $(ECR_TURN_URL):latest \
-		-f Dockerfile.turn \
-		.
-	@docker push $(ECR_TURN_URL):latest
-	@echo "Successfully pushed TURN server to ECR"
-	@rm -rf /tmp/.buildx-cache-turn
-	@mv /tmp/.buildx-cache-turn-new /tmp/.buildx-cache-turn
+	@echo "Pushing TURN server to ECR..."
+	# Tag the already built image
+	docker tag $(TURN_IMAGE_NAME):latest $(ECR_TURN_URL):latest
+	# Push to ECR
+	docker push $(ECR_TURN_URL):latest
 
-deploy-all: aws-login build build-turn
-	@echo "Deploying all services..."
-	# Tag and push WebRTC server
-	@docker tag $(IMAGE_NAME) $(ECR_WEBRTC_URL):latest
-	@docker push $(ECR_WEBRTC_URL):latest
-	# Tag and push TURN server
-	@docker tag $(TURN_IMAGE_NAME) $(ECR_TURN_URL):latest
-	@docker push $(ECR_TURN_URL):latest
-	# Deploy infrastructure
+deploy-all: build-all aws-push aws-push-turn deploy-infra
+
+deploy-infra:
+	@echo "Deploying infrastructure..."
 	@cd infra && npm install && npm run deploy
 
 test-generate-synth:
@@ -133,3 +112,16 @@ test-generate-synth:
 		-H "Content-Type: application/json" \
 		-H "Awestruck-API-Key: $${AWESTRUCK_API_KEY}" \
 		-d '{"prompt":"","provider":"openai","model":"o1-preview"}'
+
+# why we need optimized build:
+# - uses buildx for multi-platform support
+# - maintains local and remote cache
+# - ensures consistent image tags
+build-all: build build-turn
+	@echo "All services built successfully"
+
+# why we need optimized deployment:
+# - ensures all services are built before pushing
+# - maintains build cache across deployments
+# - deploys infrastructure after images are ready
+deploy-all: build-all aws-push aws-push-turn deploy-infra
