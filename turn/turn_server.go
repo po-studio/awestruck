@@ -208,26 +208,65 @@ func (p *portRangeManager) releasePort(port int) {
 	}
 }
 
-// why we need connection cleanup:
-// - ensures ports are released when done
-// - prevents port leaks
-// - maintains port availability
-type cleanupPacketConn struct {
+// why we need enhanced packet connection:
+// - combines logging and cleanup
+// - ensures port release on close
+// - tracks dtls and stun traffic
+type enhancedPacketConn struct {
 	net.PacketConn
 	port        int
 	portManager *portRangeManager
 }
 
-func (c *cleanupPacketConn) Close() error {
-	if c.portManager != nil {
-		c.portManager.releasePort(c.port)
+func (e *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = e.PacketConn.ReadFrom(p)
+	if err != nil {
+		return n, addr, err
 	}
-	return c.PacketConn.Close()
+
+	// Check for DTLS handshake packets (first byte 20-63)
+	if n > 0 && p[0] >= 20 && p[0] <= 63 {
+		logWithTime("[TURN][DTLS] Received handshake packet type %d from %s on port %d", p[0], addr.String(), e.port)
+	}
+
+	// Log STUN messages too
+	if n >= 20 { // Minimum STUN message size
+		messageType := uint16(p[0])<<8 | uint16(p[1])
+		if messageType&0xC000 == 0 { // STUN messages
+			logWithTime("[STUN] Received message type: 0x%04x from %v", messageType, addr)
+		}
+	}
+
+	return n, addr, err
+}
+
+func (e *enhancedPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	// Check for DTLS handshake packets before writing
+	if len(p) > 0 && p[0] >= 20 && p[0] <= 63 {
+		logWithTime("[TURN][DTLS] Sending handshake packet type %d to %s from port %d", p[0], addr.String(), e.port)
+	}
+
+	// Log STUN messages too
+	if len(p) >= 20 { // Minimum STUN message size
+		messageType := uint16(p[0])<<8 | uint16(p[1])
+		if messageType&0xC000 == 0 { // STUN message
+			logWithTime("[STUN] Sent message type: 0x%04x to %v", messageType, addr)
+		}
+	}
+
+	return e.PacketConn.WriteTo(p, addr)
+}
+
+func (e *enhancedPacketConn) Close() error {
+	if e.portManager != nil {
+		logWithTime("[PORT] Cleaning up port %d", e.port)
+		e.portManager.releasePort(e.port)
+	}
+	return e.PacketConn.Close()
 }
 
 func (g *customRelayAddressGenerator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
 	if g.portManager == nil {
-		// TODO: set these media ports in config inherited throughout the app
 		g.portManager = newPortRangeManager(10000, 10010)
 		logWithTime("[TURN] Initialized port manager with range 10000-10010")
 	}
@@ -257,16 +296,15 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 	externalIP := g.addrManager.ips[0]
 	g.addrManager.mu.RUnlock()
 
-	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d", g.relayIP, port, externalIP, port)
-
-	// Wrap connection with cleanup
-	cleanupConn := &cleanupPacketConn{
+	// Create enhanced connection with both logging and cleanup
+	enhancedConn := &enhancedPacketConn{
 		PacketConn:  conn,
 		port:        port,
 		portManager: g.portManager,
 	}
 
-	return cleanupConn, &net.UDPAddr{
+	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d", g.relayIP, port, externalIP, port)
+	return enhancedConn, &net.UDPAddr{
 		IP:   externalIP,
 		Port: port,
 	}, nil
@@ -354,7 +392,7 @@ func NewTurnServer(config ServerConfig) (*TurnServer, error) {
 	log.Printf("[TURN] Successfully created UDP listener: %v", udpListener.LocalAddr())
 
 	// Create a logging UDP listener
-	loggingListener := &loggingPacketConn{
+	loggingListener := &enhancedPacketConn{
 		PacketConn: udpListener,
 	}
 
@@ -518,42 +556,6 @@ func (s *TurnServer) IsHealthy() bool {
 	}
 	log.Printf("[HEALTH] ✓ Server is healthy")
 	return true
-}
-
-// why we need packet logging:
-// - debug incoming stun/turn requests
-// - verify server receives traffic
-// - identify protocol issues
-type loggingPacketConn struct {
-	net.PacketConn
-}
-
-func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	n, addr, err = l.PacketConn.ReadFrom(p)
-	if err == nil && n > 0 {
-		log.Printf("[PACKET] Received %d bytes from %v", n, addr)
-		if n >= 20 { // Minimum STUN message size
-			messageType := uint16(p[0])<<8 | uint16(p[1])
-			if messageType&0xC000 == 0 { // STUN messages
-				log.Printf("[STUN] Received message type: 0x%04x from %v", messageType, addr)
-			}
-		}
-	}
-	return
-}
-
-func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	n, err = l.PacketConn.WriteTo(p, addr)
-	if err == nil && n > 0 {
-		log.Printf("[PACKET] Sent %d bytes to %v", n, addr)
-		if n >= 20 { // Minimum STUN message size
-			messageType := uint16(p[0])<<8 | uint16(p[1])
-			if messageType&0xC000 == 0 { // STUN message
-				log.Printf("[STUN] Sent message type: 0x%04x to %v", messageType, addr)
-			}
-		}
-	}
-	return
 }
 
 // why we need focused logging:

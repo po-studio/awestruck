@@ -333,7 +333,7 @@ class AwestruckInfrastructure extends TerraformStack {
               // why we need these jack settings:
               // - matches dummy driver's default configuration
               // - ensures consistent audio buffering
-              // - maintains stability in non-realtime environment
+              // - maintains stability in non-realtime environments
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
               { name: "JACK_RATE", value: "48000" },
               { name: "JACK_PERIOD_SIZE", value: "1024" },
@@ -423,38 +423,17 @@ class AwestruckInfrastructure extends TerraformStack {
       }]
     });
 
-    // why we need a single target group for webrtc:
-    // - aws limits services to 5 load balancer target groups
-    // - single target group handles all webrtc ports (10000-10010)
-    // - enables proper session routing through nlb
-    const webrtcUdpTargetGroup = new LbTargetGroup(this, "awestruck-webrtc-udp-tg", {
-      name: "awestruck-webrtc-tg",
-      port: 10000,
-      protocol: "UDP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        port: "8080",
-        protocol: "TCP",
-        interval: 30,
-        timeout: 10,
-        healthyThreshold: 3,
-        unhealthyThreshold: 5
-      }
-    });
-
     // why we need multiple nlb listeners:
     // - each webrtc port needs its own listener
     // - enables proper routing of udp traffic
-    // - matches container port mappings
+    // - matches container port mappings and turn server relay ports
     const webrtcUdpListener = new LbListener(this, "webrtc-udp-listener-10000", {
       loadBalancerArn: webrtcNlb.arn,
       port: 10000,
       protocol: "UDP",
       defaultAction: [{
         type: "forward",
-        targetGroupArn: webrtcUdpTargetGroup.arn
+        targetGroupArn: turnTargetGroup.arn
       }]
     });
 
@@ -466,7 +445,7 @@ class AwestruckInfrastructure extends TerraformStack {
         protocol: "UDP",
         defaultAction: [{
           type: "forward",
-          targetGroupArn: webrtcUdpTargetGroup.arn
+          targetGroupArn: turnTargetGroup.arn
         }]
       });
     }
@@ -490,12 +469,6 @@ class AwestruckInfrastructure extends TerraformStack {
           targetGroupArn: targetGroup.arn,
           containerName: "server-arm64",
           containerPort: 8080,
-        },
-        // WebRTC UDP traffic through NLB
-        {
-          targetGroupArn: webrtcUdpTargetGroup.arn,
-          containerName: "server-arm64",
-          containerPort: 10000,
         }
       ],
       dependsOn: [listener, webrtcUdpListener],

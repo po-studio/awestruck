@@ -160,8 +160,8 @@ const ICE_CONFIG = {
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
     iceTransportPolicy: 'relay',  // Force relay-only like in production
-    iceCheckingTimeout: 5000,
-    gatheringTimeout: 5000
+    iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
+    gatheringTimeout: 15000       // Increased from 5000 to 15000
   },
   production: {
     iceServers: [
@@ -178,8 +178,8 @@ const ICE_CONFIG = {
     rtcpMuxPolicy: 'require',
     bundlePolicy: 'max-bundle',
     iceTransportPolicy: 'relay',  // Force relay-only in production
-    iceCheckingTimeout: 5000,
-    gatheringTimeout: 5000
+    iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
+    gatheringTimeout: 15000       // Increased from 5000 to 15000
   }
 };
 
@@ -296,6 +296,27 @@ async function setupWebRTC(config) {
     pc = new RTCPeerConnection(config);
     console.log('[WebRTC] Created peer connection with config:', config);
 
+    // why we need dtls monitoring:
+    // - tracks handshake progress
+    // - identifies certificate issues
+    // - helps debug media flow problems
+    let dtlsTimeout = null;
+    const monitorDTLS = () => {
+        if (dtlsTimeout) clearTimeout(dtlsTimeout);
+        dtlsTimeout = setTimeout(() => {
+            pc.getStats().then(stats => {
+                stats.forEach(stat => {
+                    if (stat.type === 'transport') {
+                        console.log('[DTLS] State:', stat.dtlsState);
+                        if (stat.dtlsState === 'new') {
+                            console.warn('[DTLS] Handshake not started after 5s');
+                        }
+                    }
+                });
+            });
+        }, 5000);
+    };
+
     // Add early media handling
     let audioTransceiver = pc.addTransceiver('audio', {
         direction: 'recvonly',
@@ -303,79 +324,37 @@ async function setupWebRTC(config) {
     });
     console.log('[WebRTC] Added audio transceiver:', audioTransceiver);
 
-    // Optimize ICE gathering
-    pc.onicegatheringstatechange = () => {
-        console.log('[ICE] Gathering state:', pc.iceGatheringState);
-        
-        // Monitor candidate gathering progress
-        if (pc.iceGatheringState !== 'new') {
-            pc.getStats().then(stats => {
-                // why we track different stats types:
-                // - local-candidate: our STUN-discovered endpoints
-                // - remote-candidate: server's endpoints
-                // - candidate-pair: actual connections being attempted
-                // - transport: overall ICE transport status
-                let statsReport = {
-                    localCandidates: [],
-                    remoteCandidates: [],
-                    candidatePairs: [],
-                    transport: null
-                };
-                
-                stats.forEach(stat => {
-                    switch(stat.type) {
-                        case 'local-candidate':
-                            statsReport.localCandidates.push({
-                                type: stat.candidateType,
-                                protocol: stat.protocol,
-                                address: stat.address,
-                                port: stat.port
-                            });
-                            break;
-                        case 'remote-candidate':
-                            statsReport.remoteCandidates.push({
-                                type: stat.candidateType,
-                                protocol: stat.protocol,
-                                address: stat.address,
-                                port: stat.port
-                            });
-                            break;
-                        case 'candidate-pair':
-                            if (stat.state === 'succeeded') {
-                                statsReport.candidatePairs.push({
-                                    state: stat.state,
-                                    localCandidateId: stat.localCandidateId,
-                                    remoteCandidateId: stat.remoteCandidateId,
-                                    priority: stat.priority,
-                                    nominated: stat.nominated,
-                                    writable: stat.writable
-                                });
-                            }
-                            break;
-                        case 'transport':
-                            statsReport.transport = {
-                                bytesReceived: stat.bytesReceived,
-                                bytesSent: stat.bytesSent,
-                                dtlsState: stat.dtlsState,
-                                iceState: stat.iceState,
-                                selectedCandidatePairId: stat.selectedCandidatePairId
-                            };
-                            break;
-                    }
-                });
+    // Start DTLS monitoring when ICE starts checking
+    pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'checking') {
+            console.log('[ICE] Connection checking - starting DTLS monitoring');
+            monitorDTLS();
+        }
+        onIceConnectionStateChange();
+    };
 
-                // Log only if we have STUN candidates or successful pairs
-                if (statsReport.localCandidates.length > 0 || statsReport.candidatePairs.length > 0) {
-                    console.log('[ICE] Connection stats:', statsReport);
-                }
+    // Enhanced ICE candidate handling
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            const candidateObj = event.candidate.toJSON();
+            console.log('[ICE] New candidate:', candidateObj);
+
+            iceProgress.trackCandidate();
+            
+            if (!pc.remoteDescription) {
+                console.log('[ICE] Queuing candidate until remote description is set');
+                pendingCandidates.push(event.candidate);
+                return;
+            }
+
+            sendICECandidate(event.candidate).catch(err => {
+                console.error('[ICE] Failed to send candidate:', err);
+                // Re-queue failed candidates
+                pendingCandidates.push(event.candidate);
             });
         }
     };
 
-    // Set up connection state monitoring
-    pc.onconnectionstatechange = onConnectionStateChange;
-    pc.oniceconnectionstatechange = onIceConnectionStateChange;
-    
     // why we need audio track handling:
     // - sets up audio playback when track is received
     // - monitors track state changes
@@ -430,61 +409,6 @@ async function setupWebRTC(config) {
             } catch (error) {
                 console.error('[AUDIO] Failed to setup audio processing:', error);
             }
-        }
-    };
-
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            const candidateObj = event.candidate.toJSON();
-            const candidateType = candidateObj.type;
-            
-            // in production, only allow srflx, prflx, and relay candidates
-            const isProduction = window.location.hostname !== 'localhost';
-            if (isProduction) {
-                if (candidateType === 'host') {
-                    console.log('[ICE] Filtering out host candidate:', candidateObj);
-                    return;
-                }
-                
-                // Log allowed candidate details
-                console.log(`[ICE] Processing ${candidateType} candidate:`, {
-                    address: candidateObj.address || 'privacy-masked',
-                    port: candidateObj.port,
-                    type: candidateType,
-                    protocol: candidateObj.protocol,
-                    relatedAddress: candidateObj.relatedAddress,
-                    url: candidateObj.url
-                });
-            }
-
-            iceProgress.trackCandidate();
-            
-            // Only send candidates after remote description is set
-            if (!pc.remoteDescription) {
-                console.log('[ICE] Waiting for remote description before sending candidate');
-                pendingCandidates.push(event.candidate);
-                return;
-            }
-
-            fetch('/ice-candidate', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Session-ID': sessionID
-                },
-                body: JSON.stringify({
-                    candidate: btoa(JSON.stringify({
-                        candidate: event.candidate.candidate,
-                        sdpMid: event.candidate.sdpMid,
-                        sdpMLineIndex: event.candidate.sdpMLineIndex,
-                        usernameFragment: event.candidate.usernameFragment
-                    }))
-                })
-            }).then(() => {
-                iceProgress.trackAcknowledgement();
-            }).catch(err => {
-                console.error('[ICE] Failed to send candidate:', err);
-            });
         }
     };
 
@@ -1218,5 +1142,40 @@ function setupAudioElement(track) {
                     contextState: audioContext ? audioContext.state : 'no context'
                 });
             });
+    }
+}
+
+// why we need reliable candidate sending:
+// - ensures all candidates reach the server
+// - handles transient network issues
+// - maintains connection state
+async function sendICECandidate(candidate) {
+    const maxRetries = 3;
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
+        try {
+            await fetch('/ice-candidate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Session-ID': sessionID
+                },
+                body: JSON.stringify({
+                    candidate: btoa(JSON.stringify({
+                        candidate: candidate.candidate,
+                        sdpMid: candidate.sdpMid,
+                        sdpMLineIndex: candidate.sdpMLineIndex,
+                        usernameFragment: candidate.usernameFragment
+                    }))
+                })
+            });
+            iceProgress.trackAcknowledgement();
+            return;
+        } catch (err) {
+            attempt++;
+            if (attempt === maxRetries) throw err;
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
     }
 }

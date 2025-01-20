@@ -655,6 +655,35 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 	}
 	logWithTime("[WEBRTC] Created peer connection successfully")
 
+	// why we need dtls monitoring:
+	// - tracks handshake progress
+	// - identifies certificate issues
+	// - helps debug media flow problems
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		logWithTime("[WEBRTC] Connection state changed to %s", state.String())
+		if state == webrtc.PeerConnectionStateConnecting {
+			go func() {
+				time.Sleep(5 * time.Second)
+				stats := pc.GetStats()
+				for _, stat := range stats {
+					if transport, ok := stat.(*webrtc.TransportStats); ok {
+						logWithTime("[DTLS] Transport state: %s", transport.DTLSState)
+						if transport.DTLSState == webrtc.DTLSTransportStateNew {
+							logWithTime("[DTLS][WARNING] Handshake not started after 5s")
+						}
+					}
+				}
+			}()
+		}
+	})
+
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		logWithTime("[ICE] Connection state changed to %s", state.String())
+		if state == webrtc.ICEConnectionStateChecking {
+			logWithTime("[ICE] Starting DTLS monitoring")
+		}
+	})
+
 	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
 		logWithTime("[ICE] Gathering state changed to: %s", state.String())
 		if state == webrtc.ICEGathererStateComplete {
