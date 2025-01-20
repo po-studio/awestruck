@@ -1,11 +1,12 @@
 package turn
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/pion/turn/v2"
@@ -16,66 +17,237 @@ import (
 // - enables reliable WebRTC connections through symmetric NATs
 // - allows for custom configuration and monitoring
 type TurnServer struct {
-	server  *turn.Server
-	realm   string
-	udpPort int
-	stopped bool
+	server      *turn.Server
+	realm       string
+	udpPort     int
+	stopped     bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	environment string
 }
 
-// why we need proper relay address detection:
-// - production: use container's internal IP for relay binding
-// - local: use container IP for development too
-// - ensures TURN server only binds to addresses it can use
-func getRelayAddress() (net.IP, error) {
-	log.Printf("getRelayAddress: Starting IP detection")
+// why we need credential management:
+// - enables secure authentication
+// - supports dynamic credentials
+// - prevents hardcoded passwords
+type Credentials struct {
+	Username string
+	Password string
+}
 
-	// Try to get the container's IP by dialing out
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err == nil {
-		defer conn.Close()
-		localAddr := conn.LocalAddr().(*net.UDPAddr)
-		if ipv4 := localAddr.IP.To4(); ipv4 != nil {
-			log.Printf("getRelayAddress: Using container IP: %s", ipv4.String())
-			return ipv4, nil
+// why we need server configuration:
+// - centralizes all server settings
+// - validates required fields
+// - provides type safety
+type ServerConfig struct {
+	UDPPort     int
+	Realm       string
+	Environment string
+	ExternalIP  string
+	Credentials Credentials
+}
+
+// why we need external address management:
+// - handles nlb ip changes through dns
+// - provides thread-safe access to ips
+// - ensures reliable client connectivity
+type externalAddressManager struct {
+	dnsName string
+	ips     []net.IP
+	mu      sync.RWMutex
+}
+
+// why we need dns resolution retries:
+// - handles temporary dns failures
+// - prevents unnecessary server restarts
+// - ensures high availability
+func (m *externalAddressManager) resolveIPsWithRetry() error {
+	maxRetries := 3
+	backoff := time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		if err := m.resolveIPs(); err != nil {
+			if i == maxRetries-1 {
+				return fmt.Errorf("failed to resolve IPs after %d attempts: %v", maxRetries, err)
+			}
+			log.Printf("[TURN][WARN] DNS resolution attempt %d failed: %v, retrying in %v", i+1, err, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
 		}
+		return nil
+	}
+	return fmt.Errorf("failed to resolve IPs after %d attempts", maxRetries)
+}
+
+func (m *externalAddressManager) resolveIPs() error {
+	ips, err := net.LookupHost(m.dnsName)
+	if err != nil {
+		return fmt.Errorf("failed to resolve %s: %v", m.dnsName, err)
 	}
 
-	// Fallback to eth0 if Dial method fails
-	iface, err := net.InterfaceByName("eth0")
-	if err == nil {
-		addrs, err := iface.Addrs()
-		if err == nil {
-			for _, addr := range addrs {
-				if ipnet, ok := addr.(*net.IPNet); ok {
-					if ipv4 := ipnet.IP.To4(); ipv4 != nil && !ipv4.IsLoopback() {
-						log.Printf("getRelayAddress: Using eth0 IP: %s", ipv4.String())
-						return ipv4, nil
-					}
+	validIPs := make([]net.IP, 0)
+	for _, ip := range ips {
+		if parsedIP := net.ParseIP(ip); parsedIP != nil {
+			if ipv4 := parsedIP.To4(); ipv4 != nil {
+				// why we need public ip validation:
+				// - ensures external ip is routable
+				// - prevents using private addresses
+				// - maintains nat traversal capability
+				if isPublicIP(ipv4) {
+					validIPs = append(validIPs, ipv4)
+				} else {
+					log.Printf("[TURN][WARN] Skipping private IP: %v", ipv4)
 				}
 			}
 		}
 	}
 
-	// Last resort: use localhost
-	log.Printf("getRelayAddress: Using localhost as last resort")
-	return net.ParseIP("127.0.0.1"), nil
-}
-
-// why we need proper turn auth:
-// - follows RFC 5389/5766 TURN protocol
-// - uses MD5 hash of username:realm:password
-// - matches pion/turn's GenerateAuthKey implementation
-func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
-	server := &TurnServer{
-		realm:   realm,
-		udpPort: udpPort,
+	if len(validIPs) == 0 {
+		return fmt.Errorf("no valid public IPv4 addresses found for %s", m.dnsName)
 	}
 
-	log.Printf("[TURN] Starting server with realm: %q, port: %d", realm, udpPort)
-	log.Printf("[TURN] Environment: %s", os.Getenv("AWESTRUCK_ENV"))
+	m.mu.Lock()
+	m.ips = validIPs
+	m.mu.Unlock()
+
+	log.Printf("[TURN] Updated external IPs: %v", validIPs)
+	return nil
+}
+
+// why we need public ip validation:
+// - ensures external ip is routable
+// - prevents using private addresses
+// - maintains nat traversal capability
+func isPublicIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+
+	// Check against private IP ranges
+	privateBlocks := []string{
+		"10.0.0.0/8",     // RFC1918
+		"172.16.0.0/12",  // RFC1918
+		"192.168.0.0/16", // RFC1918
+		"169.254.0.0/16", // RFC3927 Link-Local
+		"127.0.0.0/8",    // RFC1122 Loopback
+	}
+
+	for _, block := range privateBlocks {
+		_, subnet, err := net.ParseCIDR(block)
+		if err != nil {
+			continue
+		}
+		if subnet.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// why we need a custom relay address generator:
+// - ensures turn server only binds to local ip
+// - advertises external ip to clients
+// - prevents binding to nlb ip directly
+type customRelayAddressGenerator struct {
+	relayIP     net.IP
+	addrManager *externalAddressManager
+}
+
+func (g *customRelayAddressGenerator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
+	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:%d", g.relayIP.String(), requestedPort))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get current external IP
+	g.addrManager.mu.RLock()
+	if len(g.addrManager.ips) == 0 {
+		g.addrManager.mu.RUnlock()
+		return nil, nil, fmt.Errorf("no external IPs available")
+	}
+	externalIP := g.addrManager.ips[0]
+	g.addrManager.mu.RUnlock()
+
+	return conn, &net.UDPAddr{
+		IP:   externalIP,
+		Port: conn.LocalAddr().(*net.UDPAddr).Port,
+	}, nil
+}
+
+func (g *customRelayAddressGenerator) AllocateConn(network string, requestedPort int) (net.Conn, net.Addr, error) {
+	// TCP connections not supported for TURN relay
+	return nil, nil, fmt.Errorf("TCP allocation not supported")
+}
+
+func (g *customRelayAddressGenerator) Validate() error {
+	if g.relayIP == nil {
+		return fmt.Errorf("relay IP is nil")
+	}
+	if g.addrManager == nil {
+		return fmt.Errorf("address manager is nil")
+	}
+	return nil
+}
+
+// why we need container ip detection:
+// - ensures proper binding in fargate
+// - handles different network setups
+// - provides reliable local addressing
+func getContainerIP() (net.IP, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect container IP: %v", err)
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	if ipv4 := localAddr.IP.To4(); ipv4 != nil {
+		log.Printf("[TURN] Using container IP: %s", ipv4.String())
+		return ipv4, nil
+	}
+
+	return nil, fmt.Errorf("no valid IPv4 address found")
+}
+
+// why we need periodic dns resolution:
+// - handles ip changes in nlb
+// - maintains up-to-date external addresses
+// - ensures continuous service
+func (m *externalAddressManager) startPeriodicResolution(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := m.resolveIPsWithRetry(); err != nil {
+					log.Printf("[TURN][ERROR] Periodic DNS resolution failed: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func NewTurnServer(config ServerConfig) (*TurnServer, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	server := &TurnServer{
+		realm:       config.Realm,
+		udpPort:     config.UDPPort,
+		ctx:         ctx,
+		cancel:      cancel,
+		environment: config.Environment,
+	}
+
+	log.Printf("[TURN] Starting server with realm: %q, port: %d", config.Realm, config.UDPPort)
+	log.Printf("[TURN] Environment: %s", config.Environment)
+	log.Printf("[TURN] Auth user: %s", config.Credentials.Username)
 
 	// Create UDP listener with logging
-	addr := fmt.Sprintf("0.0.0.0:%d", udpPort)
+	addr := fmt.Sprintf("0.0.0.0:%d", config.UDPPort)
 	log.Printf("[TURN] Creating UDP listener on %s", addr)
 	udpListener, err := net.ListenPacket("udp4", addr)
 	if err != nil {
@@ -89,108 +261,81 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		PacketConn: udpListener,
 	}
 
-	// Get the internal IP for relay binding
-	relayIP, err := getRelayAddress()
+	// Get the container IP for relay binding
+	relayIP, err := getContainerIP()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get relay address: %v", err)
+		return nil, fmt.Errorf("failed to get container IP: %v", err)
 	}
 
-	log.Printf("[TURN] Using internal relay address: %s", relayIP.String())
-	log.Printf("[TURN] Network interfaces:")
-	interfaces, _ := net.Interfaces()
-	for _, iface := range interfaces {
-		addrs, _ := iface.Addrs()
-		log.Printf("  - %s: %v", iface.Name, addrs)
-	}
-
-	// why we need proper external IP handling:
-	// - allows NAT traversal in production via static IP
-	// - supports both IP and DNS format for EXTERNAL_IP
-	// - prevents address mismatch issues
-	externalIP := os.Getenv("EXTERNAL_IP")
-	if externalIP == "" {
-		if os.Getenv("AWESTRUCK_ENV") == "production" {
-			log.Printf("[TURN] ERROR: EXTERNAL_IP must be set in production")
-			return nil, fmt.Errorf("EXTERNAL_IP environment variable is required in production")
+	// Initialize external IP manager with proper development fallback
+	externalAddr := config.ExternalIP
+	if externalAddr == "" {
+		if config.Environment == "production" {
+			return nil, fmt.Errorf("EXTERNAL_IP must be set in production")
 		}
-		// For local development, use the same IP as relay
-		log.Printf("[TURN] No EXTERNAL_IP set, using relay IP %s for external address", relayIP.String())
-		externalIP = relayIP.String()
-	} else {
-		log.Printf("[TURN] Resolving EXTERNAL_IP: %s", externalIP)
-		// Check if EXTERNAL_IP is a DNS name and resolve it
-		ips, err := net.LookupHost(externalIP)
-		if err != nil {
-			log.Printf("[TURN] Failed to resolve EXTERNAL_IP %s: %v", externalIP, err)
-			// If it's not a DNS name, try parsing it as an IP
-			if ip := net.ParseIP(externalIP); ip != nil {
-				log.Printf("[TURN] Using EXTERNAL_IP as direct IP: %s", ip.String())
-				externalIP = ip.String()
+		// For development, use the container's IP as the external address
+		externalAddr = relayIP.String()
+		log.Printf("[TURN] Development mode: using container IP %s as external address", externalAddr)
+	}
+
+	externalIPManager := &externalAddressManager{
+		dnsName: externalAddr,
+	}
+
+	// Verify and resolve external IP with retries
+	if err := externalIPManager.resolveIPsWithRetry(); err != nil {
+		// For development with IP address, initialize directly
+		if config.Environment != "production" {
+			if ip := net.ParseIP(externalAddr); ip != nil {
+				if !isPublicIP(ip) {
+					log.Printf("[TURN][WARN] Using private IP in development mode: %s", ip)
+				}
+				externalIPManager.mu.Lock()
+				externalIPManager.ips = []net.IP{ip}
+				externalIPManager.mu.Unlock()
+				log.Printf("[TURN] Development mode: using direct IP %s", ip)
 			} else {
-				return nil, fmt.Errorf("EXTERNAL_IP %s is neither a valid DNS name nor IP address", externalIP)
+				return nil, fmt.Errorf("invalid IP address in development mode: %s", externalAddr)
 			}
 		} else {
-			log.Printf("[TURN] Resolved EXTERNAL_IP %s to IPs: %v", externalIP, ips)
-			// Find first valid IPv4 address
-			found := false
-			for _, ip := range ips {
-				if parsedIP := net.ParseIP(ip); parsedIP != nil {
-					if ipv4 := parsedIP.To4(); ipv4 != nil && !ipv4.IsUnspecified() {
-						log.Printf("[TURN] Using resolved IPv4 address: %s", ipv4.String())
-						externalIP = ipv4.String()
-						found = true
-						break
-					}
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("no valid IPv4 address found in DNS resolution of %s", externalIP)
-			}
+			return nil, fmt.Errorf("failed to resolve external IPs: %v", err)
 		}
 	}
-	log.Printf("[TURN] External IP: %q", externalIP)
 
-	// why we need to verify external ip:
-	// - ensures ip is routable
-	// - prevents using internal addresses
-	// - validates dns resolution
-	if ip := net.ParseIP(externalIP); ip == nil {
-		return nil, fmt.Errorf("invalid IP address: %s", externalIP)
-	} else if ip.IsPrivate() || ip.IsLoopback() {
-		return nil, fmt.Errorf("external IP %s must be a public IP address", externalIP)
+	// Start periodic DNS resolution only in production
+	if config.Environment == "production" {
+		externalIPManager.startPeriodicResolution(ctx)
 	}
 
+	// Store credentials for auth handler
+	username := config.Credentials.Username
+	password := config.Credentials.Password
+	log.Printf("[TURN] Using credentials for user: %s", username)
+
 	s, err := turn.NewServer(turn.ServerConfig{
-		Realm: realm,
-		// why we need optimized server config:
-		// - uses turn.GenerateAuthKey for proper auth
-		// - logs auth attempts for debugging
-		// - supports static credentials for testing
-		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-			log.Printf("[AUTH] Received auth request: username=%q realm=%q from=%v", username, realm, srcAddr)
-			if username == "user" {
-				key := turn.GenerateAuthKey(username, realm, "pass")
-				log.Printf("[AUTH] Generated key for user=%q realm=%q key=%x", username, realm, key)
-				return key, true
+		Realm: config.Realm,
+		AuthHandler: func(u string, realm string, srcAddr net.Addr) ([]byte, bool) {
+			log.Printf("[AUTH] Received auth request from %v for user: %s", srcAddr, u)
+			if u != username {
+				log.Printf("[AUTH] Unknown user: %s (expected: %s)", u, username)
+				return nil, false
 			}
-			log.Printf("[AUTH] Unknown user: %q (expected: user)", username)
-			return nil, false
+			key := turn.GenerateAuthKey(u, realm, password)
+			log.Printf("[AUTH] Generated key for user=%q realm=%q", u, realm)
+			return key, true
 		},
-		// why we need to log all packets:
-		// - helps debug stun binding requests
-		// - shows if server receives any traffic
-		// - identifies potential protocol issues
 		PacketConnConfigs: []turn.PacketConnConfig{
 			{
 				PacketConn: loggingListener,
-				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: relayIP,    // Internal IP for actual relay binding
-					Address:      externalIP, // External IP for client advertisement only
+				RelayAddressGenerator: &customRelayAddressGenerator{
+					relayIP:     relayIP,
+					addrManager: externalIPManager,
 				},
 			},
 		},
 	})
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to create TURN server: %v", err)
 	}
 
@@ -202,28 +347,22 @@ func (s *TurnServer) Start() error {
 	log.Printf("[TURN] Starting server on UDP port %d with:", s.udpPort)
 	log.Printf("  - Realm: %s", s.realm)
 
-	// why we need enhanced monitoring:
-	// - tracks connection states
-	// - helps diagnose ice failures
-	// - provides operational metrics
+	// why we need periodic monitoring:
+	// - tracks server health and performance
+	// - logs stats at reasonable intervals
+	// - prevents log spam while maintaining visibility
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		for range ticker.C {
-			if s.stopped {
-				return
-			}
-			s.monitorConnections()
-		}
-	}()
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
 
-	// Monitor server state periodically
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		for range ticker.C {
-			if s.stopped {
+		for {
+			select {
+			case <-s.ctx.Done():
 				return
+			case <-ticker.C:
+				s.monitorConnections()
+				s.logServerStats()
 			}
-			s.logServerStats()
 		}
 	}()
 
@@ -239,13 +378,10 @@ func (s *TurnServer) monitorConnections() {
 		return
 	}
 
-	// basic server health check
 	log.Printf("[MONITOR] TURN server health check:")
 	log.Printf("  - Server running: true")
 	log.Printf("  - UDP port: %d", s.udpPort)
 	log.Printf("  - Realm: %s", s.realm)
-
-	// Track candidate types being used
 	log.Printf("  - Candidate types:")
 	log.Printf("    • Server Reflexive (srflx): allowed")
 	log.Printf("    • Peer Reflexive (prflx): allowed")
@@ -258,13 +394,10 @@ func (s *TurnServer) monitorConnections() {
 // - tracks active allocations
 // - helps identify memory leaks
 func (s *TurnServer) logServerStats() {
-	// Basic stats logging - expand based on pion/turn capabilities
-	log.Printf("[STATS] TURN Server status:")
-	log.Printf("  - Server running: %v", !s.stopped)
-
-	// Log memory stats
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
+	log.Printf("[STATS] TURN Server status:")
+	log.Printf("  - Server running: %v", !s.stopped)
 	log.Printf("  - Memory usage:")
 	log.Printf("    • Alloc: %v MiB", mem.Alloc/1024/1024)
 	log.Printf("    • TotalAlloc: %v MiB", mem.TotalAlloc/1024/1024)
@@ -275,21 +408,8 @@ func (s *TurnServer) logServerStats() {
 func (s *TurnServer) Stop() error {
 	log.Printf("Stopping TURN/STUN server")
 	s.stopped = true
+	s.cancel()
 	return s.server.Close()
-}
-
-// why we need health check:
-// - enables container health monitoring
-// - allows load balancer health checks
-// - provides operational status
-func (s *TurnServer) HealthCheck() error {
-	// The server is healthy if it's able to accept connections
-	conn, err := net.DialTimeout("udp", fmt.Sprintf("127.0.0.1:%d", s.udpPort), time.Second)
-	if err != nil {
-		return fmt.Errorf("health check failed: %v", err)
-	}
-	conn.Close()
-	return nil
 }
 
 // why we need health status:
@@ -301,15 +421,6 @@ func (s *TurnServer) IsHealthy() bool {
 		log.Printf("[HEALTH] ❌ Unhealthy - server is nil or stopped")
 		return false
 	}
-
-	// Test UDP listener
-	conn, err := net.DialTimeout("udp", fmt.Sprintf("127.0.0.1:%d", s.udpPort), time.Second)
-	if err != nil {
-		log.Printf("[HEALTH] ❌ Unhealthy - UDP test failed: %v", err)
-		return false
-	}
-	conn.Close()
-
 	log.Printf("[HEALTH] ✓ Server is healthy")
 	return true
 }
@@ -328,7 +439,7 @@ func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error)
 		log.Printf("[PACKET] Received %d bytes from %v", n, addr)
 		if n >= 20 { // Minimum STUN message size
 			messageType := uint16(p[0])<<8 | uint16(p[1])
-			if messageType&0xC000 == 0 { // STUN message
+			if messageType&0xC000 == 0 { // STUN messages
 				log.Printf("[STUN] Received message type: 0x%04x from %v", messageType, addr)
 			}
 		}

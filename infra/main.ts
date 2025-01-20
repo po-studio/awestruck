@@ -564,10 +564,10 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_PORT", value: "3478" },
               { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              // why we need to use the nlb dns name:
-              // - ensures proper nat traversal
-              // - handles ip changes automatically
-              // - works with cross-zone load balancing
+              // why we need to use container networking:
+              // - allows turn server to bind to container ip
+              // - enables proper udp relay allocation
+              // - still advertises nlb address to clients
               { name: "EXTERNAL_IP", value: webrtcNlb.dnsName }
             ],
             healthCheck: {
