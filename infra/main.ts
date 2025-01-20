@@ -285,7 +285,11 @@ class AwestruckInfrastructure extends TerraformStack {
       "awestruck-task-definition",
       {
         family: "server-arm64",
-        cpu: "1024",
+        // why we need more cpu:
+        // - ensures enough processing power for real-time audio
+        // - reduces xruns from processing delays
+        // - supports multiple concurrent sessions
+        cpu: "2048",
         memory: "2048",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
@@ -299,6 +303,18 @@ class AwestruckInfrastructure extends TerraformStack {
           {
             name: "server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
+            // why we need these linux capabilities:
+            // - enables real-time scheduling for jack
+            // - allows setting thread priorities
+            // - required for low-latency audio
+            // 
+            // NOTE: Fargate does not support these capabilities
+            // consider EC2 for real-time audio
+            // linuxParameters: {
+            //   capabilities: {
+            //     add: ["SYS_NICE", "IPC_LOCK"]
+            //   }
+            // },
             portMappings: [
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
               // why we map all ports:
@@ -314,10 +330,21 @@ class AwestruckInfrastructure extends TerraformStack {
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "AWESTRUCK_ENV", value: "production" },
+              // why we need these jack settings:
+              // - maximizes stability over latency to get audio flowing
+              // - much larger buffers to handle scheduling issues
+              // - longer timeouts to prevent dropouts
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
               { name: "JACK_PORT_MAX", value: "128" },
+              { name: "JACK_PERIOD_SIZE", value: "4096" },
+              { name: "JACK_PERIODS", value: "4" },
+              { name: "JACK_PRIORITY", value: "60" },
+              { name: "JACK_REALTIME_PRIORITY", value: "60" },
+              { name: "JACK_TIMEOUT", value: "10000" },
+              { name: "JACK_BUFFER_SIZE", value: "8192" },
               { name: "GST_DEBUG", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "8388608" },
+              { name: "GST_BUFFER_SIZE", value: "16777216" },
+              // "secrets" ... adjust later
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
