@@ -565,7 +565,11 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_PORT", value: "3478" },
               { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              { name: "EXTERNAL_IP", value: turnElasticIp.publicIp }
+              // why we need to use the nlb dns name:
+              // - ensures proper nat traversal
+              // - handles ip changes automatically
+              // - works with cross-zone load balancing
+              { name: "EXTERNAL_IP", value: webrtcNlb.dnsName }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
@@ -594,14 +598,21 @@ class AwestruckInfrastructure extends TerraformStack {
       zoneId: hostedZone.zoneId,
       name: "turn.awestruck.io",
       type: "A",
-      ttl: 60,
-      records: [turnElasticIp.publicIp],
+      allowOverwrite: true,
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true
+      }
     });
 
-    // Output Elastic IP for reference
-    new TerraformOutput(this, "turn-elastic-ip-output", {
-      value: turnElasticIp.publicIp,
-      description: "Elastic IP for TURN server",
+    // why we need to expose the nlb dns name:
+    // - helps with debugging turn connectivity
+    // - enables direct nlb access if needed
+    // - supports dns-based failover
+    new TerraformOutput(this, "turn-nlb-dns", {
+      value: webrtcNlb.dnsName,
+      description: "Network Load Balancer DNS name for TURN server",
     });
 
     // Update turn-service to use the NLB target group

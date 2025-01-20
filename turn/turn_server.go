@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/pion/turn/v2"
@@ -73,6 +72,7 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 	}
 
 	log.Printf("[TURN] Starting server with realm: %q, port: %d", realm, udpPort)
+	log.Printf("[TURN] Environment: %s", os.Getenv("AWESTRUCK_ENV"))
 
 	// Create UDP listener with logging
 	addr := fmt.Sprintf("0.0.0.0:%d", udpPort)
@@ -96,6 +96,12 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 	}
 
 	log.Printf("[TURN] Using internal relay address: %s", relayIP.String())
+	log.Printf("[TURN] Network interfaces:")
+	interfaces, _ := net.Interfaces()
+	for _, iface := range interfaces {
+		addrs, _ := iface.Addrs()
+		log.Printf("  - %s: %v", iface.Name, addrs)
+	}
 
 	// why we need proper external IP handling:
 	// - allows NAT traversal in production via static IP
@@ -111,28 +117,47 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 		log.Printf("[TURN] No EXTERNAL_IP set, using relay IP %s for external address", relayIP.String())
 		externalIP = relayIP.String()
 	} else {
+		log.Printf("[TURN] Resolving EXTERNAL_IP: %s", externalIP)
 		// Check if EXTERNAL_IP is a DNS name and resolve it
-		if ips, err := net.LookupHost(externalIP); err == nil && len(ips) > 0 {
+		ips, err := net.LookupHost(externalIP)
+		if err != nil {
+			log.Printf("[TURN] Failed to resolve EXTERNAL_IP %s: %v", externalIP, err)
+			// If it's not a DNS name, try parsing it as an IP
+			if ip := net.ParseIP(externalIP); ip != nil {
+				log.Printf("[TURN] Using EXTERNAL_IP as direct IP: %s", ip.String())
+				externalIP = ip.String()
+			} else {
+				return nil, fmt.Errorf("EXTERNAL_IP %s is neither a valid DNS name nor IP address", externalIP)
+			}
+		} else {
 			log.Printf("[TURN] Resolved EXTERNAL_IP %s to IPs: %v", externalIP, ips)
-			// Find first valid IPv4 address (must be a host address, not network)
+			// Find first valid IPv4 address
+			found := false
 			for _, ip := range ips {
 				if parsedIP := net.ParseIP(ip); parsedIP != nil {
 					if ipv4 := parsedIP.To4(); ipv4 != nil && !ipv4.IsUnspecified() {
-						// Ensure it's not a network address (last octet should not be 0)
-						if ipv4[3] != 0 {
-							log.Printf("[TURN] Using external IPv4 address: %s", ipv4.String())
-							externalIP = ipv4.String()
-							break
-						}
+						log.Printf("[TURN] Using resolved IPv4 address: %s", ipv4.String())
+						externalIP = ipv4.String()
+						found = true
+						break
 					}
 				}
 			}
-			if strings.HasSuffix(externalIP, ".0") {
-				log.Printf("[TURN] WARNING: External IP %s appears to be a network address", externalIP)
-				return nil, fmt.Errorf("external IP %s is not a valid host address", externalIP)
+			if !found {
+				return nil, fmt.Errorf("no valid IPv4 address found in DNS resolution of %s", externalIP)
 			}
 		}
-		log.Printf("[TURN] Using EXTERNAL_IP for client advertisement: %s", externalIP)
+	}
+	log.Printf("[TURN] External IP: %q", externalIP)
+
+	// why we need to verify external ip:
+	// - ensures ip is routable
+	// - prevents using internal addresses
+	// - validates dns resolution
+	if ip := net.ParseIP(externalIP); ip == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", externalIP)
+	} else if ip.IsPrivate() || ip.IsLoopback() {
+		return nil, fmt.Errorf("external IP %s must be a public IP address", externalIP)
 	}
 
 	s, err := turn.NewServer(turn.ServerConfig{
@@ -298,35 +323,29 @@ type loggingPacketConn struct {
 }
 
 func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	// Log immediately when we get any packet
-	log.Printf("[UDP] ReadFrom called")
 	n, addr, err = l.PacketConn.ReadFrom(p)
-	if err != nil {
-		log.Printf("[UDP] Error reading: %v", err)
-		return
-	}
-	log.Printf("[UDP] Read %d bytes from %v", n, addr)
-	if n > 0 {
-		// Log first 4 bytes to identify STUN messages (0x00 0x01 for binding request)
-		log.Printf("[UDP] First 4 bytes: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
-		log.Printf("[UDP] Full content: %x", p[:n])
+	if err == nil && n > 0 {
+		log.Printf("[PACKET] Received %d bytes from %v", n, addr)
+		if n >= 20 { // Minimum STUN message size
+			messageType := uint16(p[0])<<8 | uint16(p[1])
+			if messageType&0xC000 == 0 { // STUN message
+				log.Printf("[STUN] Received message type: 0x%04x from %v", messageType, addr)
+			}
+		}
 	}
 	return
 }
 
 func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	// Log immediately when we try to send any packet
-	log.Printf("[UDP] WriteTo called for %v", addr)
 	n, err = l.PacketConn.WriteTo(p, addr)
-	if err != nil {
-		log.Printf("[UDP] Error writing: %v", err)
-		return
-	}
-	log.Printf("[UDP] Wrote %d bytes to %v", n, addr)
-	if n > 0 {
-		// Log first 4 bytes to identify STUN messages (0x00 0x01 for binding request)
-		log.Printf("[UDP] First 4 bytes: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
-		log.Printf("[UDP] Full content: %x", p[:n])
+	if err == nil && n > 0 {
+		log.Printf("[PACKET] Sent %d bytes to %v", n, addr)
+		if n >= 20 { // Minimum STUN message size
+			messageType := uint16(p[0])<<8 | uint16(p[1])
+			if messageType&0xC000 == 0 { // STUN message
+				log.Printf("[STUN] Sent message type: 0x%04x to %v", messageType, addr)
+			}
+		}
 	}
 	return
 }
