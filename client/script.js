@@ -132,13 +132,13 @@ function waitForICEConnection(pc) {
     });
 }
 
-// why we need both stun and turn servers:
-// - stun for basic nat traversal
-// - turn as fallback for symmetric nat
-// - improves connection reliability
+// why we need environment-specific turn config:
+// - uses localhost with host networking in development
+// - uses nlb dns name in production
+// - ensures consistent relay behavior
 window.TURN_SERVERS = window.location.hostname === 'localhost'
-  ? ['localhost:3478']  // Use localhost for local development
-  : ['turn.awestruck.io:3478'];
+  ? ['localhost:3478']  // Use localhost since TURN server uses host networking in dev
+  : ['turn.awestruck.io:3478'];  // Use NLB DNS name in production
 
 // why we need optimized ice configuration:
 // - improves connection reliability
@@ -286,7 +286,7 @@ Prism.languages.supercollider = {
 // - tracks dtls handshake progress
 // - monitors ice connection states
 // - logs detailed diagnostics on failure
-function setupConnectionMonitoring(pc) {
+function setupConnectionMonitoring(pc, monitorDTLS) {
     pc.oniceconnectionstatechange = () => {
         console.log('[ICE] Connection state changed:', pc.iceConnectionState);
         
@@ -304,16 +304,29 @@ function setupConnectionMonitoring(pc) {
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            const candidateObj = event.candidate.toJSON();
-            console.log('[ICE] New candidate:', {
-                type: candidateObj.candidate.type,
-                protocol: candidateObj.candidate.protocol,
-                address: candidateObj.candidate.address,
-                port: candidateObj.candidate.port,
-                priority: candidateObj.candidate.priority,
-                usernameFragment: candidateObj.candidate.usernameFragment
-            });
+            const candidateObj = {
+                candidate: event.candidate.candidate,
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                usernameFragment: event.candidate.usernameFragment
+            };
 
+            // Parse candidate for logging
+            const candidateStr = event.candidate.candidate;
+            const parts = candidateStr.split(' ');
+            const parsedCandidate = {
+                foundation: parts[0].split(':')[1],
+                component: parts[1],
+                protocol: parts[2],
+                priority: parts[3],
+                address: parts[4],
+                port: parts[5],
+                type: parts[7],
+                relAddr: parts[9] || undefined,
+                relPort: parts[11] || undefined
+            };
+
+            console.log('[ICE] New candidate:', parsedCandidate);
             iceProgress.trackCandidate();
             
             if (!pc.remoteDescription) {
@@ -447,6 +460,7 @@ async function setupWebRTC(config) {
     // - helps debug media flow problems
     let dtlsTimeout = null;
     const monitorDTLS = () => {
+        console.log('[DTLS] Starting monitoring');
         if (dtlsTimeout) clearTimeout(dtlsTimeout);
         dtlsTimeout = setTimeout(() => {
             pc.getStats().then(stats => {
@@ -470,7 +484,7 @@ async function setupWebRTC(config) {
     console.log('[WebRTC] Added audio transceiver:', audioTransceiver);
 
     // Start DTLS monitoring when ICE starts checking
-    setupConnectionMonitoring(pc);
+    setupConnectionMonitoring(pc, monitorDTLS);
     startUnifiedMonitoring();
 
     // why we need audio track handling:

@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -643,12 +642,13 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		// - fargate requires relay candidates due to container networking
 		// - host/srflx candidates won't work in ECS
 		// - ensures consistent behavior in production
-		ICETransportPolicy: func() webrtc.ICETransportPolicy {
-			if os.Getenv("AWESTRUCK_ENV") == "production" {
-				return webrtc.ICETransportPolicyRelay
-			}
-			return webrtc.ICETransportPolicyAll
-		}(),
+		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		// ICETransportPolicy: func() webrtc.ICETransportPolicy {
+		// 	if os.Getenv("AWESTRUCK_ENV") == "production" {
+		// 		return webrtc.ICETransportPolicyRelay
+		// 	}
+		// 	return webrtc.ICETransportPolicyAll
+		// }(),
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 

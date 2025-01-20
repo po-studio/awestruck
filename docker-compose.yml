@@ -53,7 +53,11 @@ services:
     #   - SYS_NICE
     ports:
       - "8080:8080"
-    # network_mode: host
+    # why we need host networking in development:
+    # - enables direct communication with turn server
+    # - matches turn server networking mode
+    # - simplifies local testing
+    network_mode: host
     depends_on:
       turn-server:
         condition: service_healthy
@@ -86,7 +90,7 @@ services:
     # - enables proper nat traversal
     # - allows direct ip access
     # - improves connection reliability
-    # network_mode: host
+    network_mode: host
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3479/health"]
       interval: 5s
