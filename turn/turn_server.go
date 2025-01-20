@@ -54,7 +54,12 @@ type ServerConfig struct {
 type externalAddressManager struct {
 	dnsName string
 	ips     []net.IP
-	mu      sync.RWMutex
+	// why we need a stable primary ip:
+	// - prevents ice candidate mismatches during connection setup
+	// - maintains consistent external address for webrtc peers
+	// - avoids connection drops from ip changes during dns updates
+	primaryIP net.IP
+	mu        sync.RWMutex
 }
 
 // why we need dns resolution retries:
@@ -109,9 +114,18 @@ func (m *externalAddressManager) resolveIPs() error {
 
 	m.mu.Lock()
 	m.ips = validIPs
+	// why we need primary ip persistence:
+	// - first resolved ip becomes the stable external address
+	// - subsequent dns updates won't change the primary ip
+	// - ensures ice candidates remain valid throughout session
+	if m.primaryIP == nil {
+		m.primaryIP = validIPs[0]
+		log.Printf("[TURN] Set primary external IP: %v", m.primaryIP)
+	} else {
+		log.Printf("[TURN] Keeping existing primary IP: %v (newly resolved IPs: %v)", m.primaryIP, validIPs)
+	}
 	m.mu.Unlock()
 
-	log.Printf("[TURN] Updated external IPs: %v", validIPs)
 	return nil
 }
 
@@ -287,15 +301,18 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 		return nil, nil, err
 	}
 
-	// Get current external IP
+	// why we need stable ip allocation:
+	// - ensures all ice candidates use same external ip
+	// - prevents connection failures from ip inconsistency
+	// - maintains stable relay endpoints for webrtc peers
 	g.addrManager.mu.RLock()
-	if len(g.addrManager.ips) == 0 {
+	if g.addrManager.primaryIP == nil {
 		g.addrManager.mu.RUnlock()
 		g.portManager.releasePort(port)
-		logWithTime("[TURN][ERROR] No external IPs available")
-		return nil, nil, fmt.Errorf("no external IPs available")
+		logWithTime("[TURN][ERROR] No primary external IP available")
+		return nil, nil, fmt.Errorf("no primary external IP available")
 	}
-	externalIP := g.addrManager.ips[0]
+	externalIP := g.addrManager.primaryIP
 	g.addrManager.mu.RUnlock()
 
 	// Create enhanced connection with both logging and cleanup

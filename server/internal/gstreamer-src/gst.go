@@ -78,9 +78,13 @@ func CreatePipeline(codecName string, tracks []*webrtc.TrackLocalStaticSample, p
 		clockRate = videoClockRate
 
 	case "opus":
-		pipelineStr = pipelineSrc + " ! opusenc frame-size=20 complexity=10 bitrate=128000 ! " + pipelineStr
+		// why we need optimized opus settings:
+		// - increases frame size for better network handling
+		// - adds packet loss resilience
+		// - includes detailed logging for debugging
+		pipelineStr = pipelineSrc + " ! opusenc frame-size=40 complexity=10 bitrate=128000 max-payload-size=1500 packet-loss-percentage=5 ! " + pipelineStr
 		clockRate = audioClockRate
-		logWithTime("[GST] Configured Opus encoder: rate=%f", clockRate)
+		logWithTime("[GST] Configured Opus encoder with enhanced settings: rate=%f, frame_size=40ms", clockRate)
 
 	case "g722":
 		pipelineStr = pipelineSrc + " ! avenc_g722 ! " + pipelineStr
@@ -144,11 +148,14 @@ func goHandlePipelineBuffer(buffer unsafe.Pointer, bufferLen C.int, duration C.i
 		data := C.GoBytes(buffer, bufferLen)
 		dur := time.Duration(duration)
 
-		// Log buffer details only every 10000 samples to reduce noise
-		// if int(pipelineID)%(48000*600) == 0 {
-		// 	logWithTime("[GST] Buffer stats: pipeline=%d size=%d duration=%v",
-		// 		pipelineID, len(data), dur)
-		// }
+		// why we need enhanced buffer logging:
+		// - track audio flow through pipeline
+		// - monitor buffer sizes and timing
+		// - identify potential streaming issues
+		if int(pipelineID)%(48000*10) == 0 { // Log every 10 seconds instead of 600
+			logWithTime("[GST] Buffer stats: pipeline=%d size=%d duration=%v codec=%s",
+				pipelineID, len(data), dur, pipeline.codecName)
+		}
 
 		for i, t := range pipeline.tracks {
 			if err := t.WriteSample(media.Sample{Data: data, Duration: dur}); err != nil {

@@ -282,6 +282,151 @@ Prism.languages.supercollider = {
     'punctuation': /[{}[\];(),.:]/
 };
 
+// why we need comprehensive connection monitoring:
+// - tracks dtls handshake progress
+// - monitors ice connection states
+// - logs detailed diagnostics on failure
+function setupConnectionMonitoring(pc) {
+    pc.oniceconnectionstatechange = () => {
+        console.log('[ICE] Connection state changed:', pc.iceConnectionState);
+        
+        if (pc.iceConnectionState === 'checking') {
+            console.log('[ICE] Connection checking - starting DTLS monitoring');
+            monitorDTLS();
+        } else if (pc.iceConnectionState === 'failed') {
+            console.error('[ICE] Connection failed - gathering diagnostics...');
+            console.log('[ICE] Local description:', pc.localDescription);
+            console.log('[ICE] Remote description:', pc.remoteDescription);
+            console.log('[ICE] ICE gathering state:', pc.iceGatheringState);
+            console.log('[ICE] Signaling state:', pc.signalingState);
+        }
+    };
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            const candidateObj = event.candidate.toJSON();
+            console.log('[ICE] New candidate:', {
+                type: candidateObj.candidate.type,
+                protocol: candidateObj.candidate.protocol,
+                address: candidateObj.candidate.address,
+                port: candidateObj.candidate.port,
+                priority: candidateObj.candidate.priority,
+                usernameFragment: candidateObj.candidate.usernameFragment
+            });
+
+            iceProgress.trackCandidate();
+            
+            if (!pc.remoteDescription) {
+                console.log('[ICE] Queuing candidate until remote description is set');
+                pendingCandidates.push(event.candidate);
+                return;
+            }
+
+            sendICECandidate(event.candidate).catch(err => {
+                console.error('[ICE] Failed to send candidate:', err);
+                pendingCandidates.push(event.candidate);
+            });
+        }
+    };
+}
+
+// why we need unified stats monitoring:
+// - combines connection quality and audio monitoring
+// - provides comprehensive debugging data
+// - reduces redundant stat collection
+function startUnifiedMonitoring() {
+    if (qualityMonitorInterval) {
+        clearInterval(qualityMonitorInterval);
+    }
+
+    let lastBytesReceived = 0;
+    let noDataCount = 0;
+    const MAX_NO_DATA_COUNT = 10;
+
+    qualityMonitorInterval = setInterval(async () => {
+        if (!pc) return;
+
+        try {
+            const stats = await pc.getStats();
+            const statsData = {
+                audio: null,
+                transport: null,
+                candidatePair: null
+            };
+
+            stats.forEach(stat => {
+                if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+                    statsData.audio = {
+                        bytesReceived: stat.bytesReceived,
+                        packetsReceived: stat.packetsReceived,
+                        jitter: stat.jitter,
+                        timestamp: stat.timestamp
+                    };
+                } else if (stat.type === 'transport') {
+                    statsData.transport = {
+                        dtlsState: stat.dtlsState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId,
+                        bytesReceived: stat.bytesReceived
+                    };
+                } else if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+                    statsData.candidatePair = {
+                        localCandidate: stat.localCandidateId,
+                        remoteCandidate: stat.remoteCandidateId,
+                        currentRoundTripTime: stat.currentRoundTripTime,
+                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent
+                    };
+                }
+            });
+
+            // Log connection quality metrics
+            if (statsData.candidatePair) {
+                console.log('[STATS] Connection Quality:', {
+                    rtt: statsData.candidatePair.currentRoundTripTime,
+                    bitrate: statsData.candidatePair.availableOutgoingBitrate,
+                    bytesReceived: statsData.candidatePair.bytesReceived,
+                    bytesSent: statsData.candidatePair.bytesSent
+                });
+            }
+
+            // Check audio flow
+            if (statsData.audio) {
+                const newBytes = statsData.audio.bytesReceived - lastBytesReceived;
+                console.log('[AUDIO][FLOW]', {
+                    newBytesReceived: newBytes,
+                    totalBytesReceived: statsData.audio.bytesReceived,
+                    packetsReceived: statsData.audio.packetsReceived,
+                    jitter: statsData.audio.jitter,
+                    dtlsState: statsData.transport?.dtlsState,
+                    candidatePair: statsData.candidatePair ? 'active' : 'none'
+                });
+
+                if (newBytes === 0) {
+                    noDataCount++;
+                    if (noDataCount >= MAX_NO_DATA_COUNT) {
+                        console.warn('[AUDIO][ALERT] No new audio data received for', noDataCount * 2, 'seconds');
+                        console.log('[AUDIO][DEBUG] Connection state:', {
+                            iceConnectionState: pc.iceConnectionState,
+                            connectionState: pc.connectionState,
+                            signalingState: pc.signalingState,
+                            transport: statsData.transport,
+                            candidatePair: statsData.candidatePair
+                        });
+                    }
+                } else {
+                    noDataCount = 0;
+                }
+                lastBytesReceived = statsData.audio.bytesReceived;
+            } else {
+                console.warn('[AUDIO][WARN] No inbound audio stats found');
+            }
+        } catch (error) {
+            console.error('[STATS][ERROR] Failed to get stats:', error);
+        }
+    }, 2000);
+}
+
 // why we need webrtc setup:
 // - initializes peer connection with STUN configuration
 // - sets up media tracks and data channels
@@ -325,35 +470,8 @@ async function setupWebRTC(config) {
     console.log('[WebRTC] Added audio transceiver:', audioTransceiver);
 
     // Start DTLS monitoring when ICE starts checking
-    pc.oniceconnectionstatechange = () => {
-        if (pc.iceConnectionState === 'checking') {
-            console.log('[ICE] Connection checking - starting DTLS monitoring');
-            monitorDTLS();
-        }
-        onIceConnectionStateChange();
-    };
-
-    // Enhanced ICE candidate handling
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            const candidateObj = event.candidate.toJSON();
-            console.log('[ICE] New candidate:', candidateObj);
-
-            iceProgress.trackCandidate();
-            
-            if (!pc.remoteDescription) {
-                console.log('[ICE] Queuing candidate until remote description is set');
-                pendingCandidates.push(event.candidate);
-                return;
-            }
-
-            sendICECandidate(event.candidate).catch(err => {
-                console.error('[ICE] Failed to send candidate:', err);
-                // Re-queue failed candidates
-                pendingCandidates.push(event.candidate);
-            });
-        }
-    };
+    setupConnectionMonitoring(pc);
+    startUnifiedMonitoring();
 
     // why we need audio track handling:
     // - sets up audio playback when track is received
@@ -423,33 +541,8 @@ async function setupWebRTC(config) {
 
     await sendOffer(offer);
 
-    pc.oniceconnectionstatechange = () => {
-        console.log('[ICE] Connection state changed:', pc.iceConnectionState);
-        
-        if (pc.iceConnectionState === 'failed') {
-            console.error('[ICE] Connection failed - gathering diagnostics...');
-            console.log('[ICE] Local description:', pc.localDescription);
-            console.log('[ICE] Remote description:', pc.remoteDescription);
-            console.log('[ICE] ICE gathering state:', pc.iceGatheringState);
-            console.log('[ICE] Signaling state:', pc.signalingState);
-        }
-    };
-
     pc.onicegatheringstatechange = () => {
         console.log('[ICE] Gathering state changed:', pc.iceGatheringState);
-    };
-
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            console.log('[ICE] New candidate:', {
-                type: event.candidate.type,
-                protocol: event.candidate.protocol,
-                address: event.candidate.address,
-                port: event.candidate.port,
-                priority: event.candidate.priority,
-                usernameFragment: event.candidate.usernameFragment
-            });
-        }
     };
 }
 
@@ -726,119 +819,6 @@ function onIceConnectionStateChange() {
     
     connectionState.lastState = pc.iceConnectionState;
     connectionState.lastStateChangeTime = now;
-}
-
-// why we need connection monitoring:
-// - tracks WebRTC connection quality
-// - monitors audio stats for debugging
-// - helps identify performance issues
-function startConnectionMonitoring() {
-    if (qualityMonitorInterval) {
-        clearInterval(qualityMonitorInterval);
-    }
-
-    qualityMonitorInterval = setInterval(() => {
-        if (!pc) return;
-
-        pc.getStats().then(stats => {
-            stats.forEach(stat => {
-                if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
-                    console.log('[STATS] Connection Quality:', {
-                        currentRoundTripTime: stat.currentRoundTripTime,
-                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
-                        bytesReceived: stat.bytesReceived,
-                        bytesSent: stat.bytesSent
-                    });
-                }
-            });
-        });
-    }, 2000); // Reduced from 5s to 2s for faster feedback
-}
-
-// why we need enhanced audio monitoring:
-// - track each stage of the audio pipeline
-// - detect exact point of failure
-// - measure actual audio data flow
-function startAudioStatsMonitoring() {
-    if (audioStatsInterval) {
-        clearInterval(audioStatsInterval);
-    }
-
-    let lastBytesReceived = 0;
-    let noDataCount = 0;
-    const MAX_NO_DATA_COUNT = 10; // Alert after 10 intervals without data
-
-    audioStatsInterval = setInterval(async () => {
-        if (!pc) return;
-
-        try {
-            const stats = await pc.getStats();
-            let audioStats = {
-                inbound: null,
-                transport: null,
-                candidatePair: null
-            };
-
-            stats.forEach(stat => {
-                if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
-                    audioStats.inbound = {
-                        bytesReceived: stat.bytesReceived,
-                        packetsReceived: stat.packetsReceived,
-                        jitter: stat.jitter,
-                        timestamp: stat.timestamp
-                    };
-                } else if (stat.type === 'transport') {
-                    audioStats.transport = {
-                        dtlsState: stat.dtlsState,
-                        selectedCandidatePairId: stat.selectedCandidatePairId,
-                        bytesReceived: stat.bytesReceived
-                    };
-                } else if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
-                    audioStats.candidatePair = {
-                        localCandidate: stat.localCandidateId,
-                        remoteCandidate: stat.remoteCandidateId,
-                        bytesReceived: stat.bytesReceived,
-                        bytesSent: stat.bytesSent
-                    };
-                }
-            });
-
-            // Check if we're actually receiving new audio data
-            if (audioStats.inbound) {
-                const newBytes = audioStats.inbound.bytesReceived - lastBytesReceived;
-                console.log('[AUDIO][FLOW]', {
-                    newBytesReceived: newBytes,
-                    totalBytesReceived: audioStats.inbound.bytesReceived,
-                    packetsReceived: audioStats.inbound.packetsReceived,
-                    jitter: audioStats.inbound.jitter,
-                    dtlsState: audioStats.transport?.dtlsState,
-                    candidatePair: audioStats.candidatePair ? 'active' : 'none'
-                });
-
-                if (newBytes === 0) {
-                    noDataCount++;
-                    if (noDataCount >= MAX_NO_DATA_COUNT) {
-                        console.warn('[AUDIO][ALERT] No new audio data received for', noDataCount * 2, 'seconds');
-                        // Log detailed connection state
-                        console.log('[AUDIO][DEBUG] Connection state:', {
-                            iceConnectionState: pc.iceConnectionState,
-                            connectionState: pc.connectionState,
-                            signalingState: pc.signalingState,
-                            transport: audioStats.transport,
-                            candidatePair: audioStats.candidatePair
-                        });
-                    }
-                } else {
-                    noDataCount = 0;
-                }
-                lastBytesReceived = audioStats.inbound.bytesReceived;
-            } else {
-                console.warn('[AUDIO][WARN] No inbound audio stats found');
-            }
-        } catch (error) {
-            console.error('[AUDIO][ERROR] Failed to get audio stats:', error);
-        }
-    }, 2000);
 }
 
 // why we need proper cleanup:
