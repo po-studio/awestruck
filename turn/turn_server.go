@@ -84,27 +84,14 @@ func NewTurnServer(udpPort int, realm string) (*TurnServer, error) {
 	log.Printf("[TURN] Creating UDP listener on %s", addr)
 	udpListener, err := net.ListenPacket("udp4", addr)
 	if err != nil {
+		log.Printf("[TURN][ERROR] Failed to create UDP listener: %v", err)
 		return nil, fmt.Errorf("failed to create UDP listener: %v", err)
 	}
-
-	// Create a buffered channel for packet logging
-	packetChan := make(chan struct {
-		data []byte
-		addr net.Addr
-	}, 100)
-
-	// Start packet logging goroutine
-	go func() {
-		for packet := range packetChan {
-			log.Printf("[PACKET] Received %d bytes from %v", len(packet.data), packet.addr)
-			log.Printf("[PACKET] Content: %x", packet.data)
-		}
-	}()
+	log.Printf("[TURN] Successfully created UDP listener: %v", udpListener.LocalAddr())
 
 	// Create a logging UDP listener
 	loggingListener := &loggingPacketConn{
 		PacketConn: udpListener,
-		ch:         packetChan,
 	}
 
 	// Get the internal IP for relay binding
@@ -313,36 +300,43 @@ func (s *TurnServer) IsHealthy() bool {
 // - identify protocol issues
 type loggingPacketConn struct {
 	net.PacketConn
-	ch chan<- struct {
-		data []byte
-		addr net.Addr
-	}
 }
 
 func (l *loggingPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	// Log immediately when we get any packet
+	log.Printf("[UDP] ReadFrom called with buffer size: %d", len(p))
 	n, addr, err = l.PacketConn.ReadFrom(p)
-	if err == nil && n > 0 {
-		l.ch <- struct {
-			data []byte
-			addr net.Addr
-		}{
-			data: append([]byte{}, p[:n]...),
-			addr: addr,
+	if err != nil {
+		log.Printf("[UDP] Error reading: %v", err)
+		return
+	}
+	log.Printf("[UDP] Read %d bytes from %v (local addr: %v)", n, addr, l.PacketConn.LocalAddr())
+	if n > 0 {
+		// Log first 4 bytes to identify STUN messages (0x00 0x01 for binding request)
+		log.Printf("[UDP] First 4 bytes: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
+		// Log STUN message type if it appears to be STUN
+		if n >= 2 && p[0] < 0x02 {
+			messageType := uint16(p[0])<<8 | uint16(p[1])
+			log.Printf("[UDP] Possible STUN message type: 0x%04x", messageType)
 		}
+		log.Printf("[UDP] Full content: %x", p[:n])
 	}
 	return
 }
 
 func (l *loggingPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	// Log immediately when we try to send any packet
+	log.Printf("[UDP] WriteTo called for %v (local addr: %v)", addr, l.PacketConn.LocalAddr())
 	n, err = l.PacketConn.WriteTo(p, addr)
-	if err == nil && n > 0 {
-		l.ch <- struct {
-			data []byte
-			addr net.Addr
-		}{
-			data: append([]byte{}, p[:n]...),
-			addr: addr,
-		}
+	if err != nil {
+		log.Printf("[UDP] Error writing: %v", err)
+		return
+	}
+	log.Printf("[UDP] Wrote %d bytes to %v", n, addr)
+	if n > 0 {
+		// Log first 4 bytes of response
+		log.Printf("[UDP] First 4 bytes of response: %02x %02x %02x %02x", p[0], p[1], p[2], p[3])
+		log.Printf("[UDP] Full response: %x", p[:n])
 	}
 	return
 }
