@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -17,13 +18,15 @@ import (
 // - enables reliable WebRTC connections through symmetric NATs
 // - allows for custom configuration and monitoring
 type TurnServer struct {
-	server      *turn.Server
-	realm       string
-	udpPort     int
-	stopped     bool
-	ctx         context.Context
-	cancel      context.CancelFunc
-	environment string
+	server        *turn.Server
+	realm         string
+	signalingPort int
+	stopped       bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	environment   string
+	config        *Config
+	dtlsStats     *dtlsStats
 }
 
 // why we need credential management:
@@ -40,11 +43,11 @@ type Credentials struct {
 // - validates required fields
 // - provides type safety
 type ServerConfig struct {
-	UDPPort     int
-	Realm       string
-	Environment string
-	ExternalIP  string
-	Credentials Credentials
+	SignalingPort int
+	Realm         string
+	Environment   string
+	ExternalIP    string
+	Credentials   Credentials
 }
 
 // why we need external address management:
@@ -97,7 +100,7 @@ func (m *externalAddressManager) resolveIPs() error {
 			if ipv4 := parsedIP.To4(); ipv4 != nil {
 				// why we need public ip validation:
 				// - ensures external ip is routable
-				// - prevents using private addresses
+				// - prevents using private addresses in production
 				// - maintains nat traversal capability
 				if isPublicIP(ipv4) {
 					validIPs = append(validIPs, ipv4)
@@ -131,9 +134,14 @@ func (m *externalAddressManager) resolveIPs() error {
 
 // why we need public ip validation:
 // - ensures external ip is routable
-// - prevents using private addresses
+// - prevents using private addresses in production
 // - maintains nat traversal capability
 func isPublicIP(ip net.IP) bool {
+	// In development mode, allow private IPs
+	if os.Getenv("AWESTRUCK_ENV") == "development" {
+		return true
+	}
+
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return false
 	}
@@ -166,137 +174,13 @@ func isPublicIP(ip net.IP) bool {
 type customRelayAddressGenerator struct {
 	relayIP     net.IP
 	addrManager *externalAddressManager
-	portManager *portRangeManager
-}
-
-// why we need port range management:
-// - matches nlb configured ports (10000-10010)
-// - ensures deterministic port allocation
-// - prevents port conflicts
-type portRangeManager struct {
-	mu        sync.Mutex
-	nextPort  int
-	minPort   int
-	maxPort   int
-	usedPorts map[int]bool
-}
-
-func newPortRangeManager(minPort, maxPort int) *portRangeManager {
-	logWithTime("[PORT] Initializing port manager with range %d-%d", minPort, maxPort)
-	return &portRangeManager{
-		minPort:   minPort,
-		maxPort:   maxPort,
-		nextPort:  minPort,
-		usedPorts: make(map[int]bool),
-	}
-}
-
-func (p *portRangeManager) allocatePort() (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Try to find an available port
-	for i := 0; i <= p.maxPort-p.minPort; i++ {
-		port := p.nextPort
-		p.nextPort++
-		if p.nextPort > p.maxPort {
-			p.nextPort = p.minPort
-		}
-
-		if !p.usedPorts[port] {
-			p.usedPorts[port] = true
-			logWithTime("[PORT] Allocated relay port %d (available: %d/%d)", port, p.maxPort-p.minPort+1-len(p.usedPorts), p.maxPort-p.minPort+1)
-			return port, nil
-		}
-	}
-
-	logWithTime("[PORT][ERROR] No available ports in range %d-%d (all %d ports in use)", p.minPort, p.maxPort, p.maxPort-p.minPort+1)
-	return 0, fmt.Errorf("no available ports in range %d-%d", p.minPort, p.maxPort)
-}
-
-func (p *portRangeManager) releasePort(port int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if port >= p.minPort && port <= p.maxPort {
-		delete(p.usedPorts, port)
-		logWithTime("[PORT] Released relay port %d (available: %d/%d)", port, p.maxPort-p.minPort+1-len(p.usedPorts), p.maxPort-p.minPort+1)
-	}
-}
-
-// why we need enhanced packet connection:
-// - combines logging and cleanup
-// - ensures port release on close
-// - tracks dtls and stun traffic
-type enhancedPacketConn struct {
-	net.PacketConn
-	port        int
-	portManager *portRangeManager
-}
-
-func (e *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	n, addr, err = e.PacketConn.ReadFrom(p)
-	if err != nil {
-		return n, addr, err
-	}
-
-	// Check for DTLS handshake packets (first byte 20-63)
-	if n > 0 && p[0] >= 20 && p[0] <= 63 {
-		logWithTime("[TURN][DTLS] Received handshake packet type %d from %s on port %d", p[0], addr.String(), e.port)
-	}
-
-	// Log STUN messages too
-	if n >= 20 { // Minimum STUN message size
-		messageType := uint16(p[0])<<8 | uint16(p[1])
-		if messageType&0xC000 == 0 { // STUN messages
-			logWithTime("[STUN] Received message type: 0x%04x from %v", messageType, addr)
-		}
-	}
-
-	return n, addr, err
-}
-
-func (e *enhancedPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	// Check for DTLS handshake packets before writing
-	if len(p) > 0 && p[0] >= 20 && p[0] <= 63 {
-		logWithTime("[TURN][DTLS] Sending handshake packet type %d to %s from port %d", p[0], addr.String(), e.port)
-	}
-
-	// Log STUN messages too
-	if len(p) >= 20 { // Minimum STUN message size
-		messageType := uint16(p[0])<<8 | uint16(p[1])
-		if messageType&0xC000 == 0 { // STUN message
-			logWithTime("[STUN] Sent message type: 0x%04x to %v", messageType, addr)
-		}
-	}
-
-	return e.PacketConn.WriteTo(p, addr)
-}
-
-func (e *enhancedPacketConn) Close() error {
-	if e.portManager != nil {
-		logWithTime("[PORT] Cleaning up port %d", e.port)
-		e.portManager.releasePort(e.port)
-	}
-	return e.PacketConn.Close()
+	server      *TurnServer
 }
 
 func (g *customRelayAddressGenerator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
-	if g.portManager == nil {
-		g.portManager = newPortRangeManager(10000, 10010)
-		logWithTime("[TURN] Initialized port manager with range 10000-10010")
-	}
-
-	port, err := g.portManager.allocatePort()
+	logWithTime("[TURN] Allocating relay on %s", g.relayIP.String())
+	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:0", g.relayIP.String())) // Use port 0 for dynamic allocation
 	if err != nil {
-		logWithTime("[TURN][ERROR] Failed to allocate port: %v", err)
-		return nil, nil, err
-	}
-
-	logWithTime("[TURN] Allocating relay on %s:%d", g.relayIP.String(), port)
-	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:%d", g.relayIP.String(), port))
-	if err != nil {
-		g.portManager.releasePort(port)
 		logWithTime("[TURN][ERROR] Failed to listen: %v", err)
 		return nil, nil, err
 	}
@@ -308,24 +192,24 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 	g.addrManager.mu.RLock()
 	if g.addrManager.primaryIP == nil {
 		g.addrManager.mu.RUnlock()
-		g.portManager.releasePort(port)
+		conn.Close()
 		logWithTime("[TURN][ERROR] No primary external IP available")
 		return nil, nil, fmt.Errorf("no primary external IP available")
 	}
 	externalIP := g.addrManager.primaryIP
 	g.addrManager.mu.RUnlock()
 
-	// Create enhanced connection with both logging and cleanup
+	// Create enhanced connection with logging
 	enhancedConn := &enhancedPacketConn{
-		PacketConn:  conn,
-		port:        port,
-		portManager: g.portManager,
+		PacketConn: conn,
+		server:     g.server,
 	}
 
-	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d", g.relayIP, port, externalIP, port)
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d", g.relayIP, localAddr.Port, externalIP, localAddr.Port)
 	return enhancedConn, &net.UDPAddr{
 		IP:   externalIP,
-		Port: port,
+		Port: localAddr.Port,
 	}, nil
 }
 
@@ -386,22 +270,38 @@ func (m *externalAddressManager) startPeriodicResolution(ctx context.Context) {
 	}()
 }
 
-func NewTurnServer(config ServerConfig) (*TurnServer, error) {
+// why we need dtls metrics:
+// - tracks handshake success rate
+// - monitors connection health
+// - helps identify connection patterns
+type dtlsStats struct {
+	sync.RWMutex
+	handshakePackets int
+	activeSessions   int
+}
+
+func newDTLSStats() *dtlsStats {
+	return &dtlsStats{}
+}
+
+func NewTurnServer(config *Config) (*TurnServer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	server := &TurnServer{
-		realm:       config.Realm,
-		udpPort:     config.UDPPort,
-		ctx:         ctx,
-		cancel:      cancel,
-		environment: config.Environment,
+		realm:         config.Realm,
+		signalingPort: config.SignalingPort,
+		ctx:           ctx,
+		cancel:        cancel,
+		environment:   config.Environment,
+		config:        config,
+		dtlsStats:     newDTLSStats(),
 	}
 
-	log.Printf("[TURN] Starting server with realm: %q, port: %d", config.Realm, config.UDPPort)
+	log.Printf("[TURN] Starting server with realm: %q, port: %d", config.Realm, config.SignalingPort)
 	log.Printf("[TURN] Environment: %s", config.Environment)
 	log.Printf("[TURN] Auth user: %s", config.Credentials.Username)
 
 	// Create UDP listener with logging
-	addr := fmt.Sprintf("0.0.0.0:%d", config.UDPPort)
+	addr := fmt.Sprintf("0.0.0.0:%d", config.SignalingPort)
 	log.Printf("[TURN] Creating UDP listener on %s", addr)
 	udpListener, err := net.ListenPacket("udp4", addr)
 	if err != nil {
@@ -482,6 +382,7 @@ func NewTurnServer(config ServerConfig) (*TurnServer, error) {
 				RelayAddressGenerator: &customRelayAddressGenerator{
 					relayIP:     relayIP,
 					addrManager: externalIPManager,
+					server:      server,
 				},
 			},
 		},
@@ -496,7 +397,7 @@ func NewTurnServer(config ServerConfig) (*TurnServer, error) {
 }
 
 func (s *TurnServer) Start() error {
-	log.Printf("[TURN] Starting server on UDP port %d with:", s.udpPort)
+	log.Printf("[TURN] Starting server on UDP port %d with:", s.signalingPort)
 	log.Printf("  - Realm: %s", s.realm)
 
 	// why we need periodic monitoring:
@@ -532,13 +433,22 @@ func (s *TurnServer) monitorConnections() {
 
 	log.Printf("[MONITOR] TURN server health check:")
 	log.Printf("  - Server running: true")
-	log.Printf("  - UDP port: %d", s.udpPort)
+	log.Printf("  - UDP port: %d", s.signalingPort)
 	log.Printf("  - Realm: %s", s.realm)
+
 	log.Printf("  - Candidate types:")
 	log.Printf("    • Server Reflexive (srflx): allowed")
 	log.Printf("    • Peer Reflexive (prflx): allowed")
 	log.Printf("    • Relay (relay): allowed")
 	log.Printf("    • Host: filtered by client")
+
+	// why we need dtls monitoring:
+	// - tracks handshake progress
+	// - identifies connection failures early
+	// - helps debug ice connectivity issues
+	log.Printf("  - DTLS Status (last minute):")
+	log.Printf("    • Handshake packets received: %d", s.getDTLSStats())
+	log.Printf("    • Active DTLS sessions: %d", s.getActiveSessions())
 }
 
 // why we need server stats:
@@ -583,4 +493,98 @@ func (s *TurnServer) IsHealthy() bool {
 // - maintains consistent log format
 func logWithTime(format string, v ...interface{}) {
 	log.Printf("[%s] %s", time.Now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), fmt.Sprintf(format, v...))
+}
+
+// why we need dtls packet tracking:
+// - counts successful handshakes
+// - helps identify connection issues
+// - provides metrics for monitoring
+func (s *TurnServer) incrementDTLSHandshakePackets() {
+	s.dtlsStats.Lock()
+	s.dtlsStats.handshakePackets++
+	s.dtlsStats.Unlock()
+}
+
+func (s *TurnServer) incrementActiveSessions() {
+	s.dtlsStats.Lock()
+	s.dtlsStats.activeSessions++
+	s.dtlsStats.Unlock()
+}
+
+func (s *TurnServer) decrementActiveSessions() {
+	s.dtlsStats.Lock()
+	if s.dtlsStats.activeSessions > 0 {
+		s.dtlsStats.activeSessions--
+	}
+	s.dtlsStats.Unlock()
+}
+
+func (s *TurnServer) getDTLSStats() int {
+	s.dtlsStats.RLock()
+	defer s.dtlsStats.RUnlock()
+	return s.dtlsStats.handshakePackets
+}
+
+func (s *TurnServer) getActiveSessions() int {
+	s.dtlsStats.RLock()
+	defer s.dtlsStats.RUnlock()
+	return s.dtlsStats.activeSessions
+}
+
+// why we need enhanced packet connection:
+// - combines logging and cleanup
+// - tracks dtls and stun traffic
+type enhancedPacketConn struct {
+	net.PacketConn
+	server *TurnServer
+}
+
+func (e *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = e.PacketConn.ReadFrom(p)
+	if err != nil {
+		return n, addr, err
+	}
+
+	// Check for DTLS handshake packets (first byte 20-63)
+	if n > 0 && p[0] >= 20 && p[0] <= 63 {
+		logWithTime("[TURN][DTLS] Received handshake packet type %d from %s", p[0], addr.String())
+		if e.server != nil {
+			e.server.incrementDTLSHandshakePackets()
+			// Record new session on ClientHello (type 22)
+			if p[0] == 22 {
+				e.server.incrementActiveSessions()
+			}
+		}
+	}
+
+	// Log STUN messages too
+	if n >= 20 { // Minimum STUN message size
+		messageType := uint16(p[0])<<8 | uint16(p[1])
+		if messageType&0xC000 == 0 { // STUN messages
+			logWithTime("[STUN] Received message type: 0x%04x from %v", messageType, addr)
+		}
+	}
+
+	return n, addr, err
+}
+
+func (e *enhancedPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	// Check for DTLS handshake packets before writing
+	if len(p) > 0 && p[0] >= 20 && p[0] <= 63 {
+		logWithTime("[TURN][DTLS] Sending handshake packet type %d to %s", p[0], addr.String())
+	}
+
+	// Log STUN messages too
+	if len(p) >= 20 { // Minimum STUN message size
+		messageType := uint16(p[0])<<8 | uint16(p[1])
+		if messageType&0xC000 == 0 { // STUN message
+			logWithTime("[STUN] Sent message type: 0x%04x to %v", messageType, addr)
+		}
+	}
+
+	return e.PacketConn.WriteTo(p, addr)
+}
+
+func (e *enhancedPacketConn) Close() error {
+	return e.PacketConn.Close()
 }

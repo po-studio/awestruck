@@ -12,15 +12,22 @@ import (
 )
 
 var (
-	awestruck_env  = os.Getenv("AWESTRUCK_ENV")
-	openai_api_key = os.Getenv("OPENAI_API_KEY")
+	awestruck_env     = os.Getenv("AWESTRUCK_ENV")
+	awestruck_api_key = os.Getenv("AWESTRUCK_API_KEY")
+	openai_api_key    = os.Getenv("OPENAI_API_KEY")
+	turn_server       = os.Getenv("TURN_SERVER")
 )
 
 func main() {
 	if awestruck_env == "" {
 		awestruck_env = "development" // Default to development if not set
 	}
-	config.Init(awestruck_env, openai_api_key)
+	config.Init(
+		awestruck_env,
+		awestruck_api_key,
+		openai_api_key,
+		turn_server,
+	)
 	log.Printf("Starting server in %s environment", awestruck_env)
 
 	// Graceful shutdown

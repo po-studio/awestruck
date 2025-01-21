@@ -87,9 +87,7 @@ async function handleSynthResponse(event) {
   button.disabled = true;
 
   try {
-      const isProduction = window.location.hostname !== 'localhost';
-      const config = isProduction ? ICE_CONFIG.production : ICE_CONFIG.development;
-      
+      const config = await getWebRTCConfig();
       console.log('Using WebRTC config:', config);
 
       await setupWebRTC(config);
@@ -132,56 +130,55 @@ function waitForICEConnection(pc) {
     });
 }
 
-// why we need environment-specific turn config:
-// - uses localhost with host networking in development
-// - uses nlb dns name in production
-// - ensures consistent relay behavior
-window.TURN_SERVERS = window.location.hostname === 'localhost'
-  ? ['localhost:3478']  // Use localhost since TURN server uses host networking in dev
-  : ['turn.awestruck.io:3478'];  // Use NLB DNS name in production
+// why we need server-controlled ice configuration:
+// - ensures consistent settings across environments
+// - prevents client manipulation
+// - simplifies environment handling
+async function getWebRTCConfig() {
+    const response = await fetch('/config');
+    if (!response.ok) {
+        throw new Error('Failed to fetch WebRTC configuration');
+    }
+    return response.json();
+}
 
 // why we need optimized ice configuration:
 // - improves connection reliability
 // - handles retransmissions better
 // - provides better debugging info
-const ICE_CONFIG = {
-  development: {
-    iceServers: [
-      {
-        urls: window.TURN_SERVERS.map(server => [
-          `stun:${server}`,
-          `turn:${server}`
-        ]).flat(),
-        username: 'user',     // Static username matching server
-        credential: 'pass'    // Static password matching server
-      }
-    ],
-    iceCandidatePoolSize: 2,
-    rtcpMuxPolicy: 'require',
-    bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay',  // Force relay-only like in production
-    iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
-    gatheringTimeout: 15000       // Increased from 5000 to 15000
-  },
-  production: {
-    iceServers: [
-      {
-        urls: window.TURN_SERVERS.map(server => [
-          `stun:${server}`,
-          `turn:${server}`
-        ]).flat(),
-        username: 'user',     // Static username matching server
-        credential: 'pass'    // Static password matching server
-      }
-    ],
-    iceCandidatePoolSize: 2,
-    rtcpMuxPolicy: 'require',
-    bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay',  // Force relay-only in production
-    iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
-    gatheringTimeout: 15000       // Increased from 5000 to 15000
-  }
-};
+// const ICE_CONFIG = {
+//     development: {
+//         iceServers: [{
+//             urls: [
+//                 'stun:localhost:3478',
+//                 'turn:localhost:3478'
+//             ],
+//             username: 'user',
+//             credential: 'pass',
+//             credentialType: 'password'
+//         }],
+//         iceTransportPolicy: 'relay',
+//         bundlePolicy: 'max-bundle',
+//         rtcpMuxPolicy: 'require',
+//         iceCandidatePoolSize: 2
+//     },
+//     production: {
+//         iceServers: [
+//             {
+//                 urls: ['stun:turn.awestruck.io:3478',
+//                       'turn:turn.awestruck.io:3478'],
+//                 username: 'user',     // Static username matching server
+//                 credential: 'pass'    // Static password matching server
+//             }
+//         ],
+//         iceCandidatePoolSize: 2,
+//         rtcpMuxPolicy: 'require',
+//         bundlePolicy: 'max-bundle',
+//         iceTransportPolicy: 'relay',  // Force relay-only in production
+//         iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
+//         gatheringTimeout: 15000       // Increased from 5000 to 15000
+//     }
+// };
 
 // why we need flexible ice validation:
 // - allows both STUN and TURN candidates
@@ -238,9 +235,7 @@ async function handleSynthClick() {
     button.disabled = true;
 
     try {
-        const isProduction = window.location.hostname !== 'localhost';
-        const config = isProduction ? ICE_CONFIG.production : ICE_CONFIG.development;
-        
+        const config = await getWebRTCConfig();
         console.log('Using WebRTC config:', config);
 
         await setupWebRTC(config);
@@ -562,17 +557,14 @@ async function setupWebRTC(config) {
 
 async function sendOffer(offer) {
     try {
-        const iceServers = pc.getConfiguration().iceServers;
-        console.log('Using WebRTC config:', pc.getConfiguration());
-
         // Convert the SDP to base64 properly
         const browserOffer = {
             sdp: btoa(JSON.stringify({
                 type: offer.type,
                 sdp: offer.sdp
             })),
-            type: offer.type,
-            iceServers: iceServers
+            type: offer.type
+            // ICE servers removed - now controlled by server
         };
 
         const response = await fetch('/offer', {

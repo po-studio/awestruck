@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 )
 
 // why we need centralized config:
@@ -13,9 +14,9 @@ import (
 // - provides type safety for config values
 type Config struct {
 	// Server configuration
-	Port       int
-	HealthPort int
-	Realm      string
+	SignalingPort int // Port for both STUN and TURN signaling (default 3478)
+	HealthPort    int // Port for health checks (default 3479)
+	Realm         string
 
 	// Environment
 	Environment string // "production" or "development"
@@ -75,9 +76,21 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Parse command line flags
-	flag.IntVar(&cfg.Port, "port", 3478, "UDP port for TURN/STUN")
+	flag.IntVar(&cfg.SignalingPort, "signaling-port", 3478, "UDP port for STUN/TURN signaling")
 	flag.IntVar(&cfg.HealthPort, "health-port", 3479, "TCP port for health checks")
 	flag.Parse()
+
+	// Override with environment variables if set
+	if port := os.Getenv("SIGNALING_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			cfg.SignalingPort = p
+		}
+	}
+	if port := os.Getenv("HEALTH_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			cfg.HealthPort = p
+		}
+	}
 
 	// Load environment variables
 	cfg.Environment = os.Getenv("AWESTRUCK_ENV")
@@ -102,13 +115,13 @@ func LoadConfig() (*Config, error) {
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %v", err)
+		return nil, err
 	}
 
 	// Log configuration (excluding sensitive data)
 	log.Printf("[CONFIG] Environment: %s", cfg.Environment)
 	log.Printf("[CONFIG] Realm: %s", cfg.Realm)
-	log.Printf("[CONFIG] TURN/STUN Port: %d", cfg.Port)
+	log.Printf("[CONFIG] STUN/TURN Signaling Port: %d", cfg.SignalingPort)
 	log.Printf("[CONFIG] Health Port: %d", cfg.HealthPort)
 	log.Printf("[CONFIG] External IP: %s", cfg.ExternalIP)
 	log.Printf("[CONFIG] TURN Username: %s", cfg.Credentials.Username)

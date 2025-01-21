@@ -15,8 +15,11 @@ get_host_ip() {
             fi
             ;;
         Linux)
-            # Try to find first non-loopback, non-docker IPv4 address
-            IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | grep -v '^172\.' | grep -v '^192\.168\.' | head -n 1)
+            # why we need to include private ips:
+            # - local development uses private network
+            # - docker containers use 172.x or 192.168.x ranges
+            # - turn server needs actual network ip
+            IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n 1)
             ;;
         *)
             echo "Unsupported operating system" >&2

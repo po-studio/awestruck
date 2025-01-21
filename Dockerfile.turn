@@ -33,8 +33,9 @@ COPY --from=builder /app/turn-server /turn-server
 # why we expose these ports:
 # - 3478/udp for STUN/TURN protocol
 # - 3479/tcp for health checks
+# - 10000/udp for media relay
 EXPOSE 3478/udp
-EXPOSE 3479
+EXPOSE 3479/tcp
 
 ENTRYPOINT ["/turn-server"]
 LABEL com.docker.compose.image.builder=classic 

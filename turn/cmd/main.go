@@ -19,13 +19,7 @@ func main() {
 	}
 
 	// Create TURN server with validated config
-	server, err := turn.NewTurnServer(turn.ServerConfig{
-		UDPPort:     cfg.Port,
-		Realm:       cfg.Realm,
-		Environment: cfg.Environment,
-		ExternalIP:  cfg.ExternalIP,
-		Credentials: cfg.Credentials,
-	})
+	server, err := turn.NewTurnServer(cfg)
 	if err != nil {
 		log.Fatalf("Failed to create TURN server: %v", err)
 	}

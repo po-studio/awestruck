@@ -12,6 +12,7 @@ import (
 
 func NewRouter() *mux.Router {
 	router := mux.NewRouter()
+	router.HandleFunc("/config", webrtc.HandleConfig).Methods("GET")
 	router.HandleFunc("/offer", webrtc.HandleOffer).Methods("POST")
 	router.HandleFunc("/stop", webrtc.HandleStop).Methods("POST")
 	router.HandleFunc("/", serveHome).Methods("GET")

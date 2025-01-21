@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v3"
+	"github.com/po-studio/server/config"
 	gst "github.com/po-studio/server/internal/gstreamer-src"
 	"github.com/po-studio/server/internal/signal"
 	"github.com/po-studio/server/session"
@@ -22,9 +23,8 @@ import (
 
 // BrowserOffer represents the SDP offer from the browser
 type BrowserOffer struct {
-	SDP        string             `json:"sdp"`
-	Type       string             `json:"type"`
-	ICEServers []webrtc.ICEServer `json:"iceServers"`
+	SDP  string `json:"sdp"`
+	Type string `json:"type"`
 }
 
 type ICECandidateRequest struct {
@@ -36,69 +36,44 @@ type ICECandidateRequest struct {
 	} `json:"candidate"`
 }
 
-// why we need port management:
-// - each webrtc session needs exactly one port
-// - ports are allocated from fixed range (10000-10010)
-// - enables multiple concurrent sessions
-type portManager struct {
-	mu       sync.Mutex
-	ports    map[int]string // port -> sessionID
-	basePort int
-	maxPort  int
+// why we need centralized ice configuration:
+// - server controls ice settings
+// - consistent across environments
+// - prevents client manipulation
+func getICEServers() []webrtc.ICEServer {
+	// why we need turn server from env:
+	// - enables service discovery
+	// - supports container networking
+	// - matches docker-compose config
+	hostname := config.GetTurnServer()
+
+	return []webrtc.ICEServer{
+		{
+			URLs: []string{
+				fmt.Sprintf("stun:%s:3478", hostname),
+				fmt.Sprintf("turn:%s:3478", hostname),
+			},
+			Username:   "user",
+			Credential: "pass",
+		},
+	}
 }
 
-var (
-	pm = &portManager{
-		ports:    make(map[int]string),
-		basePort: 10000,
-		maxPort:  10010, // matches turn server and nlb ports
-	}
-)
-
-// why we need port reservation:
-// - allocates one unique port per session
-// - prevents port conflicts between sessions
-// - enables proper cleanup when session ends
-func (pm *portManager) reservePort(sessionID string) (int, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	// First try to find if this session already has a port
-	for port, sid := range pm.ports {
-		if sid == sessionID {
-			log.Printf("[PORT] Session %s already has port %d (available: %d/%d)",
-				sessionID, port, pm.maxPort-pm.basePort+1-len(pm.ports), pm.maxPort-pm.basePort+1)
-			return port, nil
-		}
+// why we need a config endpoint:
+// - provides ice configuration to client
+// - ensures consistent settings
+// - enables environment-specific config
+func HandleConfig(w http.ResponseWriter, r *http.Request) {
+	config := webrtc.Configuration{
+		ICEServers:           getICEServers(),
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
+		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
+		ICECandidatePoolSize: 2,
+		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
 	}
 
-	// Find first available port
-	for port := pm.basePort; port <= pm.maxPort; port++ {
-		if _, inUse := pm.ports[port]; !inUse {
-			pm.ports[port] = sessionID
-			log.Printf("[PORT] Reserved port %d for session %s (available: %d/%d)",
-				port, sessionID, pm.maxPort-pm.basePort+1-len(pm.ports), pm.maxPort-pm.basePort+1)
-			return port, nil
-		}
-	}
-
-	log.Printf("[PORT][ERROR] No ports available in range %d-%d (all %d ports in use)",
-		pm.basePort, pm.maxPort, pm.maxPort-pm.basePort+1)
-	return 0, fmt.Errorf("no ports available in range %d-%d (max concurrent sessions reached)", pm.basePort, pm.maxPort)
-}
-
-func (pm *portManager) releasePort(sessionID string) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	for port, sid := range pm.ports {
-		if sid == sessionID {
-			delete(pm.ports, port)
-			log.Printf("[PORT] Released port %d from session %s (available: %d/%d)",
-				port, sessionID, pm.maxPort-pm.basePort+1-len(pm.ports), pm.maxPort-pm.basePort+1)
-			return
-		}
-	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(config)
 }
 
 // HandleOffer handles the incoming WebRTC offer from the browser and sets up the peer connection.
@@ -108,7 +83,6 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	logWithTime("[OFFER] Received offer request from session: %s", sessionID)
 	logWithTime("[OFFER] Request headers: %v", r.Header)
 
-	// Read and log the raw request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logWithTime("[OFFER][ERROR] Failed to read request body: %v", err)
@@ -120,23 +94,20 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	// Restore the body for further processing
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
 
-	offer, iceServers, err := processOffer(r)
+	offer, err := processOffer(r)
 	if err != nil {
 		logWithTime("[OFFER][ERROR] Error processing offer: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to process offer: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	logWithTime("[OFFER] Processed offer details: Type=%s, ICEServers=%d", offer.Type, len(iceServers))
+	logWithTime("[OFFER] Processed offer details: Type=%s", offer.Type)
 	logWithTime("[OFFER] SDP Preview: %.100s...", offer.SDP)
 
-	if err := verifyICEConfiguration(iceServers); err != nil {
-		logWithTime("[ERROR] Invalid ICE configuration: %v", err)
-		http.Error(w, fmt.Sprintf("Invalid ICE configuration: %v", err), http.StatusBadRequest)
-		return
-	}
+	// Use server's ICE configuration
+	iceServers := getICEServers()
+	logWithTime("[WEBRTC] Creating peer connection with ICE servers: %+v", iceServers)
 
-	logWithTime("[WEBRTC] Creating peer connection")
 	peerConnection, err := createPeerConnection(iceServers, sessionID)
 	if err != nil {
 		logWithTime("[WEBRTC][ERROR] Error creating peer connection: %v", err)
@@ -417,14 +388,14 @@ func checkJACKConnections(appSession *session.AppSession) {
 	log.Printf("[%s] JACK Connections:\n%s", appSession.Id, string(output))
 }
 
-func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServer, error) {
+func processOffer(r *http.Request) (*webrtc.SessionDescription, error) {
 	var browserOffer BrowserOffer
 
 	log.Println("[OFFER] Decoding offer JSON")
 	err := json.NewDecoder(r.Body).Decode(&browserOffer)
 	if err != nil {
 		log.Printf("[OFFER][ERROR] JSON decode failed: %v", err)
-		return nil, nil, fmt.Errorf("failed to decode JSON: %v", err)
+		return nil, fmt.Errorf("failed to decode JSON: %v", err)
 	}
 
 	offer := webrtc.SessionDescription{}
@@ -433,7 +404,7 @@ func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServ
 	// Create a MediaEngine and populate it from the SDP
 	mediaEngine := webrtc.MediaEngine{}
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
-		return nil, nil, fmt.Errorf("failed to register default codecs: %v", err)
+		return nil, fmt.Errorf("failed to register default codecs: %v", err)
 	}
 
 	log.Printf("[OFFER] Media direction in offer: %v", offer.SDP)
@@ -443,9 +414,8 @@ func processOffer(r *http.Request) (*webrtc.SessionDescription, []webrtc.ICEServ
 	log.Printf("[OFFER] - Type: %s", offer.Type)
 	log.Printf("[OFFER] - SDP Length: %d", len(offer.SDP))
 	log.Printf("[OFFER] - SDP Preview: %.100s...", offer.SDP)
-	log.Printf("[OFFER] - ICE Servers count: %d", len(browserOffer.ICEServers))
 
-	return &offer, browserOffer.ICEServers, nil
+	return &offer, nil
 }
 
 func setSessionToConnection(w http.ResponseWriter, r *http.Request, peerConnection *webrtc.PeerConnection) (*session.AppSession, error) {
@@ -536,80 +506,21 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 	return audioTrack, nil
 }
 
-// why we need ice configuration validation:
-// - ensures STUN/TURN servers are properly configured
-// - validates URL format and credentials
-// - verifies required parameters are present
-func verifyICEConfiguration(iceServers []webrtc.ICEServer) error {
-	logWithTime("[ICE] Verifying ICE configuration with %d servers", len(iceServers))
-	hasSTUNorTURN := false
-
-	for _, server := range iceServers {
-		logWithTime("[ICE] Checking server URLs: %v", server.URLs)
-		for _, url := range server.URLs {
-			if strings.HasPrefix(url, "stun:") {
-				hasSTUNorTURN = true
-				logWithTime("[ICE] Found valid STUN URL: %s", url)
-			} else if strings.HasPrefix(url, "turn:") {
-				hasSTUNorTURN = true
-				// why we validate turn credentials:
-				// - ensures proper authentication
-				// - prevents connection failures
-				// - maintains security requirements
-				if server.Username == "" {
-					logWithTime("[ICE][ERROR] TURN server missing username")
-					return fmt.Errorf("TURN server missing username")
-				}
-				if server.Credential == nil && server.Username != "user" {
-					logWithTime("[ICE][ERROR] TURN server missing credentials")
-					return fmt.Errorf("TURN server missing credentials")
-				}
-				logWithTime("[ICE] Found valid TURN URL: %s with username: %s", url, server.Username)
-			}
-		}
-	}
-
-	if !hasSTUNorTURN {
-		logWithTime("[ICE][ERROR] No valid STUN/TURN URLs found")
-		return fmt.Errorf("no valid STUN/TURN URLs found in ICE configuration")
-	}
-
-	return nil
-}
-
 // createPeerConnection initializes a new WebRTC peer connection
 func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*webrtc.PeerConnection, error) {
 	logWithTime("[WEBRTC] Creating peer connection for session: %s", sessionID)
 	s := webrtc.SettingEngine{}
 
-	port, err := pm.reservePort(sessionID)
-	if err != nil {
-		logWithTime("[PORT][ERROR] Failed to reserve port: %v", err)
-		return nil, fmt.Errorf("failed to reserve port: %v", err)
-	}
-	logWithTime("[PORT] Reserved port %d for session %s", port, sessionID)
-
-	s.SetEphemeralUDPPortRange(uint16(port), uint16(port))
-	logWithTime("[WEBRTC] Set UDP port range: %d-%d", port, port)
-
-	s.SetICETimeouts(
-		iceDisconnectedTimeout,
-		iceFailedTimeout,
-		iceKeepaliveInterval,
-	)
-	logWithTime("[ICE] Set timeouts: disconnected=%v, failed=%v, keepalive=%v",
-		iceDisconnectedTimeout, iceFailedTimeout, iceKeepaliveInterval)
-
-	// why we enable relay candidates:
-	// - allows TURN server usage
-	// - improves NAT traversal
-	// - supports symmetric NAT scenarios
+	// why we need ice configuration:
+	// - enables relay candidates
+	// - improves nat traversal
+	// - supports symmetric nat scenarios
 	s.SetIncludeLoopbackCandidate(false)
 	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
 	logWithTime("[ICE] Configured NAT and candidate settings")
 
 	// why we adjust candidate timing:
-	// - allows time for TURN allocation
+	// - allows time for turn allocation
 	// - improves connection reliability
 	// - handles cloud networking delays
 	s.SetHostAcceptanceMinWait(500 * time.Millisecond)
@@ -638,23 +549,16 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		ICECandidatePoolSize: 1,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// why we need ICETransportPolicyRelay in production:
-		// - fargate requires relay candidates due to container networking
-		// - host/srflx candidates won't work in ECS
-		// - ensures consistent behavior in production
+		// why we need ICETransportPolicyRelay:
+		// - ensures consistent behavior between local and production
+		// - required for container networking in production (ECS/Fargate)
+		// - prevents direct/host candidates that won't work in cloud
 		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
-		// ICETransportPolicy: func() webrtc.ICETransportPolicy {
-		// 	if os.Getenv("AWESTRUCK_ENV") == "production" {
-		// 		return webrtc.ICETransportPolicyRelay
-		// 	}
-		// 	return webrtc.ICETransportPolicyAll
-		// }(),
 	}
 	logWithTime("[WEBRTC] Created configuration: %+v", config)
 
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
-		pm.releasePort(sessionID)
 		logWithTime("[WEBRTC][ERROR] Failed to create peer connection: %v", err)
 		return nil, err
 	}
@@ -704,16 +608,6 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 				}
 			}
 			logWithTime("[ICE] Found %d successful candidate pairs", candidateCount)
-		}
-	})
-
-	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		logWithTime("[WEBRTC] Connection state changed to: %s", state.String())
-		if state == webrtc.PeerConnectionStateClosed ||
-			state == webrtc.PeerConnectionStateFailed ||
-			state == webrtc.PeerConnectionStateDisconnected {
-			logWithTime("[PORT] Releasing port for session %s due to state: %s", sessionID, state)
-			pm.releasePort(sessionID)
 		}
 	})
 
@@ -767,9 +661,6 @@ func sendAnswer(w http.ResponseWriter, answer *webrtc.SessionDescription) {
 func HandleStop(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
 	log.Printf("[STOP] Received stop request for session: %s", sessionID)
-
-	// Release the port
-	pm.releasePort(sessionID)
 
 	// Get the specific session to stop
 	appSession, err := session.GetOrCreateSession(r, w)

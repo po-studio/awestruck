@@ -1,5 +1,9 @@
 version: '3.8'
 
+# why we use host networking for local development:
+# - enables direct access to host network interfaces
+# - simplifies NAT traversal testing
+# - allows proper ICE candidate generation
 services:
   # why we need a webrtc service:
   # - handles audio synthesis and streaming
@@ -12,7 +16,11 @@ services:
       dockerfile: Dockerfile
       platforms:
         - linux/arm64
-    container_name: server-arm64
+    # why we need host networking:
+    # - enables direct access to network interfaces
+    # - required for proper ice candidate generation
+    # - simplifies nat traversal in development
+    network_mode: host
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ./client:/app/client
@@ -29,9 +37,12 @@ services:
         soft: 67108864
         hard: 67108864
       rtprio: 99
+    # why we need webrtc server configuration:
+    # - handles audio synthesis and streaming
+    # - manages webrtc connections
+    # - communicates with turn server
     environment:
-      - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
-      - AWESTRUCK_ENV=${AWESTRUCK_ENV:-development}
+      - AWESTRUCK_ENV=development
       - JACK_NO_AUDIO_RESERVATION=1
       - JACK_PORT_MAX=128
       - GST_DEBUG=2
@@ -49,15 +60,21 @@ services:
       - JACK_REALTIME_PRIORITY=95
       - JACK_TIMEOUT=2000
       - JACK_BUFFER_SIZE=2048
-    # cap_add:
-    #   - SYS_NICE
+      # why we need host ip for turn server:
+      # - enables proper nat traversal
+      # - simulates production environment
+      # - allows relay candidates to work
+      - TURN_SERVER=${HOST_IP}
     ports:
-      - "8080:8080"
-    # why we need host networking in development:
-    # - enables direct communication with turn server
-    # - matches turn server networking mode
-    # - simplifies local testing
-    network_mode: host
+      # why we need these ports:
+      # - web/api traffic only
+      # - webrtc uses dynamic ports
+      # - media relay handled by turn server
+      - 8080:8080
+    # networks:
+    #   awestruck-net:
+    #     aliases:
+    #       - webrtc-server
     depends_on:
       turn-server:
         condition: service_healthy
@@ -71,29 +88,58 @@ services:
       context: .
       dockerfile: Dockerfile.turn
     platform: linux/arm64
-    container_name: turn-server-linux-arm64-instance
+    # why we need host networking:
+    # - enables direct access to network interfaces
+    # - required for proper ice candidate generation
+    # - simplifies nat traversal in development
+    network_mode: host
     ports:
-      - "3478:3478/udp"
-      - "3479:3479/tcp"
+      # why we need these ports:
+      # - stun/turn signaling (3478/udp)
+      # - health checks (3479/tcp)
+      # - dynamic ports for media relay
+      - 3478:3478/udp
+      - 3479:3479/tcp
+      # why we need port range exposure:
+      # - allows dynamic port allocation
+      # - enables concurrent connections
+      # - handled by pion/turn library
+      - "49152-49252:49152-49252/udp"
     environment:
-      - DEPLOYMENT_TIMESTAMP=${DEPLOYMENT_TIMESTAMP:-}
-      - AWESTRUCK_ENV=${AWESTRUCK_ENV:-development}
-      - HOST_IP=${HOST_IP:-127.0.0.1}
-      # why we need environment-specific realm:
-      # - matches domain in production (awestruck.io)
-      # - uses localhost for development
-      # - enables proper turn authentication
-      - TURN_REALM=localhost
+      - AWESTRUCK_ENV=development
+      # why we need host ip for realm:
+      # - matches real network topology
+      # - enables proper ice candidate generation
+      # - required for webrtc connectivity
+      - TURN_REALM=${HOST_IP}
+      - EXTERNAL_IP=${HOST_IP}
+      # why we need port configuration:
+      # - ensures consistent port usage
+      # - matches webrtc settings
+      # - enables proper routing
+      - SIGNALING_PORT=3478
+      - HEALTH_PORT=3479
     volumes:
       - ./turn:/app/turn
-    # why we need host networking for turn:
-    # - enables proper nat traversal
-    # - allows direct ip access
-    # - improves connection reliability
-    network_mode: host
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3479/health"]
       interval: 5s
       timeout: 3s
       retries: 5
       start_period: 1s
+
+# why we need a custom network:
+# - simulates aws vpc
+# - enables service discovery
+# - tests container isolation
+# networks:
+#   awestruck-net:
+#     driver: bridge
+#     # why we need these options:
+#     # - enables proper dns resolution
+#     # - allows container name lookups
+#     # - simulates aws vpc dns
+#     driver_opts:
+#       com.docker.network.bridge.enable_icc: "true"
+#       com.docker.network.bridge.enable_ip_masquerade: "true"
+#       com.docker.network.bridge.host_binding_ipv4: "0.0.0.0"

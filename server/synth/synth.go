@@ -51,7 +51,7 @@ func GenerateSynth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate API key
-	if !config.ValidateAPIKey(apiKey) {
+	if !config.ValidateAwestruckAPIKey(apiKey) {
 		http.Error(w, "Invalid API key", http.StatusUnauthorized)
 		return
 	}
