@@ -333,7 +333,7 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    const listener = new LbListener(this, "awestruck-https-listener", {
+    new LbListener(this, "awestruck-https-listener", {
       loadBalancerArn: alb.arn,
       port: 443,
       protocol: "HTTPS",
