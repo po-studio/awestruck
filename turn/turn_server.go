@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -138,9 +137,9 @@ func (m *externalAddressManager) resolveIPs() error {
 // - maintains nat traversal capability
 func isPublicIP(ip net.IP) bool {
 	// In development mode, allow private IPs
-	if os.Getenv("AWESTRUCK_ENV") == "development" {
-		return true
-	}
+	// if os.Getenv("AWESTRUCK_ENV") == "development" {
+	// 	return true
+	// }
 
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return false

@@ -125,11 +125,21 @@ class AwestruckInfrastructure extends TerraformStack {
         },
         {
           // why we need turn control port:
-          // - allows stun/turn control traffic (3478/udp)
+          // - allows stun/turn control traffic from clients
           // - enables nat traversal via turn
           // - required for webrtc ice connectivity
           fromPort: 3478,
           toPort: 3478,
+          protocol: "udp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          // why we need ephemeral ports:
+          // - allows dynamic port allocation for webrtc media
+          // - follows IANA standard port allocation (49152-65535)
+          // - ensures consistent port range across services
+          fromPort: 49152,
+          toPort: 65535,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -154,7 +164,7 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
-    const targetGroup = new LbTargetGroup(this, "awestruck-tg", {
+    const awestruckTargetGroup = new LbTargetGroup(this, "awestruck-tg", {
       name: "awestruck-tg-new",
       port: 8080,
       protocol: "HTTP",
@@ -268,10 +278,37 @@ class AwestruckInfrastructure extends TerraformStack {
       value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
       description: "Awestruck API key for authentication",
     });
+    
+    // why we need a network load balancer for webrtc:
+    // - handles udp traffic for media streams
+    // - provides stable networking for webrtc
+    // - enables proper port forwarding
+    const webrtcNlb = new Lb(this, "awestruck-webrtc-nlb", {
+      name: "awestruck-webrtc-nlb",
+      internal: false,
+      loadBalancerType: "network",
+      subnets: [subnet1.id, subnet2.id],
+      enableCrossZoneLoadBalancing: true,
+    });
+    
+    // why we need dns records for turn:
+    // - enables client discovery of turn services
+    // - allows for future ip changes without client updates
+    new Route53Record(this, "turn-dns", {
+      zoneId: hostedZone.zoneId,
+      name: "turn.awestruck.io",
+      type: "A",
+      allowOverwrite: true,
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true
+      }
+    });
 
-    new EcsTaskDefinition(
+    const taskDefinition = new EcsTaskDefinition(
       this,
-      "awestruck-webrtc-task-definition",
+      "awestruck-task-definition",
       {
         family: "server-arm64",
         // why we need these resources:
@@ -292,10 +329,14 @@ class AwestruckInfrastructure extends TerraformStack {
           {
             name: "server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
+            // why we need these linux capabilities:
+            // - enables real-time scheduling for jack
+            // - allows setting thread priorities
+            // - required for low-latency audio
             portMappings: [
-              // why we map these ports:
+              // why we need these ports:
               // - http port (8080) for web traffic and signaling
-              // - webrtc media handled by turn server
+              // - no explicit udp ports needed - using ephemeral range
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" }
             ],
             environment: [
@@ -311,7 +352,6 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_WAIT_TIME", value: "21333" },
               { name: "JACK_PLAYBACK_PORTS", value: "2" },
               { name: "JACK_CAPTURE_PORTS", value: "2" },
-              // "secrets" ... adjust later
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
             ],
@@ -333,7 +373,7 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    new LbListener(this, "awestruck-https-listener", {
+    const listener = new LbListener(this, "awestruck-https-listener", {
       loadBalancerArn: alb.arn,
       port: 443,
       protocol: "HTTPS",
@@ -342,27 +382,15 @@ class AwestruckInfrastructure extends TerraformStack {
       defaultAction: [
         {
           type: "forward",
-          targetGroupArn: targetGroup.arn,
+          targetGroupArn: awestruckTargetGroup.arn,
         },
       ],
     });
 
-    // why we need a network load balancer for webrtc:
-    // - handles udp traffic for media streams
-    // - preserves client ip addresses
-    // - enables proper nat traversal
-    const webrtcNlb = new Lb(this, "awestruck-webrtc-nlb", {
-      name: "awestruck-webrtc-nlb",
-      internal: false,
-      loadBalancerType: "network",
-      subnets: [subnet1.id, subnet2.id],
-      enableCrossZoneLoadBalancing: true,
-    });
-
     // why we need a turn target group:
-    // - handles stun/turn control traffic
-    // - enables health checks
-    // - routes traffic to turn containers
+    // - handles stun/turn control traffic on port 3478
+    // - enables health checks for turn service
+    // - routes turn traffic through fargate tasks
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
       name: "awestruck-turn-tg",
       port: 3478,
@@ -380,10 +408,11 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need udp listeners:
-    // - handles stun/turn signaling on 3478
-    // - enables media relay on dynamic ports
-    new LbListener(this, "turn-udp-listener", {
+    // why we need a turn listener:
+    // - forwards stun/turn traffic to turn service
+    // - enables nat traversal via turn
+    // - maintains persistent turn connections
+    const turnListener = new LbListener(this, "turn-udp-listener", {
       loadBalancerArn: webrtcNlb.arn,
       port: 3478,
       protocol: "UDP",
@@ -393,52 +422,30 @@ class AwestruckInfrastructure extends TerraformStack {
       }]
     });
 
-    // why we need minimal security groups:
-    // - only expose necessary ports
-    // - separate control from media traffic
-    // - maintain security best practices
-    const turnSecurityGroup = new SecurityGroup(this, "turn-security-group", {
-      name: "awestruck-turn-sg",
-      description: "Security group for TURN server",
-      vpcId: vpc.id,
-      ingress: [
+    // Update awestruck-service to use ALB for signaling
+    new EcsService(this, "awestruck-service", {
+      name: "awestruck-service",
+      cluster: ecsCluster.arn,
+      taskDefinition: taskDefinition.arn,
+      desiredCount: 1,
+      launchType: "FARGATE",
+      forceNewDeployment: true,
+      networkConfiguration: {
+        assignPublicIp: true,
+        subnets: [subnet1.id, subnet2.id],
+        securityGroups: [securityGroup.id],
+      },
+      loadBalancer: [
+        // why we need this load balancer mapping:
+        // - http/https traffic through ALB for signaling
+        // - no explicit udp mappings needed - using security group ephemeral range
         {
-          // why we need stun/turn port:
-          // - enables ice/stun/turn signaling
-          // - handles nat traversal setup
-          fromPort: 3478,
-          toPort: 3478,
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          // why we need health check port:
-          // - enables load balancer health monitoring
-          // - tcp for reliable checks
-          fromPort: 3479,
-          toPort: 3479,
-          protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
-          // why we need media port range:
-          // - enables webrtc media relay
-          // - standard ephemeral port range
-          // - required for turn functionality
-          fromPort: 49152,
-          toPort: 65535,
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
+          targetGroupArn: awestruckTargetGroup.arn,
+          containerName: "server-arm64",
+          containerPort: 8080,
         }
       ],
-      egress: [
-        {
-          fromPort: 0,
-          toPort: 0,
-          protocol: "-1",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-      ],
+      dependsOn: [listener],
     });
 
     // why we need a turn log group:
@@ -455,10 +462,10 @@ class AwestruckInfrastructure extends TerraformStack {
     // - no media relay as audio goes through nlb
     const turnTaskDefinition = new EcsTaskDefinition(
       this,
-      "awestruck-turn-task-definition",
+      "turn-task-definition",
       {
         family: "turn-server",
-        cpu: "512",
+        cpu: "512",  // Reduced as no media relay needed
         memory: "1024",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
@@ -473,10 +480,6 @@ class AwestruckInfrastructure extends TerraformStack {
             name: "turn-server",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/turn:latest`,
             portMappings: [
-              // why we need these ports:
-              // - 3478/udp for stun/turn signaling
-              // - 3479/tcp for health checks
-              // - ephemeral ports for media relay
               { containerPort: 3478, hostPort: 3478, protocol: "udp" },
               { containerPort: 3479, hostPort: 3479, protocol: "tcp" }
             ],
@@ -484,17 +487,15 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "TURN_REALM", value: "awestruck.io" },
               { name: "TURN_PORT", value: "3478" },
-              { name: "HEALTH_PORT", value: "3479" },
+              { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              // why we need turn server address:
-              // - tells turn server its own external address
-              // - used for ice candidate generation
-              // - enables proper nat traversal
-              // why we need nlb dns name:
-              // - enables proper nat traversal
-              // - handles ip changes automatically
-              // - maintains stable endpoint for clients
-              { name: "EXTERNAL_IP", value: webrtcNlb.dnsName }
+              { name: "EXTERNAL_IP", value: webrtcNlb.dnsName },
+              // why we need turn credentials:
+              // - enables secure authentication for turn
+              // - matches client-side configuration
+              // - prevents unauthorized relay usage
+              { name: "TURN_USERNAME", value: "user" },
+              { name: "TURN_PASSWORD", value: "pass" }
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
@@ -516,21 +517,6 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // why we need dns records for turn:
-    // - enables client discovery of turn services
-    // - allows for future ip changes without client updates
-    new Route53Record(this, "turn-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "turn.awestruck.io",
-      type: "A",
-      allowOverwrite: true,
-      alias: {
-        name: webrtcNlb.dnsName,
-        zoneId: webrtcNlb.zoneId,
-        evaluateTargetHealth: true
-      }
-    });
-
     // why we need to expose the nlb dns name:
     // - helps with debugging turn connectivity
     // - enables direct nlb access if needed
@@ -540,12 +526,9 @@ class AwestruckInfrastructure extends TerraformStack {
       description: "Network Load Balancer DNS name for TURN server",
     });
 
-    // why we need a turn service:
-    // - runs turn server in fargate
-    // - handles nat traversal and media relay
-    // - auto scales with demand
+    // Update turn-service to use the main security group
     new EcsService(this, "turn-service", {
-      name: "turn-service",
+      name: "awestruck-turn-service",
       cluster: ecsCluster.arn,
       taskDefinition: turnTaskDefinition.arn,
       desiredCount: 1,
@@ -554,15 +537,14 @@ class AwestruckInfrastructure extends TerraformStack {
       networkConfiguration: {
         assignPublicIp: true,
         subnets: [subnet1.id, subnet2.id],
-        securityGroups: [turnSecurityGroup.id],
+        securityGroups: [securityGroup.id],  // Use main security group
       },
-      loadBalancer: [
-        {
-          targetGroupArn: turnTargetGroup.arn,
-          containerName: "turn-server",
-          containerPort: 3478,
-        }
-      ]
+      loadBalancer: [{
+        targetGroupArn: turnTargetGroup.arn,
+        containerName: "turn-server",
+        containerPort: 3478
+      }],
+      dependsOn: [turnListener]
     });
 
     // Add CloudWatch dashboard for monitoring both services

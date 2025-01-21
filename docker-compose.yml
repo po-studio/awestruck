@@ -64,7 +64,7 @@ services:
       # - enables proper nat traversal
       # - simulates production environment
       # - allows relay candidates to work
-      - TURN_SERVER=${HOST_IP}
+      - TURN_SERVER=192.168.4.82
     ports:
       # why we need these ports:
       # - web/api traffic only
