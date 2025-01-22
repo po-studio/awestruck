@@ -481,6 +481,10 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "AWESTRUCK_ENV", value: "production" },
               { name: "SIGNALING_PORT", value: "3478" },
               { name: "HEALTH_PORT", value: "3479" },
+              // why we need correct realm:
+              // - matches main domain for authentication
+              // - ensures consistent ice credentials
+              // - required for webrtc security
               { name: "TURN_REALM", value: "awestruck.io" },
               { name: "EXTERNAL_IP", value: "turn.awestruck.io" },
               { name: "TURN_USERNAME", value: "dummy-username" },
@@ -534,6 +538,10 @@ class AwestruckInfrastructure extends TerraformStack {
       dashboardName: "awestruck-services",
       dashboardBody: JSON.stringify({
         widgets: [
+          // why we need webrtc connection monitoring:
+          // - track ice connection states
+          // - identify connection failures
+          // - monitor dtls handshake issues
           {
             type: "log",
             x: 0,
@@ -541,11 +549,20 @@ class AwestruckInfrastructure extends TerraformStack {
             width: 12,
             height: 6,
             properties: {
-              query: `SOURCE '${webrtcLogGroup.name}' | fields @timestamp, @message | sort @timestamp desc | limit 100`,
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @message like /\\[ICE\\].*(?:failed|disconnected|timeout)|\\[DTLS\\].*(?:failed|timeout)|\\[WebRTC\\].*(?:failed|closed)/ | 
+                parse @message "*] *" as type, event |
+                stats count(*) as count by type, event, bin(5m) |
+                sort count desc`,
               region: awsRegion,
-              title: "WebRTC Server Logs",
+              title: "WebRTC Connection Issues",
+              view: "table"
             },
           },
+          // why we need audio pipeline monitoring:
+          // - detect audio processing issues
+          // - track jack xruns
+          // - identify pipeline failures
           {
             type: "log",
             x: 12,
@@ -553,79 +570,102 @@ class AwestruckInfrastructure extends TerraformStack {
             width: 12,
             height: 6,
             properties: {
-              query: `SOURCE '${turnLogGroup.name}' | fields @timestamp, @message | sort @timestamp desc | limit 100`,
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @message like /\\[AUDIO\\].*(?:ERROR|WARN|ALERT)|\\[GST\\].*ERROR|JackEngine::XRun/ |
+                parse @message "*] *" as component, event |
+                stats count(*) as count by component, event, bin(5m) |
+                sort count desc`,
               region: awsRegion,
-              title: "TURN Server Logs",
+              title: "Audio Pipeline Issues",
+              view: "table"
             },
           },
+          // why we need turn server monitoring:
+          // - track stun/turn request success
+          // - monitor authentication issues
+          // - identify relay problems
           {
-            type: "metric",
+            type: "log",
             x: 0,
             y: 6,
             width: 12,
             height: 6,
             properties: {
-              metrics: [
-                ["AWS/ECS", "CPUUtilization", "ServiceName", "turn-service", "ClusterName", "awestruck"],
-                [".", "MemoryUtilization", ".", ".", ".", "."]
-              ],
+              query: `SOURCE '${turnLogGroup.name}' | 
+                filter @message like /Processing .* candidate|Authentication|ERROR/ |
+                parse @message "*] *" as type, event |
+                stats count(*) as count by type, event, bin(5m) |
+                sort count desc`,
               region: awsRegion,
-              title: "TURN Server Resources",
-              period: 300,
-              stat: "Average",
+              title: "TURN Server Activity",
+              view: "table"
             },
           },
-          // why we need webrtc metrics:
-          // - monitor connection quality
-          // - track ice connectivity
-          // - identify media issues
+          // why we need rtp stats monitoring:
+          // - track packet loss and jitter
+          // - monitor audio quality
+          // - identify network issues
           {
-            type: "metric",
+            type: "log",
             x: 12,
             y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @message like /Inbound RTP|Outbound RTP/ |
+                parse @message "*packets=* bytes=* jitter=* packet_loss_delta=*" as type, packets, bytes, jitter, loss |
+                stats avg(jitter) as avg_jitter, sum(loss) as total_loss by bin(1m) |
+                sort avg_jitter desc`,
+              region: awsRegion,
+              title: "RTP Statistics",
+              view: "line"
+            },
+          },
+          // why we need resource monitoring:
+          // - track cpu/memory usage
+          // - identify resource constraints
+          // - monitor service health
+          {
+            type: "metric",
+            x: 0,
+            y: 12,
             width: 12,
             height: 6,
             properties: {
               metrics: [
                 ["AWS/ECS", "CPUUtilization", "ServiceName", "webrtc-service", "ClusterName", "awestruck"],
+                [".", "MemoryUtilization", ".", ".", ".", "."],
+                ["AWS/ECS", "CPUUtilization", "ServiceName", "turn-service", "ClusterName", "awestruck"],
                 [".", "MemoryUtilization", ".", ".", ".", "."]
               ],
               region: awsRegion,
-              title: "WebRTC Server Resources",
-              period: 300,
+              title: "Service Resources",
+              period: 60,
               stat: "Average",
+              view: "timeSeries",
+              stacked: false
             },
           },
-          // why we need log filters:
-          // - quickly identify connection issues
-          // - track ice failures
-          // - monitor audio pipeline health
+          // why we need session monitoring:
+          // - track active connections
+          // - monitor session lifecycle
+          // - identify cleanup issues
           {
             type: "log",
-            x: 0,
+            x: 12,
             y: 12,
-            width: 24,
+            width: 12,
             height: 6,
             properties: {
-              query: `SOURCE '${webrtcLogGroup.name}' | filter @message like /ICE|WEBRTC|ERROR|Pipeline/ | stats count(*) as count by strcontains(@message, 'ERROR') as isError, ispresent(status) as hasStatus, status | sort count desc`,
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @message like /\\[SESSION\\]|\\[CLEANUP\\]/ |
+                parse @message "*] *" as type, event |
+                stats count(*) as count by type, event, bin(5m) |
+                sort count desc`,
               region: awsRegion,
-              title: "WebRTC Critical Events",
-            },
-          },
-          // why we need turn metrics:
-          // - monitor stun/turn usage
-          // - track connection success rate
-          // - identify network issues
-          {
-            type: "log",
-            x: 0,
-            y: 18,
-            width: 24,
-            height: 6,
-            properties: {
-              query: `SOURCE '${turnLogGroup.name}' | filter @message like /STUN|TURN|ERROR|failed/ | stats count(*) as count by strcontains(@message, 'ERROR') as isError, ispresent(status) as hasStatus, status | sort count desc`,
-              region: awsRegion,
-              title: "TURN Critical Events",
+              title: "Session Activity",
+              view: "table"
             },
           }
         ],

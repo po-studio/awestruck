@@ -74,7 +74,7 @@ func getICEServers() []webrtc.ICEServer {
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
 	config := webrtc.Configuration{
 		ICEServers:           getICEServers(),
-		ICETransportPolicy:   webrtc.ICETransportPolicyAll, // Allow both direct and relay
+		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
 		ICECandidatePoolSize: 4, // Increased for better candidate gathering

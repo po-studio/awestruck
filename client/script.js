@@ -87,13 +87,7 @@ async function handleSynthResponse(event) {
   button.disabled = true;
 
   try {
-      const isProduction = window.location.hostname !== 'localhost';
-      const config = isProduction ? ICE_CONFIG.production : ICE_CONFIG.development;
-      
-      console.log('Using WebRTC config:', config);
-
-      await setupWebRTC(config);
-
+      await setupWebRTC();
       button.textContent = 'Stop Synth';
       button.classList.add('button-disconnect');
       button.disabled = false;
@@ -112,7 +106,7 @@ function waitForICEConnection(pc) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             reject(new Error('ICE connection timeout'));
-        }, 30000); // Increased to 30 seconds to match server gathering timeout
+        }, 30000); // 30 seconds to match server gathering timeout
 
         function checkState() {
             if (pc.iceConnectionState === 'connected' || 
@@ -132,14 +126,6 @@ function waitForICEConnection(pc) {
     });
 }
 
-// why we need environment-specific turn config:
-// - uses localhost with host networking in development
-// - uses nlb dns name in production
-// - ensures consistent relay behavior
-window.TURN_SERVERS = window.location.hostname === 'localhost'
-  ? ['localhost:3478']  // Use localhost since TURN server uses host networking in dev
-  : ['turn.awestruck.io:3478'];  // Use NLB DNS name in production
-
 // why we need dynamic ice configuration:
 // - server controls ice settings
 // - supports environment changes
@@ -151,21 +137,6 @@ async function getICEConfig() {
     }
     return response.json();
 }
-
-// why we need optimized ice configuration:
-// - improves connection reliability
-// - handles retransmissions better
-// - provides better debugging info
-const ICE_CONFIG = {
-    development: {
-        iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
-        gatheringTimeout: 15000       // Increased from 5000 to 15000
-    },
-    production: {
-        iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
-        gatheringTimeout: 15000       // Increased from 5000 to 15000
-    }
-};
 
 // why we need webrtc setup:
 // - initializes peer connection with server config
