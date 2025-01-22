@@ -4,6 +4,14 @@ version: '3.8'
 # - enables direct access to host network interfaces
 # - simplifies NAT traversal testing
 # - allows proper ICE candidate generation
+
+# why we need to set host ip automatically:
+# - ensures consistent network configuration
+# - handles different network interfaces
+# - works across different development machines
+x-host-ip: &host_ip
+  ${HOST_IP:-$(./scripts/get_host_ip.sh)}
+
 services:
   # why we need a webrtc service:
   # - handles audio synthesis and streaming
@@ -64,7 +72,7 @@ services:
       # - enables proper nat traversal
       # - simulates production environment
       # - allows relay candidates to work
-      - TURN_SERVER=192.168.4.82
+      - TURN_SERVER=${HOST_IP:-$(./scripts/get_host_ip.sh)}
     ports:
       # why we need these ports:
       # - web/api traffic only
@@ -107,12 +115,14 @@ services:
       - "49152-49252:49152-49252/udp"
     environment:
       - AWESTRUCK_ENV=development
+      - TURN_USERNAME=user
+      - TURN_PASSWORD=pass
       # why we need host ip for realm:
       # - matches real network topology
       # - enables proper ice candidate generation
       # - required for webrtc connectivity
-      - TURN_REALM=${HOST_IP}
-      - EXTERNAL_IP=${HOST_IP}
+      - TURN_REALM=${HOST_IP:-$(./scripts/get_host_ip.sh)}
+      - EXTERNAL_IP=${HOST_IP:-$(./scripts/get_host_ip.sh)}
       # why we need port configuration:
       # - ensures consistent port usage
       # - matches webrtc settings

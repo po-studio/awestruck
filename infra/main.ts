@@ -342,7 +342,12 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_PLAYBACK_PORTS", value: "2" },
               { name: "JACK_CAPTURE_PORTS", value: "2" },
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
-              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
+              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" },
+              // why we need turn server dns:
+              // - enables service discovery in aws
+              // - matches turn server's alias record
+              // - ensures consistent networking
+              { name: "TURN_SERVER", value: "turn.awestruck.io" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
