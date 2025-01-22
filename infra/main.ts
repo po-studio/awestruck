@@ -306,15 +306,15 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    const taskDefinition = new EcsTaskDefinition(
+    // why we need to store task definition in a variable:
+    // - enables reuse in multiple services
+    // - allows referencing in other resources
+    // - improves code maintainability
+    const webrtcTaskDefinition = new EcsTaskDefinition(
       this,
-      "awestruck-task-definition",
+      "awestruck-webrtc-task-definition",
       {
         family: "server-arm64",
-        // why we need these resources:
-        // - 2 vCPU (2048) for audio processing
-        // - 4GB memory (4096) is the minimum valid for 2 vCPU
-        // - follows fargate supported cpu/memory combinations
         cpu: "2048",
         memory: "4096",
         networkMode: "awsvpc",
@@ -329,23 +329,12 @@ class AwestruckInfrastructure extends TerraformStack {
           {
             name: "server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
-            // why we need these linux capabilities:
-            // - enables real-time scheduling for jack
-            // - allows setting thread priorities
-            // - required for low-latency audio
             portMappings: [
-              // why we need these ports:
-              // - http port (8080) for web traffic and signaling
-              // - no explicit udp ports needed - using ephemeral range
               { containerPort: 8080, hostPort: 8080, protocol: "tcp" }
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
               { name: "AWESTRUCK_ENV", value: "production" },
-              // why we need these jack settings:
-              // - matches dummy driver's default configuration
-              // - ensures consistent audio buffering
-              // - maintains stability in non-realtime environments
               { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
               { name: "JACK_RATE", value: "48000" },
               { name: "JACK_PERIOD_SIZE", value: "1024" },
@@ -422,11 +411,14 @@ class AwestruckInfrastructure extends TerraformStack {
       }]
     });
 
-    // Update awestruck-service to use ALB for signaling
-    new EcsService(this, "awestruck-service", {
-      name: "awestruck-service",
+    // why we need a dedicated webrtc service:
+    // - separates concerns from other services
+    // - enables independent scaling
+    // - simplifies monitoring and maintenance
+    new EcsService(this, "webrtc-service", {
+      name: "webrtc-service",
       cluster: ecsCluster.arn,
-      taskDefinition: taskDefinition.arn,
+      taskDefinition: webrtcTaskDefinition.arn,
       desiredCount: 1,
       launchType: "FARGATE",
       forceNewDeployment: true,
@@ -436,9 +428,6 @@ class AwestruckInfrastructure extends TerraformStack {
         securityGroups: [securityGroup.id],
       },
       loadBalancer: [
-        // why we need this load balancer mapping:
-        // - http/https traffic through ALB for signaling
-        // - no explicit udp mappings needed - using security group ephemeral range
         {
           targetGroupArn: awestruckTargetGroup.arn,
           containerName: "server-arm64",
@@ -497,13 +486,13 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_USERNAME", value: "user" },
               { name: "TURN_PASSWORD", value: "pass" }
             ],
-            healthCheck: {
-              command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
-              interval: 30,
-              timeout: 5,
-              retries: 3,
-              startPeriod: 60
-            },
+            // healthCheck: {
+            //   command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
+            //   interval: 30,
+            //   timeout: 5,
+            //   retries: 3,
+            //   startPeriod: 60
+            // },
             logConfiguration: {
               logDriver: "awslogs",
               options: {
