@@ -140,316 +140,40 @@ window.TURN_SERVERS = window.location.hostname === 'localhost'
   ? ['localhost:3478']  // Use localhost since TURN server uses host networking in dev
   : ['turn.awestruck.io:3478'];  // Use NLB DNS name in production
 
+// why we need dynamic ice configuration:
+// - server controls ice settings
+// - supports environment changes
+// - ensures consistent behavior
+async function getICEConfig() {
+    const response = await fetch('/config');
+    if (!response.ok) {
+        throw new Error('Failed to fetch ICE configuration');
+    }
+    return response.json();
+}
+
 // why we need optimized ice configuration:
 // - improves connection reliability
 // - handles retransmissions better
 // - provides better debugging info
 const ICE_CONFIG = {
-  development: {
-    iceServers: [
-      {
-        urls: window.TURN_SERVERS.map(server => [
-          `stun:${server}`,
-          `turn:${server}`
-        ]).flat(),
-        username: 'user',     // Static username matching server
-        credential: 'pass'    // Static password matching server
-      }
-    ],
-    iceCandidatePoolSize: 2,
-    rtcpMuxPolicy: 'require',
-    bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay',  // Force relay-only like in production
-    iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
-    gatheringTimeout: 15000       // Increased from 5000 to 15000
-  },
-  production: {
-    iceServers: [
-      {
-        urls: window.TURN_SERVERS.map(server => [
-          `stun:${server}`,
-          `turn:${server}`
-        ]).flat(),
-        username: 'user',     // Static username matching server
-        credential: 'pass'    // Static password matching server
-      }
-    ],
-    iceCandidatePoolSize: 2,
-    rtcpMuxPolicy: 'require',
-    bundlePolicy: 'max-bundle',
-    iceTransportPolicy: 'relay',  // Force relay-only in production
-    iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
-    gatheringTimeout: 15000       // Increased from 5000 to 15000
-  }
+    development: {
+        iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
+        gatheringTimeout: 15000       // Increased from 5000 to 15000
+    },
+    production: {
+        iceCheckingTimeout: 15000,    // Increased from 5000 to 15000
+        gatheringTimeout: 15000       // Increased from 5000 to 15000
+    }
 };
-
-// why we need flexible ice validation:
-// - allows both STUN and TURN candidates
-// - supports container-to-container communication
-// - maintains logging for monitoring
-function validateIceConfig(config) {
-  if (!config || !config.iceServers) {
-    console.error('[ICE] Invalid ICE configuration');
-    return false;
-  }
-
-  const hasValidServer = config.iceServers.some(server => {
-    if (!server.urls) {
-      console.error('[ICE] Missing URLs');
-      return false;
-    }
-
-    // Log all URL types for monitoring
-    server.urls.forEach(url => {
-      if (url.startsWith('stun:')) {
-        console.log('[ICE] Found STUN URL:', url);
-      } else if (url.startsWith('turn:')) {
-        console.log('[ICE] Found TURN URL:', url);
-        if (!server.username || !server.credential) {
-          console.error('[ICE] TURN server missing credentials');
-          return false;
-        }
-      }
-    });
-
-    return true;
-  });
-
-  if (!hasValidServer) {
-    console.error('[ICE] No valid server configuration found');
-    return false;
-  }
-
-  return true;
-}
-
-// Manual click handler (e.g., if not using HTMX for some flows)
-async function handleSynthClick() {
-    const button = document.querySelector('.connection-button');
-
-    if (pc) {
-        await cleanupConnection();
-        button.textContent = 'Generate Synth';
-        button.classList.remove('button-disconnect');
-        return;
-    }
-
-    button.textContent = 'Connecting...';
-    button.disabled = true;
-
-    try {
-        const isProduction = window.location.hostname !== 'localhost';
-        const config = isProduction ? ICE_CONFIG.production : ICE_CONFIG.development;
-        
-        console.log('Using WebRTC config:', config);
-
-        await setupWebRTC(config);
-
-        button.textContent = 'Stop Synth';
-        button.classList.add('button-disconnect');
-        button.disabled = false;
-    } catch (error) {
-        console.error('Connection failed:', error);
-        button.textContent = 'Error - Try Again';
-        button.disabled = false;
-    }
-}
-
-// why we need custom syntax highlighting:
-// - improves code readability
-// - helps identify different language elements
-// - matches supercollider conventions
-Prism.languages.supercollider = {
-    'comment': {
-        pattern: /(\/\/.*)|(\/\*[\s\S]*?\*\/)/,
-        greedy: true
-    },
-    'string': {
-        pattern: /"(?:\\.|[^\\"])*"/,
-        greedy: true
-    },
-    'class-name': {
-        pattern: /\b[A-Z]\w*\b/,
-        greedy: true
-    },
-    'function': {
-        pattern: /\b[a-z]\w*(?=\s*\()/,
-        greedy: true
-    },
-    'keyword': /\b(?:arg|var|if|else|while|do|for|switch|case|return|nil|true|false|inf)\b/,
-    'number': /\b-?(?:0x[\da-f]+|\d*\.?\d+(?:e[+-]?\d+)?)\b/i,
-    'operator': /[-+*\/%=&|!<>^~?:]+/,
-    'punctuation': /[{}[\];(),.:]/
-};
-
-// why we need comprehensive connection monitoring:
-// - tracks dtls handshake progress
-// - monitors ice connection states
-// - logs detailed diagnostics on failure
-function setupConnectionMonitoring(pc, monitorDTLS) {
-    pc.oniceconnectionstatechange = () => {
-        console.log('[ICE] Connection state changed:', pc.iceConnectionState);
-        
-        if (pc.iceConnectionState === 'checking') {
-            console.log('[ICE] Connection checking - starting DTLS monitoring');
-            monitorDTLS();
-        } else if (pc.iceConnectionState === 'failed') {
-            console.error('[ICE] Connection failed - gathering diagnostics...');
-            console.log('[ICE] Local description:', pc.localDescription);
-            console.log('[ICE] Remote description:', pc.remoteDescription);
-            console.log('[ICE] ICE gathering state:', pc.iceGatheringState);
-            console.log('[ICE] Signaling state:', pc.signalingState);
-        }
-    };
-
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            const candidateObj = {
-                candidate: event.candidate.candidate,
-                sdpMid: event.candidate.sdpMid,
-                sdpMLineIndex: event.candidate.sdpMLineIndex,
-                usernameFragment: event.candidate.usernameFragment
-            };
-
-            // Parse candidate for logging
-            const candidateStr = event.candidate.candidate;
-            const parts = candidateStr.split(' ');
-            const parsedCandidate = {
-                foundation: parts[0].split(':')[1],
-                component: parts[1],
-                protocol: parts[2],
-                priority: parts[3],
-                address: parts[4],
-                port: parts[5],
-                type: parts[7],
-                relAddr: parts[9] || undefined,
-                relPort: parts[11] || undefined
-            };
-
-            console.log('[ICE] New candidate:', parsedCandidate);
-            iceProgress.trackCandidate();
-            
-            if (!pc.remoteDescription) {
-                console.log('[ICE] Queuing candidate until remote description is set');
-                pendingCandidates.push(event.candidate);
-                return;
-            }
-
-            sendICECandidate(event.candidate).catch(err => {
-                console.error('[ICE] Failed to send candidate:', err);
-                pendingCandidates.push(event.candidate);
-            });
-        }
-    };
-}
-
-// why we need unified stats monitoring:
-// - combines connection quality and audio monitoring
-// - provides comprehensive debugging data
-// - reduces redundant stat collection
-function startUnifiedMonitoring() {
-    if (qualityMonitorInterval) {
-        clearInterval(qualityMonitorInterval);
-    }
-
-    let lastBytesReceived = 0;
-    let noDataCount = 0;
-    const MAX_NO_DATA_COUNT = 10;
-
-    qualityMonitorInterval = setInterval(async () => {
-        if (!pc) return;
-
-        try {
-            const stats = await pc.getStats();
-            const statsData = {
-                audio: null,
-                transport: null,
-                candidatePair: null
-            };
-
-            stats.forEach(stat => {
-                if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
-                    statsData.audio = {
-                        bytesReceived: stat.bytesReceived,
-                        packetsReceived: stat.packetsReceived,
-                        jitter: stat.jitter,
-                        timestamp: stat.timestamp
-                    };
-                } else if (stat.type === 'transport') {
-                    statsData.transport = {
-                        dtlsState: stat.dtlsState,
-                        selectedCandidatePairId: stat.selectedCandidatePairId,
-                        bytesReceived: stat.bytesReceived
-                    };
-                } else if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
-                    statsData.candidatePair = {
-                        localCandidate: stat.localCandidateId,
-                        remoteCandidate: stat.remoteCandidateId,
-                        currentRoundTripTime: stat.currentRoundTripTime,
-                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
-                        bytesReceived: stat.bytesReceived,
-                        bytesSent: stat.bytesSent
-                    };
-                }
-            });
-
-            // Log connection quality metrics
-            if (statsData.candidatePair) {
-                console.log('[STATS] Connection Quality:', {
-                    rtt: statsData.candidatePair.currentRoundTripTime,
-                    bitrate: statsData.candidatePair.availableOutgoingBitrate,
-                    bytesReceived: statsData.candidatePair.bytesReceived,
-                    bytesSent: statsData.candidatePair.bytesSent
-                });
-            }
-
-            // Check audio flow
-            if (statsData.audio) {
-                const newBytes = statsData.audio.bytesReceived - lastBytesReceived;
-                console.log('[AUDIO][FLOW]', {
-                    newBytesReceived: newBytes,
-                    totalBytesReceived: statsData.audio.bytesReceived,
-                    packetsReceived: statsData.audio.packetsReceived,
-                    jitter: statsData.audio.jitter,
-                    dtlsState: statsData.transport?.dtlsState,
-                    candidatePair: statsData.candidatePair ? 'active' : 'none'
-                });
-
-                if (newBytes === 0) {
-                    noDataCount++;
-                    if (noDataCount >= MAX_NO_DATA_COUNT) {
-                        console.warn('[AUDIO][ALERT] No new audio data received for', noDataCount * 2, 'seconds');
-                        console.log('[AUDIO][DEBUG] Connection state:', {
-                            iceConnectionState: pc.iceConnectionState,
-                            connectionState: pc.connectionState,
-                            signalingState: pc.signalingState,
-                            transport: statsData.transport,
-                            candidatePair: statsData.candidatePair
-                        });
-                    }
-                } else {
-                    noDataCount = 0;
-                }
-                lastBytesReceived = statsData.audio.bytesReceived;
-            } else {
-                console.warn('[AUDIO][WARN] No inbound audio stats found');
-            }
-        } catch (error) {
-            console.error('[STATS][ERROR] Failed to get stats:', error);
-        }
-    }, 2000);
-}
 
 // why we need webrtc setup:
-// - initializes peer connection with STUN configuration
+// - initializes peer connection with server config
 // - sets up media tracks and data channels
 // - handles connection state changes
-async function setupWebRTC(config) {
-    if (!validateIceConfig(config)) {
-        throw new Error('Invalid ICE configuration');
-    }
-
-    console.log('[ICE] Using STUN servers:', config.iceServers.map(server => server.urls));
+async function setupWebRTC() {
+    const config = await getICEConfig();
+    console.log('[ICE] Using server configuration:', config);
 
     pc = new RTCPeerConnection(config);
     console.log('[WebRTC] Created peer connection with config:', config);
@@ -1153,3 +877,214 @@ async function sendICECandidate(candidate) {
         }
     }
 }
+
+// why we need unified stats monitoring:
+// - combines connection quality and audio monitoring
+// - provides comprehensive debugging data
+// - reduces redundant stat collection
+function startUnifiedMonitoring() {
+    if (qualityMonitorInterval) {
+        clearInterval(qualityMonitorInterval);
+    }
+
+    let lastBytesReceived = 0;
+    let noDataCount = 0;
+    const MAX_NO_DATA_COUNT = 10;
+
+    qualityMonitorInterval = setInterval(async () => {
+        if (!pc) return;
+
+        try {
+            const stats = await pc.getStats();
+            const statsData = {
+                audio: null,
+                transport: null,
+                candidatePair: null
+            };
+
+            stats.forEach(stat => {
+                if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+                    statsData.audio = {
+                        bytesReceived: stat.bytesReceived,
+                        packetsReceived: stat.packetsReceived,
+                        jitter: stat.jitter,
+                        timestamp: stat.timestamp
+                    };
+                } else if (stat.type === 'transport') {
+                    statsData.transport = {
+                        dtlsState: stat.dtlsState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId,
+                        bytesReceived: stat.bytesReceived
+                    };
+                } else if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+                    statsData.candidatePair = {
+                        localCandidate: stat.localCandidateId,
+                        remoteCandidate: stat.remoteCandidateId,
+                        currentRoundTripTime: stat.currentRoundTripTime,
+                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent
+                    };
+                }
+            });
+
+            // Log connection quality metrics
+            if (statsData.candidatePair) {
+                console.log('[STATS] Connection Quality:', {
+                    rtt: statsData.candidatePair.currentRoundTripTime,
+                    bitrate: statsData.candidatePair.availableOutgoingBitrate,
+                    bytesReceived: statsData.candidatePair.bytesReceived,
+                    bytesSent: statsData.candidatePair.bytesSent
+                });
+            }
+
+            // Check audio flow
+            if (statsData.audio) {
+                const newBytes = statsData.audio.bytesReceived - lastBytesReceived;
+                console.log('[AUDIO][FLOW]', {
+                    newBytesReceived: newBytes,
+                    totalBytesReceived: statsData.audio.bytesReceived,
+                    packetsReceived: statsData.audio.packetsReceived,
+                    jitter: statsData.audio.jitter,
+                    dtlsState: statsData.transport?.dtlsState,
+                    candidatePair: statsData.candidatePair ? 'active' : 'none'
+                });
+
+                if (newBytes === 0) {
+                    noDataCount++;
+                    if (noDataCount >= MAX_NO_DATA_COUNT) {
+                        console.warn('[AUDIO][ALERT] No new audio data received for', noDataCount * 2, 'seconds');
+                        console.log('[AUDIO][DEBUG] Connection state:', {
+                            iceConnectionState: pc.iceConnectionState,
+                            connectionState: pc.connectionState,
+                            signalingState: pc.signalingState,
+                            transport: statsData.transport,
+                            candidatePair: statsData.candidatePair
+                        });
+                    }
+                } else {
+                    noDataCount = 0;
+                }
+                lastBytesReceived = statsData.audio.bytesReceived;
+            } else {
+                console.warn('[AUDIO][WARN] No inbound audio stats found');
+            }
+        } catch (error) {
+            console.error('[STATS][ERROR] Failed to get stats:', error);
+        }
+    }, 2000);
+}
+
+// why we need comprehensive connection monitoring:
+// - tracks dtls handshake progress
+// - monitors ice connection states
+// - logs detailed diagnostics on failure
+function setupConnectionMonitoring(pc, monitorDTLS) {
+    pc.oniceconnectionstatechange = () => {
+        console.log('[ICE] Connection state changed:', pc.iceConnectionState);
+        
+        if (pc.iceConnectionState === 'checking') {
+            console.log('[ICE] Connection checking - starting DTLS monitoring');
+            monitorDTLS();
+        } else if (pc.iceConnectionState === 'failed') {
+            console.error('[ICE] Connection failed - gathering diagnostics...');
+            console.log('[ICE] Local description:', pc.localDescription);
+            console.log('[ICE] Remote description:', pc.remoteDescription);
+            console.log('[ICE] ICE gathering state:', pc.iceGatheringState);
+            console.log('[ICE] Signaling state:', pc.signalingState);
+        }
+    };
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate) {
+            const candidateObj = {
+                candidate: event.candidate.candidate,
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                usernameFragment: event.candidate.usernameFragment
+            };
+
+            // Parse candidate for logging
+            const candidateStr = event.candidate.candidate;
+            const parts = candidateStr.split(' ');
+            const parsedCandidate = {
+                foundation: parts[0].split(':')[1],
+                component: parts[1],
+                protocol: parts[2],
+                priority: parts[3],
+                address: parts[4],
+                port: parts[5],
+                type: parts[7],
+                relAddr: parts[9] || undefined,
+                relPort: parts[11] || undefined
+            };
+
+            console.log('[ICE] New candidate:', parsedCandidate);
+            iceProgress.trackCandidate();
+            
+            if (!pc.remoteDescription) {
+                console.log('[ICE] Queuing candidate until remote description is set');
+                pendingCandidates.push(event.candidate);
+                return;
+            }
+
+            sendICECandidate(event.candidate).catch(err => {
+                console.error('[ICE] Failed to send candidate:', err);
+                pendingCandidates.push(event.candidate);
+            });
+        }
+    };
+}
+
+// Manual click handler (e.g., if not using HTMX for some flows)
+async function handleSynthClick() {
+    const button = document.querySelector('.connection-button');
+
+    if (pc) {
+        await cleanupConnection();
+        button.textContent = 'Generate Synth';
+        button.classList.remove('button-disconnect');
+        return;
+    }
+
+    button.textContent = 'Connecting...';
+    button.disabled = true;
+
+    try {
+        await setupWebRTC();
+        button.textContent = 'Stop Synth';
+        button.classList.add('button-disconnect');
+        button.disabled = false;
+    } catch (error) {
+        console.error('Connection failed:', error);
+        button.textContent = 'Error - Try Again';
+        button.disabled = false;
+    }
+}
+
+// why we need custom syntax highlighting:
+// - improves code readability
+// - helps identify different language elements
+// - matches supercollider conventions
+Prism.languages.supercollider = {
+    'comment': {
+        pattern: /(\/\/.*)|(\/\*[\s\S]*?\*\/)/,
+        greedy: true
+    },
+    'string': {
+        pattern: /"(?:\\.|[^\\"])*"/,
+        greedy: true
+    },
+    'class-name': {
+        pattern: /\b[A-Z]\w*\b/,
+        greedy: true
+    },
+    'function': {
+        pattern: /\b[a-z]\w*(?=\s*\()/,
+        greedy: true
+    },
+    'keyword': /\b(?:arg|var|if|else|while|do|for|switch|case|return|nil|true|false|inf)\b/,
+    'number': /\b-?(?:0x[\da-f]+|\d*\.?\d+(?:e[+-]?\d+)?)\b/i,
+    'operator': /[-+*\/%=&|!<>^~?:]+/,
+    'punctuation': /[{}[\];(),.:]/
+};

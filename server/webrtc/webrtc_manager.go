@@ -36,16 +36,24 @@ type ICECandidateRequest struct {
 	} `json:"candidate"`
 }
 
-// why we need centralized ice configuration:
-// - server controls ice settings
-// - consistent across environments
-// - prevents client manipulation
+// why we need consistent ice credentials:
+// - must match turn server config
+// - ensures authentication works
+// - meets webrtc security requirements
+func getICECredentials() (string, string) {
+	// use same username as turn server
+	username := "dummy-username"
+	password := "c07f1c92982b4621af1d1a63dda5539c"
+	return username, password
+}
+
+// why we need flexible ice configuration:
+// - allows both direct and relay connections
+// - improves connection reliability
+// - reduces latency when possible
 func getICEServers() []webrtc.ICEServer {
-	// why we need turn server from env:
-	// - enables service discovery
-	// - supports container networking
-	// - matches docker-compose config
 	hostname := config.GetTurnServer()
+	username, password := getICECredentials()
 
 	return []webrtc.ICEServer{
 		{
@@ -53,8 +61,8 @@ func getICEServers() []webrtc.ICEServer {
 				fmt.Sprintf("stun:%s:3478", hostname),
 				fmt.Sprintf("turn:%s:3478", hostname),
 			},
-			Username:   "user",
-			Credential: "pass",
+			Username:   username,
+			Credential: password,
 		},
 	}
 }
@@ -66,10 +74,10 @@ func getICEServers() []webrtc.ICEServer {
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
 	config := webrtc.Configuration{
 		ICEServers:           getICEServers(),
-		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll, // Allow both direct and relay
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
-		ICECandidatePoolSize: 2,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
+		ICECandidatePoolSize: 4, // Increased for better candidate gathering
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -160,15 +168,15 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	sendAnswer(w, peerConnection.LocalDescription())
 }
 
-// why we need ecs-optimized timeouts:
-// - account for ALB latency
-// - handle container networking delays
-// - provide stability in cloud environment
+// why we need cloud-optimized timeouts:
+// - account for network latency
+// - handle various connection paths
+// - provide stability in diverse environments
 const (
-	iceDisconnectedTimeout = 30 * time.Second // Increased for ECS
-	iceFailedTimeout       = 45 * time.Second // Increased for ECS
-	iceKeepaliveInterval   = 2 * time.Second  // More frequent for stability
-	iceGatheringTimeout    = 15 * time.Second // Extended for cloud environment
+	iceDisconnectedTimeout = 45 * time.Second // Extended for more stability
+	iceFailedTimeout       = 60 * time.Second // Extended for more stability
+	iceKeepaliveInterval   = 1 * time.Second  // More frequent keepalive
+	iceGatheringTimeout    = 30 * time.Second // Extended for better gathering
 )
 
 // why we need connection state tracking:
@@ -329,13 +337,14 @@ func startSynthEngine(appSession *session.AppSession) error {
 func MonitorAudioPipeline(appSession *session.AppSession) {
 	appSession.MonitorDone = make(chan struct{})
 
-	// Monitor JACK connections with faster initial checks
+	// why we need enhanced monitoring:
+	// - detect and recover from connection issues
+	// - track audio pipeline health
+	// - provide detailed diagnostics
 	go func() {
-		// Start with fast checks for the first few seconds
 		fastTicker := time.NewTicker(3000 * time.Millisecond)
 		defer fastTicker.Stop()
 
-		// After 5 seconds, switch to slower checks
 		time.AfterFunc(5*time.Second, func() {
 			fastTicker.Stop()
 		})
@@ -343,22 +352,52 @@ func MonitorAudioPipeline(appSession *session.AppSession) {
 		slowTicker := time.NewTicker(5 * time.Second)
 		defer slowTicker.Stop()
 
+		var lastConnectionCheck time.Time
+		var consecutiveFailures int
+
 		for {
 			select {
 			case <-appSession.MonitorDone:
 				return
 			case <-fastTicker.C:
 				checkJACKConnections(appSession)
+				checkAudioPipelineHealth(appSession)
 			case <-slowTicker.C:
 				checkJACKConnections(appSession)
+				checkAudioPipelineHealth(appSession)
+
+				// Check WebRTC connection health
+				if appSession.PeerConnection != nil {
+					if time.Since(lastConnectionCheck) > 10*time.Second {
+						lastConnectionCheck = time.Now()
+
+						if state := appSession.PeerConnection.ICEConnectionState(); state == webrtc.ICEConnectionStateDisconnected {
+							consecutiveFailures++
+							log.Printf("[%s] ICE disconnected (failures: %d)", appSession.Id, consecutiveFailures)
+
+							if consecutiveFailures >= 3 {
+								log.Printf("[%s] Attempting connection recovery", appSession.Id)
+								go attemptConnectionRecovery(appSession)
+								consecutiveFailures = 0
+							}
+						} else if state == webrtc.ICEConnectionStateConnected {
+							consecutiveFailures = 0
+						}
+					}
+				}
 			}
 		}
 	}()
 
-	// Monitor WebRTC stats
+	// Monitor WebRTC stats with enhanced logging
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
+
+		var lastStats struct {
+			packetsLost int32
+			jitter      float64
+		}
 
 		for range ticker.C {
 			if appSession.PeerConnection != nil {
@@ -369,13 +408,68 @@ func MonitorAudioPipeline(appSession *session.AppSession) {
 						log.Printf("[%s] Outbound RTP: packets=%d bytes=%d",
 							appSession.Id, s.PacketsSent, s.BytesSent)
 					case *webrtc.InboundRTPStreamStats:
-						log.Printf("[%s] Inbound RTP: packets=%d bytes=%d jitter=%v",
-							appSession.Id, s.PacketsReceived, s.BytesReceived, s.Jitter)
+						packetLossDelta := s.PacketsLost - lastStats.packetsLost
+						jitterDelta := s.Jitter - lastStats.jitter
+
+						log.Printf("[%s] Inbound RTP: packets=%d bytes=%d jitter=%v packet_loss_delta=%d jitter_delta=%f",
+							appSession.Id, s.PacketsReceived, s.BytesReceived, s.Jitter, packetLossDelta, jitterDelta)
+
+						lastStats.packetsLost = s.PacketsLost
+						lastStats.jitter = s.Jitter
 					}
 				}
 			}
 		}
 	}()
+}
+
+// why we need pipeline health checks:
+// - detect audio pipeline issues early
+// - prevent silent failures
+// - maintain audio quality
+func checkAudioPipelineHealth(appSession *session.AppSession) {
+	if appSession.GStreamerPipeline != nil {
+		// Check if pipeline exists and restart if needed
+		if appSession.GStreamerPipeline.Pipeline == nil {
+			log.Printf("[%s] Pipeline not initialized, attempting restart", appSession.Id)
+			appSession.GStreamerPipeline.Stop()
+			appSession.GStreamerPipeline.Start()
+		}
+	}
+}
+
+// why we need connection recovery:
+// - handle temporary network issues
+// - maintain session stability
+// - prevent unnecessary disconnects
+func attemptConnectionRecovery(appSession *session.AppSession) {
+	log.Printf("[%s] Starting connection recovery", appSession.Id)
+
+	// Create new ICE candidates by setting local description again
+	if desc := appSession.PeerConnection.LocalDescription(); desc != nil {
+		if err := appSession.PeerConnection.SetLocalDescription(*desc); err != nil {
+			log.Printf("[%s] Failed to restart ICE: %v", appSession.Id, err)
+			return
+		}
+	}
+
+	// Wait for recovery or timeout
+	timeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			log.Printf("[%s] Connection recovery timed out", appSession.Id)
+			return
+		case <-ticker.C:
+			if appSession.PeerConnection.ICEConnectionState() == webrtc.ICEConnectionStateConnected {
+				log.Printf("[%s] Connection recovered successfully", appSession.Id)
+				return
+			}
+		}
+	}
 }
 
 func checkJACKConnections(appSession *session.AppSession) {
@@ -511,22 +605,18 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 	logWithTime("[WEBRTC] Creating peer connection for session: %s", sessionID)
 	s := webrtc.SettingEngine{}
 
-	// why we need ice configuration:
-	// - enables relay candidates
-	// - improves nat traversal
-	// - supports symmetric nat scenarios
 	s.SetIncludeLoopbackCandidate(false)
 	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
 	logWithTime("[ICE] Configured NAT and candidate settings")
 
-	// why we adjust candidate timing:
-	// - allows time for turn allocation
-	// - improves connection reliability
-	// - handles cloud networking delays
 	s.SetHostAcceptanceMinWait(500 * time.Millisecond)
 	s.SetSrflxAcceptanceMinWait(1000 * time.Millisecond)
 	s.SetRelayAcceptanceMinWait(2000 * time.Millisecond)
 	logWithTime("[ICE] Set candidate acceptance delays")
+
+	username, password := getICECredentials()
+	s.SetICECredentials(username, password)
+	logWithTime("[ICE] Set ICE credentials")
 
 	s.SetLite(false)
 	logWithTime("[ICE] ICE-Lite mode disabled for proper candidate gathering")
@@ -564,51 +654,13 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 	}
 	logWithTime("[WEBRTC] Created peer connection successfully")
 
-	// why we need dtls monitoring:
-	// - tracks handshake progress
-	// - identifies certificate issues
-	// - helps debug media flow problems
+	// Add connection state monitoring
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		logWithTime("[WEBRTC] Connection state changed to %s", state.String())
-		if state == webrtc.PeerConnectionStateConnecting {
-			go func() {
-				time.Sleep(5 * time.Second)
-				stats := pc.GetStats()
-				for _, stat := range stats {
-					if transport, ok := stat.(*webrtc.TransportStats); ok {
-						logWithTime("[DTLS] Transport state: %s", transport.DTLSState)
-						if transport.DTLSState == webrtc.DTLSTransportStateNew {
-							logWithTime("[DTLS][WARNING] Handshake not started after 5s")
-						}
-					}
-				}
-			}()
-		}
 	})
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		logWithTime("[ICE] Connection state changed to %s", state.String())
-		if state == webrtc.ICEConnectionStateChecking {
-			logWithTime("[ICE] Starting DTLS monitoring")
-		}
-	})
-
-	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
-		logWithTime("[ICE] Gathering state changed to: %s", state.String())
-		if state == webrtc.ICEGathererStateComplete {
-			stats := pc.GetStats()
-			var candidateCount int
-			for _, stat := range stats {
-				if candidatePair, ok := stat.(*webrtc.ICECandidatePairStats); ok && candidatePair.State == "succeeded" {
-					candidateCount++
-					logWithTime("[ICE] Successful candidate pair: local=%s remote=%s nominated=%v",
-						candidatePair.LocalCandidateID,
-						candidatePair.RemoteCandidateID,
-						candidatePair.Nominated)
-				}
-			}
-			logWithTime("[ICE] Found %d successful candidate pairs", candidateCount)
-		}
 	})
 
 	return pc, nil

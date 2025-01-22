@@ -79,10 +79,6 @@ services:
       # - webrtc uses dynamic ports
       # - media relay handled by turn server
       - 8080:8080
-    # networks:
-    #   awestruck-net:
-    #     aliases:
-    #       - webrtc-server
     depends_on:
       turn-server:
         condition: service_healthy
@@ -115,8 +111,8 @@ services:
       - "49152-49252:49152-49252/udp"
     environment:
       - AWESTRUCK_ENV=development
-      - TURN_USERNAME=user
-      - TURN_PASSWORD=pass
+      - TURN_USERNAME=dummy-username
+      - TURN_PASSWORD=c07f1c92982b4621af1d1a63dda5539c
       # why we need host ip for realm:
       # - matches real network topology
       # - enables proper ice candidate generation
@@ -137,19 +133,3 @@ services:
       timeout: 3s
       retries: 5
       start_period: 1s
-
-# why we need a custom network:
-# - simulates aws vpc
-# - enables service discovery
-# - tests container isolation
-# networks:
-#   awestruck-net:
-#     driver: bridge
-#     # why we need these options:
-#     # - enables proper dns resolution
-#     # - allows container name lookups
-#     # - simulates aws vpc dns
-#     driver_opts:
-#       com.docker.network.bridge.enable_icc: "true"
-#       com.docker.network.bridge.enable_ip_masquerade: "true"
-#       com.docker.network.bridge.host_binding_ipv4: "0.0.0.0"

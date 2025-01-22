@@ -456,10 +456,10 @@ class AwestruckInfrastructure extends TerraformStack {
     // - no media relay as audio goes through nlb
     const turnTaskDefinition = new EcsTaskDefinition(
       this,
-      "turn-task-definition",
+      "awestruck-turn-task-definition",
       {
         family: "turn-server",
-        cpu: "512",  // Reduced as no media relay needed
+        cpu: "512",
         memory: "1024",
         networkMode: "awsvpc",
         requiresCompatibilities: ["FARGATE"],
@@ -478,26 +478,14 @@ class AwestruckInfrastructure extends TerraformStack {
               { containerPort: 3479, hostPort: 3479, protocol: "tcp" }
             ],
             environment: [
-              { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
-              { name: "TURN_REALM", value: "awestruck.io" },
-              { name: "TURN_PORT", value: "3478" },
-              { name: "HEALTH_CHECK_PORT", value: "3479" },
               { name: "AWESTRUCK_ENV", value: "production" },
-              { name: "EXTERNAL_IP", value: webrtcNlb.dnsName },
-              // why we need turn credentials:
-              // - enables secure authentication for turn
-              // - matches client-side configuration
-              // - prevents unauthorized relay usage
-              { name: "TURN_USERNAME", value: "user" },
-              { name: "TURN_PASSWORD", value: "pass" }
+              { name: "SIGNALING_PORT", value: "3478" },
+              { name: "HEALTH_PORT", value: "3479" },
+              { name: "TURN_REALM", value: "awestruck.io" },
+              { name: "EXTERNAL_IP", value: "turn.awestruck.io" },
+              { name: "TURN_USERNAME", value: "dummy-username" },
+              { name: "TURN_PASSWORD", value: "c07f1c92982b4621af1d1a63dda5539c" }
             ],
-            // healthCheck: {
-            //   command: ["CMD-SHELL", "curl -f http://localhost:3479/health || exit 1"],
-            //   interval: 30,
-            //   timeout: 5,
-            //   retries: 3,
-            //   startPeriod: 60
-            // },
             logConfiguration: {
               logDriver: "awslogs",
               options: {
@@ -587,6 +575,59 @@ class AwestruckInfrastructure extends TerraformStack {
               stat: "Average",
             },
           },
+          // why we need webrtc metrics:
+          // - monitor connection quality
+          // - track ice connectivity
+          // - identify media issues
+          {
+            type: "metric",
+            x: 12,
+            y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              metrics: [
+                ["AWS/ECS", "CPUUtilization", "ServiceName", "webrtc-service", "ClusterName", "awestruck"],
+                [".", "MemoryUtilization", ".", ".", ".", "."]
+              ],
+              region: awsRegion,
+              title: "WebRTC Server Resources",
+              period: 300,
+              stat: "Average",
+            },
+          },
+          // why we need log filters:
+          // - quickly identify connection issues
+          // - track ice failures
+          // - monitor audio pipeline health
+          {
+            type: "log",
+            x: 0,
+            y: 12,
+            width: 24,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | filter @message like /ICE|WEBRTC|ERROR|Pipeline/ | stats count(*) as count by strcontains(@message, 'ERROR') as isError, ispresent(status) as hasStatus, status | sort count desc`,
+              region: awsRegion,
+              title: "WebRTC Critical Events",
+            },
+          },
+          // why we need turn metrics:
+          // - monitor stun/turn usage
+          // - track connection success rate
+          // - identify network issues
+          {
+            type: "log",
+            x: 0,
+            y: 18,
+            width: 24,
+            height: 6,
+            properties: {
+              query: `SOURCE '${turnLogGroup.name}' | filter @message like /STUN|TURN|ERROR|failed/ | stats count(*) as count by strcontains(@message, 'ERROR') as isError, ispresent(status) as hasStatus, status | sort count desc`,
+              region: awsRegion,
+              title: "TURN Critical Events",
+            },
+          }
         ],
       }),
     });
