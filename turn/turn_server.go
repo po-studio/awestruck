@@ -217,6 +217,11 @@ func (p *proxyProtocolConn) ReadFrom(b []byte) (n int, addr net.Addr, err error)
 		return
 	}
 
+	// Skip DTLS packets (content type 20-23)
+	if n > 0 && (b[0] >= 20 && b[0] <= 23) {
+		return
+	}
+
 	// Only process if we got enough data for a PROXY header
 	if n < 16 {
 		return
@@ -293,44 +298,16 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
-	// Create connection with proxy protocol and remote address tracking
-	proxyConn := newProxyProtocolConn(conn)
+	// Create enhanced connection without proxy protocol for relay connections
+	enhancedConn := newEnhancedPacketConn(conn, g.server)
 
-	// why we need enhanced connection monitoring:
-	// - tracks connection health
-	// - provides debugging information
-	// - helps identify networking issues
-	enhancedConn := newEnhancedPacketConn(proxyConn, g.server)
-	enhancedConn.onNewClientAddr = func(clientAddr *net.UDPAddr) {
-		if clientAddr == nil {
-			return
-		}
-		// Update the remote address tracker with the new client
-		proxyConn.tracker.mu.Lock()
-		localKey := fmt.Sprintf("%d", localAddr.Port)
-		proxyConn.tracker.localToRemote[localKey] = clientAddr
-		proxyConn.tracker.mu.Unlock()
-		logWithTime("[TURN] Updated remote address mapping: local_port=%d client=%v", localAddr.Port, clientAddr)
-	}
-
-	// Create relay address with remote address info if available
+	// Create relay address with external IP
 	relayAddr := &net.UDPAddr{
 		IP:   externalIP,
 		Port: localAddr.Port,
 	}
 
-	// Check if we have a remote address mapping and include it in the relay candidate
-	proxyConn.tracker.mu.RLock()
-	if remoteAddr, ok := proxyConn.tracker.localToRemote[fmt.Sprintf("%d", localAddr.Port)]; ok {
-		logWithTime("[TURN] Using remote address for relay candidate: %v", remoteAddr)
-		// Include the remote address in the relay candidate's raddr field
-		relayAddr.Zone = remoteAddr.IP.String()
-	}
-	proxyConn.tracker.mu.RUnlock()
-
-	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d",
-		g.relayIP, localAddr.Port, externalIP, localAddr.Port)
-
+	logWithTime("[TURN] Allocated relay %v (external: %v)", localAddr, relayAddr)
 	return enhancedConn, relayAddr, nil
 }
 
@@ -867,6 +844,7 @@ func (c *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error
 	if err == nil && addr != nil {
 		// Track DTLS handshake packets (they start with content type 22)
 		if n > 0 && p[0] == 22 {
+			logWithTime("[DTLS] Received handshake packet from %v", addr)
 			c.server.incrementDTLSHandshakePackets()
 
 			// Track new DTLS sessions
@@ -876,9 +854,12 @@ func (c *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error
 				c.activeSessions[sessionKey] = true
 				c.mu.Unlock()
 				c.server.handleNewSession()
+				logWithTime("[DTLS] Started new session for %v", addr)
 			} else {
 				c.mu.Unlock()
 			}
+		} else if n > 0 && p[0] >= 20 && p[0] <= 23 {
+			logWithTime("[DTLS] Received packet type %d from %v", p[0], addr)
 		}
 
 		if proxyConn, ok := c.PacketConn.(*proxyProtocolConn); ok {
