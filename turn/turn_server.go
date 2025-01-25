@@ -1,12 +1,15 @@
 package turn
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,6 +170,99 @@ func isPublicIP(ip net.IP) bool {
 	return true
 }
 
+// remoteAddressTracker maintains mappings between source addresses and real client addresses,
+// as well as local ports to remote addresses. This is critical for:
+// - preserving client IP information through the NLB proxy protocol
+// - ensuring ICE candidates have correct address information
+// - maintaining proper address relationships for WebRTC connections
+type remoteAddressTracker struct {
+	clientAddrs   map[string]*net.UDPAddr // maps source addr -> real client addr
+	localToRemote map[string]*net.UDPAddr // maps local port -> remote addr
+	mu            sync.RWMutex
+}
+
+func newRemoteAddressTracker() *remoteAddressTracker {
+	return &remoteAddressTracker{
+		clientAddrs:   make(map[string]*net.UDPAddr),
+		localToRemote: make(map[string]*net.UDPAddr),
+	}
+}
+
+// why we need proxy protocol support:
+// - preserves original client ip through nlb
+// - enables proper nat traversal
+// - maintains correct raddr in candidates
+type proxyProtocolConn struct {
+	net.PacketConn
+	tracker *remoteAddressTracker
+}
+
+// proxyProtocolConn wraps a UDP connection to handle proxy protocol headers
+// this enables proper client IP preservation when operating behind an NLB
+// and ensures WebRTC connections maintain correct address information
+func newProxyProtocolConn(conn net.PacketConn) *proxyProtocolConn {
+	return &proxyProtocolConn{
+		PacketConn: conn,
+		tracker:    newRemoteAddressTracker(),
+	}
+}
+
+// why we need proxy protocol parsing:
+// - extracts real client ip from proxy headers
+// - handles both v1 and v2 proxy protocol
+// - maintains backward compatibility
+func (p *proxyProtocolConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = p.PacketConn.ReadFrom(b)
+	if err != nil {
+		return
+	}
+
+	// Only process if we got enough data for a PROXY header
+	if n < 16 {
+		return
+	}
+
+	// Check for PROXY protocol v2 signature
+	if bytes.Equal(b[:12], []byte("PROXY TCP4 ")) {
+		// Parse v1 header
+		header := string(b[:n])
+		parts := strings.Split(header, " ")
+		if len(parts) >= 6 && parts[0] == "PROXY" {
+			clientIP := net.ParseIP(parts[2])
+			clientPort := parts[4]
+			if clientIP != nil {
+				p.tracker.mu.Lock()
+				clientAddr := &net.UDPAddr{
+					IP:   clientIP,
+					Port: atoi(clientPort),
+				}
+				p.tracker.clientAddrs[addr.String()] = clientAddr
+				if udpAddr, ok := addr.(*net.UDPAddr); ok {
+					localKey := fmt.Sprintf("%d", udpAddr.Port)
+					p.tracker.localToRemote[localKey] = clientAddr
+				}
+				p.tracker.mu.Unlock()
+				logWithTime("[PROXY] Parsed client address: %v:%s", clientIP, clientPort)
+			}
+		}
+	}
+
+	return
+}
+
+func (p *proxyProtocolConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+	return p.PacketConn.WriteTo(b, addr)
+}
+
+func (p *proxyProtocolConn) GetRealClientAddr(addr net.Addr) *net.UDPAddr {
+	p.tracker.mu.RLock()
+	defer p.tracker.mu.RUnlock()
+	if realAddr, ok := p.tracker.clientAddrs[addr.String()]; ok {
+		return realAddr
+	}
+	return nil
+}
+
 // why we need custom relay address generation:
 // - ensures turn server only binds to container ip
 // - advertises nlb ip to clients
@@ -179,16 +275,12 @@ type customRelayAddressGenerator struct {
 
 func (g *customRelayAddressGenerator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
 	logWithTime("[TURN] Allocating relay on %s", g.relayIP.String())
-	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:0", g.relayIP.String())) // Use port 0 for dynamic allocation
+	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:0", g.relayIP.String()))
 	if err != nil {
 		logWithTime("[TURN][ERROR] Failed to listen: %v", err)
 		return nil, nil, err
 	}
 
-	// why we need stable ip allocation:
-	// - ensures all ice candidates use same external ip
-	// - prevents connection failures from ip inconsistency
-	// - maintains stable relay endpoints for webrtc peers
 	g.addrManager.mu.RLock()
 	if g.addrManager.primaryIP == nil {
 		g.addrManager.mu.RUnlock()
@@ -199,18 +291,47 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 	externalIP := g.addrManager.primaryIP
 	g.addrManager.mu.RUnlock()
 
-	// Create enhanced connection with logging
-	enhancedConn := &enhancedPacketConn{
-		PacketConn: conn,
-		server:     g.server,
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	// Create connection with proxy protocol and remote address tracking
+	proxyConn := newProxyProtocolConn(conn)
+
+	// why we need enhanced connection monitoring:
+	// - tracks connection health
+	// - provides debugging information
+	// - helps identify networking issues
+	enhancedConn := newEnhancedPacketConn(proxyConn, g.server)
+	enhancedConn.onNewClientAddr = func(clientAddr *net.UDPAddr) {
+		if clientAddr == nil {
+			return
+		}
+		// Update the remote address tracker with the new client
+		proxyConn.tracker.mu.Lock()
+		localKey := fmt.Sprintf("%d", localAddr.Port)
+		proxyConn.tracker.localToRemote[localKey] = clientAddr
+		proxyConn.tracker.mu.Unlock()
+		logWithTime("[TURN] Updated remote address mapping: local_port=%d client=%v", localAddr.Port, clientAddr)
 	}
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d", g.relayIP, localAddr.Port, externalIP, localAddr.Port)
-	return enhancedConn, &net.UDPAddr{
+	// Create relay address with remote address info if available
+	relayAddr := &net.UDPAddr{
 		IP:   externalIP,
 		Port: localAddr.Port,
-	}, nil
+	}
+
+	// Check if we have a remote address mapping and include it in the relay candidate
+	proxyConn.tracker.mu.RLock()
+	if remoteAddr, ok := proxyConn.tracker.localToRemote[fmt.Sprintf("%d", localAddr.Port)]; ok {
+		logWithTime("[TURN] Using remote address for relay candidate: %v", remoteAddr)
+		// Include the remote address in the relay candidate's raddr field
+		relayAddr.Zone = remoteAddr.IP.String()
+	}
+	proxyConn.tracker.mu.RUnlock()
+
+	logWithTime("[TURN] Allocated relay: local=%v:%d external=%v:%d",
+		g.relayIP, localAddr.Port, externalIP, localAddr.Port)
+
+	return enhancedConn, relayAddr, nil
 }
 
 func (g *customRelayAddressGenerator) AllocateConn(network string, requestedPort int) (net.Conn, net.Addr, error) {
@@ -311,9 +432,7 @@ func NewTurnServer(config *Config) (*TurnServer, error) {
 	log.Printf("[TURN] Successfully created UDP listener: %v", udpListener.LocalAddr())
 
 	// Create a logging UDP listener
-	loggingListener := &enhancedPacketConn{
-		PacketConn: udpListener,
-	}
+	loggingListener := newEnhancedPacketConn(udpListener, server)
 
 	// Get the container IP for relay binding
 	relayIP, err := getContainerIP()
@@ -361,18 +480,17 @@ func NewTurnServer(config *Config) (*TurnServer, error) {
 
 	// Store credentials for auth handler
 	username := config.Credentials.Username
-	password := config.Credentials.Password
 	log.Printf("[TURN] Using credentials for user: %s", username)
 
 	s, err := turn.NewServer(turn.ServerConfig{
 		Realm: config.Realm,
 		AuthHandler: func(u string, realm string, srcAddr net.Addr) ([]byte, bool) {
 			log.Printf("[AUTH] Received auth request from %v for user: %s", srcAddr, u)
-			if u != username {
-				log.Printf("[AUTH] Unknown user: %s (expected: %s)", u, username)
+			if u != config.Credentials.Username {
+				log.Printf("[AUTH] Unknown user: %s (expected: %s)", u, config.Credentials.Username)
 				return nil, false
 			}
-			key := turn.GenerateAuthKey(u, realm, password)
+			key := turn.GenerateAuthKey(u, realm, config.Credentials.Password)
 			log.Printf("[AUTH] Generated key for user=%q realm=%q", u, realm)
 			return key, true
 		},
@@ -483,8 +601,197 @@ func (s *TurnServer) IsHealthy() bool {
 		log.Printf("[HEALTH] ❌ Unhealthy - server is nil or stopped")
 		return false
 	}
-	log.Printf("[HEALTH] ✓ Server is healthy")
-	return true
+
+	health := s.runHealthChecks()
+	udpListener, turnAlloc, stunBinding, nlbReachable, lastCheck := health.getStatus()
+	isHealthy := udpListener && turnAlloc && stunBinding && nlbReachable
+
+	if isHealthy {
+		logWithTime("[HEALTH] ✓ Server is healthy")
+	} else {
+		logWithTime("[HEALTH] ❌ Server is unhealthy:")
+		logWithTime("  - UDP Listener: %v", udpListener)
+		logWithTime("  - TURN Allocation: %v", turnAlloc)
+		logWithTime("  - STUN Binding: %v", stunBinding)
+		logWithTime("  - NLB Reachable: %v", nlbReachable)
+		logWithTime("  - Last Check: %v", lastCheck)
+	}
+
+	return isHealthy
+}
+
+// why we need comprehensive health checks:
+// - verifies all critical server components
+// - ensures proper nlb integration
+// - maintains service reliability
+type healthCheck struct {
+	mu           sync.RWMutex
+	udpListener  bool
+	turnAlloc    bool
+	stunBinding  bool
+	nlbReachable bool
+	lastCheck    time.Time
+}
+
+func (h *healthCheck) setStatus(field *bool, value bool) {
+	h.mu.Lock()
+	*field = value
+	h.mu.Unlock()
+}
+
+func (h *healthCheck) getStatus() (bool, bool, bool, bool, time.Time) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.udpListener, h.turnAlloc, h.stunBinding, h.nlbReachable, h.lastCheck
+}
+
+func (s *TurnServer) runHealthChecks() *healthCheck {
+	health := newHealthCheck()
+	health.mu.Lock()
+	health.lastCheck = time.Now()
+	health.mu.Unlock()
+
+	// Check UDP listener
+	if conn, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", s.signalingPort+1)); err == nil {
+		conn.Close()
+		health.setStatus(&health.udpListener, true)
+	}
+
+	// Check STUN binding
+	if err := s.checkSTUNBinding(); err == nil {
+		health.setStatus(&health.stunBinding, true)
+	}
+
+	// Check TURN allocation
+	if err := s.checkTURNAllocation(); err == nil {
+		health.setStatus(&health.turnAlloc, true)
+	}
+
+	// Check NLB reachability
+	if err := s.checkNLBReachability(); err == nil {
+		health.setStatus(&health.nlbReachable, true)
+	}
+
+	return health
+}
+
+// why we need stun binding check:
+// - verifies basic connectivity
+// - ensures address discovery works
+// - validates server responsiveness
+func (s *TurnServer) checkSTUNBinding() error {
+	conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	if err != nil {
+		return fmt.Errorf("failed to create UDP connection: %v", err)
+	}
+	defer conn.Close()
+
+	// Send STUN binding request
+	msg := []byte{0x00, 0x01, 0x00, 0x00, // STUN binding request
+		0x21, 0x12, 0xa4, 0x42, // Magic cookie
+		0x00, 0x00, 0x00, 0x00, // Transaction ID
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00}
+
+	_, err = conn.WriteTo(msg, &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: s.signalingPort,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send STUN binding request: %v", err)
+	}
+
+	// Wait for response
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	resp := make([]byte, 1024)
+	n, _, err := conn.ReadFrom(resp)
+	if err != nil {
+		return fmt.Errorf("failed to receive STUN binding response: %v", err)
+	}
+
+	// Verify STUN response
+	if n < 20 || resp[0] != 0x01 || resp[1] != 0x01 {
+		return fmt.Errorf("invalid STUN binding response")
+	}
+
+	return nil
+}
+
+// why we need turn allocation check:
+// - verifies relay functionality
+// - ensures proper authentication
+// - validates allocation lifecycle
+func (s *TurnServer) checkTURNAllocation() error {
+	conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	if err != nil {
+		return fmt.Errorf("failed to create UDP connection: %v", err)
+	}
+	defer conn.Close()
+
+	// Send TURN allocation request
+	msg := createTURNAllocateRequest()
+
+	_, err = conn.WriteTo(msg, &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: s.signalingPort,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send TURN allocation request: %v", err)
+	}
+
+	// Wait for response
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	resp := make([]byte, 1024)
+	n, _, err := conn.ReadFrom(resp)
+	if err != nil {
+		return fmt.Errorf("failed to receive TURN allocation response: %v", err)
+	}
+
+	// Verify TURN response
+	if n < 20 || resp[0] != 0x01 {
+		return fmt.Errorf("invalid TURN allocation response")
+	}
+
+	return nil
+}
+
+// why we need nlb reachability check:
+// - verifies aws infrastructure
+// - ensures proper load balancing
+// - validates external connectivity
+func (s *TurnServer) checkNLBReachability() error {
+	if s.config.Environment != "production" {
+		return nil // Skip in development
+	}
+
+	// Resolve NLB hostname
+	ips, err := net.LookupHost(s.config.ExternalIP)
+	if err != nil {
+		return fmt.Errorf("failed to resolve NLB hostname: %v", err)
+	}
+
+	// Try to connect to each IP
+	for _, ip := range ips {
+		conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", ip, s.signalingPort), time.Second)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+	}
+
+	return fmt.Errorf("failed to reach NLB")
+}
+
+// Helper function to create TURN allocation request
+func createTURNAllocateRequest() []byte {
+	return []byte{
+		0x00, 0x03, // TURN Allocate request
+		0x00, 0x00, // Message length
+		0x21, 0x12, 0xa4, 0x42, // Magic cookie
+		0x00, 0x00, 0x00, 0x00, // Transaction ID
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+	}
 }
 
 // why we need focused logging:
@@ -532,59 +839,95 @@ func (s *TurnServer) getActiveSessions() int {
 }
 
 // why we need enhanced packet connection:
-// - combines logging and cleanup
-// - tracks dtls and stun traffic
+// - provides connection monitoring
+// - tracks traffic patterns
+// - helps debug connectivity issues
 type enhancedPacketConn struct {
 	net.PacketConn
-	server *TurnServer
+	server          *TurnServer
+	onNewClientAddr func(*net.UDPAddr)
+	// why we need session tracking:
+	// - prevents duplicate session counting
+	// - ensures accurate metrics
+	// - helps debug connection issues
+	activeSessions map[string]bool
+	mu             sync.RWMutex
 }
 
-func (e *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	n, addr, err = e.PacketConn.ReadFrom(p)
-	if err != nil {
-		return n, addr, err
+func newEnhancedPacketConn(conn net.PacketConn, server *TurnServer) *enhancedPacketConn {
+	return &enhancedPacketConn{
+		PacketConn:     conn,
+		server:         server,
+		activeSessions: make(map[string]bool),
 	}
+}
 
-	// Check for DTLS handshake packets (first byte 20-63)
-	if n > 0 && p[0] >= 20 && p[0] <= 63 {
-		logWithTime("[TURN][DTLS] Received handshake packet type %d from %s", p[0], addr.String())
-		if e.server != nil {
-			e.server.incrementDTLSHandshakePackets()
-			// Record new session on ClientHello (type 22)
-			if p[0] == 22 {
-				e.server.incrementActiveSessions()
+func (c *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = c.PacketConn.ReadFrom(p)
+	if err == nil && addr != nil {
+		// Track DTLS handshake packets (they start with content type 22)
+		if n > 0 && p[0] == 22 {
+			c.server.incrementDTLSHandshakePackets()
+
+			// Track new DTLS sessions
+			sessionKey := addr.String()
+			c.mu.Lock()
+			if !c.activeSessions[sessionKey] {
+				c.activeSessions[sessionKey] = true
+				c.mu.Unlock()
+				c.server.handleNewSession()
+			} else {
+				c.mu.Unlock()
 			}
 		}
-	}
 
-	// Log STUN messages too
-	if n >= 20 { // Minimum STUN message size
-		messageType := uint16(p[0])<<8 | uint16(p[1])
-		if messageType&0xC000 == 0 { // STUN messages
-			logWithTime("[STUN] Received message type: 0x%04x from %v", messageType, addr)
+		if proxyConn, ok := c.PacketConn.(*proxyProtocolConn); ok {
+			if clientAddr := proxyConn.GetRealClientAddr(addr); clientAddr != nil && c.onNewClientAddr != nil {
+				c.onNewClientAddr(clientAddr)
+			}
 		}
+		logWithTime("[TURN] Received %d bytes from %v", n, addr)
 	}
-
-	return n, addr, err
+	return
 }
 
-func (e *enhancedPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	// Check for DTLS handshake packets before writing
-	if len(p) > 0 && p[0] >= 20 && p[0] <= 63 {
-		logWithTime("[TURN][DTLS] Sending handshake packet type %d to %s", p[0], addr.String())
+func (c *enhancedPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	n, err = c.PacketConn.WriteTo(p, addr)
+	if err == nil && addr != nil {
+		logWithTime("[TURN] Sent %d bytes to %v", n, addr)
 	}
-
-	// Log STUN messages too
-	if len(p) >= 20 { // Minimum STUN message size
-		messageType := uint16(p[0])<<8 | uint16(p[1])
-		if messageType&0xC000 == 0 { // STUN message
-			logWithTime("[STUN] Sent message type: 0x%04x to %v", messageType, addr)
-		}
-	}
-
-	return e.PacketConn.WriteTo(p, addr)
+	return
 }
 
-func (e *enhancedPacketConn) Close() error {
-	return e.PacketConn.Close()
+func (c *enhancedPacketConn) Close() error {
+	// End all active sessions before closing
+	c.mu.Lock()
+	for sessionKey := range c.activeSessions {
+		delete(c.activeSessions, sessionKey)
+		c.server.handleSessionEnd()
+	}
+	c.mu.Unlock()
+	return c.PacketConn.Close()
+}
+
+// Helper function to convert string to int
+func atoi(s string) int {
+	i, _ := strconv.Atoi(s)
+	return i
+}
+
+// why we need session tracking:
+// - monitors active dtls sessions
+// - helps identify connection issues
+// - provides metrics for monitoring
+func (s *TurnServer) handleNewSession() {
+	s.incrementActiveSessions()
+}
+
+func (s *TurnServer) handleSessionEnd() {
+	s.decrementActiveSessions()
+}
+
+func newHealthCheck() *healthCheck {
+	return &healthCheck{}
 }

@@ -538,119 +538,95 @@ class AwestruckInfrastructure extends TerraformStack {
       dashboardName: "awestruck-services",
       dashboardBody: JSON.stringify({
         widgets: [
-          // why we need webrtc connection monitoring:
-          // - track ice connection states
-          // - identify connection failures
-          // - monitor dtls handshake issues
+          // why we need connection failure analysis:
+          // - track exact timing of failures
+          // - identify failure patterns
+          // - correlate with ice/dtls events
           {
             type: "log",
             x: 0,
             y: 0,
-            width: 12,
+            width: 24,
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @message like /\\[ICE\\].*(?:failed|disconnected|timeout)|\\[DTLS\\].*(?:failed|timeout)|\\[WebRTC\\].*(?:failed|closed)/ | 
-                parse @message "*] *" as type, event |
-                stats count(*) as count by type, event, bin(5m) |
-                sort count desc`,
+                filter @timestamp > ago(1h) |
+                filter @message like /\\[ICE\\]|\\[WebRTC\\]|\\[DTLS\\]/ |
+                sort @timestamp asc |
+                display @timestamp, @message`,
               region: awsRegion,
-              title: "WebRTC Connection Issues",
+              title: "Connection Event Timeline",
               view: "table"
             },
           },
-          // why we need audio pipeline monitoring:
-          // - detect audio processing issues
-          // - track jack xruns
-          // - identify pipeline failures
-          {
-            type: "log",
-            x: 12,
-            y: 0,
-            width: 12,
-            height: 6,
-            properties: {
-              query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @message like /\\[AUDIO\\].*(?:ERROR|WARN|ALERT)|\\[GST\\].*ERROR|JackEngine::XRun/ |
-                parse @message "*] *" as component, event |
-                stats count(*) as count by component, event, bin(5m) |
-                sort count desc`,
-              region: awsRegion,
-              title: "Audio Pipeline Issues",
-              view: "table"
-            },
-          },
-          // why we need turn server monitoring:
-          // - track stun/turn request success
-          // - monitor authentication issues
-          // - identify relay problems
+          // why we need ice candidate analysis:
+          // - verify relay candidates are generated
+          // - check candidate gathering process
+          // - identify networking issues
           {
             type: "log",
             x: 0,
             y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @timestamp > ago(1h) |
+                filter @message like /Processing candidate/ |
+                parse @message "*] Processing candidate: protocol=* address=* port=* priority=* type=*" as prefix, protocol, address, port, priority, type |
+                stats count(*) as count by type, protocol |
+                sort count desc`,
+              region: awsRegion,
+              title: "ICE Candidate Distribution",
+              view: "table"
+            },
+          },
+          // why we need audio pipeline tracing:
+          // - track audio flow from source to sink
+          // - identify where audio stops
+          // - debug pipeline configuration
+          {
+            type: "log",
+            x: 12,
+            y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @timestamp > ago(1h) |
+                filter @message like /\\[AUDIO\\]|\\[GST\\]|Pipeline|JACK/ |
+                sort @timestamp asc |
+                display @timestamp, @message`,
+              region: awsRegion,
+              title: "Audio Pipeline Events",
+              view: "table"
+            },
+          },
+          // why we need turn server diagnostics:
+          // - verify turn authentication
+          // - track relay allocation
+          // - monitor turn connectivity
+          {
+            type: "log",
+            x: 0,
+            y: 12,
             width: 12,
             height: 6,
             properties: {
               query: `SOURCE '${turnLogGroup.name}' | 
-                filter @message like /Processing .* candidate|Authentication|ERROR/ |
-                parse @message "*] *" as type, event |
-                stats count(*) as count by type, event, bin(5m) |
-                sort count desc`,
+                filter @timestamp > ago(1h) |
+                filter @message like /Authentication|allocation|ERROR/ |
+                sort @timestamp asc |
+                display @timestamp, @message`,
               region: awsRegion,
-              title: "TURN Server Activity",
+              title: "TURN Server Events",
               view: "table"
             },
           },
-          // why we need rtp stats monitoring:
-          // - track packet loss and jitter
-          // - monitor audio quality
-          // - identify network issues
-          {
-            type: "log",
-            x: 12,
-            y: 6,
-            width: 12,
-            height: 6,
-            properties: {
-              query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @message like /Inbound RTP|Outbound RTP/ |
-                parse @message "*packets=* bytes=* jitter=* packet_loss_delta=*" as type, packets, bytes, jitter, loss |
-                stats avg(jitter) as avg_jitter, sum(loss) as total_loss by bin(1m) |
-                sort avg_jitter desc`,
-              region: awsRegion,
-              title: "RTP Statistics",
-              view: "line"
-            },
-          },
-          // why we need resource monitoring:
-          // - track cpu/memory usage
-          // - identify resource constraints
-          // - monitor service health
-          {
-            type: "metric",
-            x: 0,
-            y: 12,
-            width: 12,
-            height: 6,
-            properties: {
-              metrics: [
-                ["AWS/ECS", "CPUUtilization", "ServiceName", "webrtc-service", "ClusterName", "awestruck"],
-                [".", "MemoryUtilization", ".", ".", ".", "."],
-                ["AWS/ECS", "CPUUtilization", "ServiceName", "turn-service", "ClusterName", "awestruck"],
-                [".", "MemoryUtilization", ".", ".", ".", "."]
-              ],
-              region: awsRegion,
-              title: "Service Resources",
-              period: 60,
-              stat: "Average",
-              view: "timeSeries",
-              stacked: false
-            },
-          },
-          // why we need session monitoring:
-          // - track active connections
-          // - monitor session lifecycle
-          // - identify cleanup issues
+          // why we need session correlation:
+          // - track individual session lifecycle
+          // - correlate events across components
+          // - identify session-specific issues
           {
             type: "log",
             x: 12,
@@ -659,12 +635,34 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @message like /\\[SESSION\\]|\\[CLEANUP\\]/ |
-                parse @message "*] *" as type, event |
-                stats count(*) as count by type, event, bin(5m) |
-                sort count desc`,
+                filter @timestamp > ago(1h) |
+                parse @message "*sid_*_*]*" as prefix, session_id, suffix |
+                stats count(*) as event_count by session_id |
+                sort event_count desc |
+                limit 10`,
               region: awsRegion,
               title: "Session Activity",
+              view: "table"
+            },
+          },
+          // why we need error correlation:
+          // - identify cascading failures
+          // - track error sequences
+          // - find root causes
+          {
+            type: "log",
+            x: 0,
+            y: 18,
+            width: 24,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                filter @timestamp > ago(1h) |
+                filter @message like /ERROR|WARN|failed|disconnected/ |
+                sort @timestamp asc |
+                display @timestamp, @message`,
+              region: awsRegion,
+              title: "Error Timeline",
               view: "table"
             },
           }

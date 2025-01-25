@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -55,11 +56,28 @@ func getICEServers() []webrtc.ICEServer {
 	hostname := config.GetTurnServer()
 	username, password := getICECredentials()
 
+	// why we need environment-specific ice config:
+	// - development can use direct connections
+	// - production forces relay for reliability
+	// - maintains security in both environments
+	if os.Getenv("AWESTRUCK_ENV") == "development" {
+		return []webrtc.ICEServer{
+			{
+				URLs: []string{
+					fmt.Sprintf("stun:%s:3478", hostname),
+					fmt.Sprintf("turn:%s:3478?transport=udp", hostname),
+				},
+				Username:   username,
+				Credential: password,
+			},
+		}
+	}
+
+	// Production configuration: force TURN relay
 	return []webrtc.ICEServer{
 		{
 			URLs: []string{
-				fmt.Sprintf("stun:%s:3478", hostname),
-				fmt.Sprintf("turn:%s:3478", hostname),
+				fmt.Sprintf("turn:%s:3478?transport=udp", hostname),
 			},
 			Username:   username,
 			Credential: password,
@@ -72,12 +90,21 @@ func getICEServers() []webrtc.ICEServer {
 // - ensures consistent settings
 // - enables environment-specific config
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
+	// why we need environment-specific transport policy:
+	// - development allows all candidate types
+	// - production forces relay for reliability
+	// - maintains consistent behavior per environment
+	transportPolicy := webrtc.ICETransportPolicyRelay
+	if os.Getenv("AWESTRUCK_ENV") == "development" {
+		transportPolicy = webrtc.ICETransportPolicyAll
+	}
+
 	config := webrtc.Configuration{
 		ICEServers:           getICEServers(),
-		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
+		ICETransportPolicy:   transportPolicy,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		ICECandidatePoolSize: 4, // Increased for better candidate gathering
+		ICECandidatePoolSize: 1,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
