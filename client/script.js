@@ -135,7 +135,25 @@ async function getICEConfig() {
     if (!response.ok) {
         throw new Error('Failed to fetch ICE configuration');
     }
-    return response.json();
+    const config = await response.json();
+    
+    // Force relay mode and ensure it's not overridden
+    config.iceTransportPolicy = 'relay';
+    
+    // Add detailed logging of ICE configuration
+    console.log('[ICE] Configuration:', {
+        iceTransportPolicy: config.iceTransportPolicy,
+        iceServers: config.iceServers.map(server => ({
+            urls: server.urls,
+            username: server.username,
+            hasCredential: !!server.credential
+        })),
+        bundlePolicy: config.bundlePolicy,
+        rtcpMuxPolicy: config.rtcpMuxPolicy,
+        iceCandidatePoolSize: config.iceCandidatePoolSize
+    });
+    
+    return config;
 }
 
 // why we need webrtc setup:
@@ -149,38 +167,81 @@ async function setupWebRTC() {
     pc = new RTCPeerConnection(config);
     console.log('[WebRTC] Created peer connection with config:', config);
 
-    // why we need dtls monitoring:
-    // - tracks handshake progress
-    // - identifies certificate issues
-    // - helps debug media flow problems
-    let dtlsTimeout = null;
+    // why we need enhanced dtls monitoring:
+    // - tracks handshake progress in detail
+    // - helps identify connection issues
+    // - provides timing information
     const monitorDTLS = () => {
         console.log('[DTLS] Starting monitoring');
-        if (dtlsTimeout) clearTimeout(dtlsTimeout);
-        dtlsTimeout = setTimeout(() => {
+        const startTime = Date.now();
+        
+        const checkDTLS = async () => {
+            const stats = await pc.getStats();
+            let dtlsFound = false;
+            
+            stats.forEach(stat => {
+                if (stat.type === 'transport') {
+                    dtlsFound = true;
+                    console.log('[DTLS] Transport stats:', {
+                        state: stat.dtlsState,
+                        timeSinceStart: (Date.now() - startTime) / 1000,
+                        localCertificate: !!stat.localCertificateId,
+                        remoteCertificate: !!stat.remoteCertificateId,
+                        selectedCandidatePairId: stat.selectedCandidatePairId
+                    });
+                    
+                    if (stat.dtlsState === 'new') {
+                        console.warn('[DTLS] Still in new state after', (Date.now() - startTime) / 1000, 'seconds');
+                    }
+                }
+                
+                if (stat.type === 'candidate-pair') {
+                    console.log('[ICE] Candidate pair:', {
+                        state: stat.state,
+                        nominated: stat.nominated,
+                        bytesSent: stat.bytesSent,
+                        bytesReceived: stat.bytesReceived,
+                        totalRoundTripTime: stat.totalRoundTripTime
+                    });
+                }
+            });
+            
+            if (!dtlsFound) {
+                console.warn('[DTLS] No transport stats found');
+            }
+            
+            // Continue monitoring if still in 'new' state
+            if (pc.connectionState === 'checking' || pc.connectionState === 'connecting') {
+                setTimeout(checkDTLS, 1000);
+            }
+        };
+        
+        checkDTLS();
+    };
+
+    // why we need connection state tracking:
+    // - provides detailed state transitions
+    // - helps debug connection issues
+    // - monitors ice and dtls progress
+    pc.onconnectionstatechange = () => {
+        console.log('[WebRTC] Connection state changed:', {
+            connectionState: pc.connectionState,
+            iceConnectionState: pc.iceConnectionState,
+            iceGatheringState: pc.iceGatheringState,
+            signalingState: pc.signalingState
+        });
+        
+        if (pc.connectionState === 'failed') {
+            console.error('[WebRTC] Connection failed - gathering diagnostic info');
             pc.getStats().then(stats => {
                 stats.forEach(stat => {
-                    if (stat.type === 'transport') {
-                        console.log('[DTLS] State:', stat.dtlsState);
-                        if (stat.dtlsState === 'new') {
-                            console.warn('[DTLS] Handshake not started after 5s');
-                        }
+                    if (stat.type === 'candidate-pair' || stat.type === 'transport') {
+                        console.log(`[WebRTC] ${stat.type} stats:`, stat);
                     }
                 });
             });
-        }, 5000);
+        }
     };
-
-    // Add early media handling
-    let audioTransceiver = pc.addTransceiver('audio', {
-        direction: 'recvonly',
-        streams: [new MediaStream()]
-    });
-    console.log('[WebRTC] Added audio transceiver:', audioTransceiver);
-
-    // Start DTLS monitoring when ICE starts checking
-    setupConnectionMonitoring(pc, monitorDTLS);
-    startUnifiedMonitoring();
 
     // why we need audio track handling:
     // - sets up audio playback when track is received
@@ -215,10 +276,15 @@ async function setupWebRTC() {
                     outputLatency: audioContext.outputLatency
                 });
                 
-                const source = audioContext.createMediaStreamSource(new MediaStream([event.track]));
+                const mediaStream = new MediaStream([event.track]);
+                const source = audioContext.createMediaStreamSource(mediaStream);
                 const analyser = audioContext.createAnalyser();
                 analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.8;
+                
+                // Connect source to both analyser and destination
                 source.connect(analyser);
+                source.connect(audioContext.destination);
                 
                 // Monitor audio levels using analyser
                 const dataArray = new Float32Array(analyser.frequencyBinCount);
@@ -226,13 +292,29 @@ async function setupWebRTC() {
                     if (audioContext && audioContext.state === 'running') {
                         analyser.getFloatTimeDomainData(dataArray);
                         let maxLevel = 0;
+                        let rms = 0;
+                        
+                        // Calculate both peak and RMS levels
                         for (let i = 0; i < dataArray.length; i++) {
                             maxLevel = Math.max(maxLevel, Math.abs(dataArray[i]));
+                            rms += dataArray[i] * dataArray[i];
                         }
-                        console.log('[AUDIO] Current level:', maxLevel.toFixed(4));
+                        rms = Math.sqrt(rms / dataArray.length);
+                        
+                        console.log('[AUDIO][LEVELS]', {
+                            peak: maxLevel.toFixed(4),
+                            rms: rms.toFixed(4),
+                            frequency: analyser.context.sampleRate,
+                            contextTime: audioContext.currentTime,
+                            trackState: {
+                                enabled: event.track.enabled,
+                                muted: event.track.muted,
+                                readyState: event.track.readyState
+                            }
+                        });
                     }
                 };
-                audioLevelsInterval = setInterval(checkAudioLevels, 500); // Reduced from 1s to 500ms for more responsive level monitoring
+                audioLevelsInterval = setInterval(checkAudioLevels, 500);
             } catch (error) {
                 console.error('[AUDIO] Failed to setup audio processing:', error);
             }
@@ -253,6 +335,150 @@ async function setupWebRTC() {
     pc.onicegatheringstatechange = () => {
         console.log('[ICE] Gathering state changed:', pc.iceGatheringState);
     };
+
+    // why we need enhanced ice monitoring:
+    // - track connectivity check patterns
+    // - detect stalled checks early
+    // - identify relay issues
+    pc.oniceconnectionstatechange = () => {
+        const state = {
+            iceConnectionState: pc.iceConnectionState,
+            connectionState: pc.connectionState,
+            signalingState: pc.signalingState,
+            time: new Date().toISOString()
+        };
+        console.log('[ICE] Connection state changed:', state);
+        
+        // Start detailed monitoring on checking state
+        if (pc.iceConnectionState === 'checking') {
+            monitorICEProgress();
+        }
+    };
+
+    // why we need detailed ice progress monitoring:
+    // - track individual connectivity checks
+    // - measure request/response patterns
+    // - detect relay issues
+    const monitorICEProgress = async () => {
+        console.log('[ICE] Starting detailed progress monitoring');
+        const startTime = Date.now();
+        let lastRequestCount = 0;
+        let noResponseDuration = 0;
+        
+        const checkProgress = async () => {
+            const stats = await pc.getStats();
+            let foundActivePair = false;
+            
+            stats.forEach(stat => {
+                if (stat.type === 'candidate-pair') {
+                    console.log('[ICE] Candidate pair check:', {
+                        state: stat.state,
+                        requestsSent: stat.requestsSent,
+                        responsesReceived: stat.responsesReceived,
+                        requestsReceived: stat.requestsReceived,
+                        responsesSent: stat.responsesSent,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent,
+                        lastRequestTimestamp: stat.lastRequestTimestamp,
+                        lastResponseTimestamp: stat.lastResponseTimestamp,
+                        totalRoundTripTime: stat.totalRoundTripTime,
+                        elapsedTime: (Date.now() - startTime) / 1000
+                    });
+
+                    if (stat.state === 'in-progress' || stat.state === 'waiting') {
+                        foundActivePair = true;
+                        
+                        // Check if we're sending requests but not getting responses
+                        if (stat.requestsSent > lastRequestCount && stat.responsesReceived === 0) {
+                            noResponseDuration += 1;
+                            if (noResponseDuration >= 5) {
+                                console.warn('[ICE] No responses received for 5 seconds despite sending requests');
+                            }
+                        } else {
+                            noResponseDuration = 0;
+                        }
+                        lastRequestCount = stat.requestsSent;
+                    }
+                }
+            });
+            
+            // Continue monitoring while we have active pairs
+            if (foundActivePair && pc.iceConnectionState === 'checking') {
+                setTimeout(checkProgress, 1000);
+            } else {
+                console.log('[ICE] Progress monitoring ended:', {
+                    finalState: pc.iceConnectionState,
+                    duration: (Date.now() - startTime) / 1000
+                });
+            }
+        };
+        
+        await checkProgress();
+    };
+
+    // why we need comprehensive connection monitoring:
+    // - tracks both ice and dtls state
+    // - provides timing information
+    // - helps identify stalled connections
+    const monitorConnection = async () => {
+        console.log('[CONNECTION] Starting comprehensive monitoring');
+        const startTime = Date.now();
+        
+        const check = async () => {
+            const stats = await pc.getStats();
+            let foundTransport = false;
+            let foundCandidatePair = false;
+            
+            stats.forEach(stat => {
+                if (stat.type === 'transport') {
+                    foundTransport = true;
+                    console.log('[TRANSPORT] Stats:', {
+                        dtlsState: stat.dtlsState,
+                        selectedCandidatePairId: stat.selectedCandidatePairId,
+                        bytesReceived: stat.bytesReceived,
+                        bytesSent: stat.bytesSent,
+                        dtlsRole: stat.dtlsRole,
+                        elapsedTime: (Date.now() - startTime) / 1000
+                    });
+                }
+                
+                if (stat.type === 'candidate-pair') {
+                    foundCandidatePair = true;
+                    console.log('[ICE] Pair stats:', {
+                        state: stat.state,
+                        nominated: stat.nominated,
+                        bytesSent: stat.bytesSent,
+                        bytesReceived: stat.bytesReceived,
+                        totalRoundTripTime: stat.totalRoundTripTime,
+                        currentRoundTripTime: stat.currentRoundTripTime,
+                        availableOutgoingBitrate: stat.availableOutgoingBitrate,
+                        requestsReceived: stat.requestsReceived,
+                        requestsSent: stat.requestsSent,
+                        responsesReceived: stat.responsesReceived,
+                        responsesSent: stat.responsesSent,
+                        consentRequestsSent: stat.consentRequestsSent
+                    });
+                }
+            });
+            
+            if (!foundTransport) {
+                console.warn('[TRANSPORT] No transport stats found');
+            }
+            if (!foundCandidatePair) {
+                console.warn('[ICE] No candidate pair stats found');
+            }
+            
+            // Continue monitoring while connection is being established
+            if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'failed') {
+                setTimeout(check, 1000);
+            }
+        };
+        
+        await check();
+    };
+
+    // Start monitoring immediately after PC creation
+    monitorConnection();
 }
 
 async function sendOffer(offer) {
@@ -714,75 +940,6 @@ function setupAudioElement(track) {
             console.log('[AUDIO][DEBUG] Audio context time:', audioContext.currentTime);
         }
     });
-    
-    // Set up audio processing and monitoring
-    try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        console.log('[AUDIO][CONTEXT] Created AudioContext:', {
-            sampleRate: audioContext.sampleRate,
-            state: audioContext.state,
-            baseLatency: audioContext.baseLatency,
-            outputLatency: audioContext.outputLatency,
-            destination: {
-                maxChannelCount: audioContext.destination.maxChannelCount,
-                numberOfInputs: audioContext.destination.numberOfInputs,
-                numberOfOutputs: audioContext.destination.numberOfOutputs
-            }
-        });
-        
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.8;
-        
-        // Connect source to both analyser and destination
-        source.connect(analyser);
-        source.connect(audioContext.destination);
-        
-        // Enhanced audio level monitoring
-        const dataArray = new Float32Array(analyser.frequencyBinCount);
-        let silentFrames = 0;
-        const MAX_SILENT_FRAMES = 50; // 25 seconds at 500ms interval
-        
-        audioLevelsInterval = setInterval(() => {
-            if (audioContext && audioContext.state === 'running') {
-                analyser.getFloatTimeDomainData(dataArray);
-                let maxLevel = 0;
-                let rms = 0;
-                
-                // Calculate both peak and RMS levels
-                for (let i = 0; i < dataArray.length; i++) {
-                    maxLevel = Math.max(maxLevel, Math.abs(dataArray[i]));
-                    rms += dataArray[i] * dataArray[i];
-                }
-                rms = Math.sqrt(rms / dataArray.length);
-                
-                console.log('[AUDIO][LEVELS]', {
-                    peak: maxLevel.toFixed(4),
-                    rms: rms.toFixed(4),
-                    frequency: analyser.context.sampleRate,
-                    contextTime: audioContext.currentTime
-                });
-
-                // Detect prolonged silence
-                if (maxLevel < 0.01) {
-                    silentFrames++;
-                    if (silentFrames >= MAX_SILENT_FRAMES) {
-                        console.warn('[AUDIO][WARN] Prolonged silence detected');
-                        // Try to recover audio pipeline
-                        audioContext.resume().then(() => {
-                            console.log('[AUDIO][RECOVERY] Resumed audio context after silence');
-                        });
-                        silentFrames = 0;
-                    }
-                } else {
-                    silentFrames = 0;
-                }
-            }
-        }, 500);
-    } catch (error) {
-        console.error('[AUDIO][ERROR] Failed to setup audio processing:', error);
-    }
 
     const playPromise = audioElement.play();
     if (playPromise !== undefined) {

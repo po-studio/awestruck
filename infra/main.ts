@@ -487,8 +487,8 @@ class AwestruckInfrastructure extends TerraformStack {
               // - required for webrtc security
               { name: "TURN_REALM", value: "awestruck.io" },
               { name: "EXTERNAL_IP", value: "turn.awestruck.io" },
-              { name: "TURN_USERNAME", value: "dummy-username" },
-              { name: "TURN_PASSWORD", value: "c07f1c92982b4621af1d1a63dda5539c" }
+              { name: "TURN_USERNAME", value: "awestruck_user" },
+              { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" }
             ],
             logConfiguration: {
               logDriver: "awslogs",

@@ -104,12 +104,12 @@ func LoadConfig() (*Config, error) {
 	// Load credentials with defaults
 	cfg.Credentials.Username = os.Getenv("TURN_USERNAME")
 	if cfg.Credentials.Username == "" {
-		cfg.Credentials.Username = "dummy-username"
+		cfg.Credentials.Username = "awestruck_user"
 		log.Printf("[CONFIG] Using default TURN username: %s", cfg.Credentials.Username)
 	}
 	cfg.Credentials.Password = os.Getenv("TURN_PASSWORD")
 	if cfg.Credentials.Password == "" {
-		cfg.Credentials.Password = "c07f1c92982b4621af1d1a63dda5539c"
+		cfg.Credentials.Password = "verySecurePassword1234567890abcdefghijklmnop"
 		log.Printf("[CONFIG] Using default TURN password: %s", cfg.Credentials.Password)
 	}
 

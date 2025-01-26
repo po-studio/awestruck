@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Test</title>
+    <!-- why we need htmx:
+    - enables dynamic server updates
+    - simplifies ajax requests
+    - integrates with session management -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        #startButton {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #startButton:hover {
+            background: #45a049;
+        }
+        #status {
+            padding: 6px 12px;
+            border-radius: 4px;
+            background: #eee;
+            font-size: 14px;
+        }
+        .logs {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        #logs {
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            height: 600px;
+            overflow-y: auto;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>WebRTC Audio Test</h2>
+            <div class="controls">
+                <button id="startButton">Start</button>
+                <div id="status">Disconnected</div>
+            </div>
+        </div>
+        <div class="logs">
+            <pre id="logs"></pre>
+        </div>
+    </div>
+    <script src="script2.js"></script>
+</body>
+</html> 

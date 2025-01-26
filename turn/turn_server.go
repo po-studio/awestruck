@@ -3,9 +3,11 @@ package turn
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -30,6 +32,10 @@ type TurnServer struct {
 	environment   string
 	config        *Config
 	dtlsStats     *dtlsStats
+	containerIP   string
+	primaryIP     string
+	relays        map[string]*RelayConfig
+	conn          *net.UDPConn
 }
 
 // why we need credential management:
@@ -279,8 +285,10 @@ type customRelayAddressGenerator struct {
 }
 
 func (g *customRelayAddressGenerator) AllocatePacketConn(network string, requestedPort int) (net.PacketConn, net.Addr, error) {
-	logWithTime("[TURN] Allocating relay on %s", g.relayIP.String())
-	conn, err := net.ListenPacket(network, fmt.Sprintf("%s:0", g.relayIP.String()))
+	logWithTime("[TURN] Allocating relay with external IP: %s", g.addrManager.primaryIP.String())
+
+	// bind to all interfaces for relay allocation
+	conn, err := net.ListenPacket(network, "0.0.0.0:0")
 	if err != nil {
 		logWithTime("[TURN][ERROR] Failed to listen: %v", err)
 		return nil, nil, err
@@ -297,17 +305,45 @@ func (g *customRelayAddressGenerator) AllocatePacketConn(network string, request
 	g.addrManager.mu.RUnlock()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	logWithTime("[TURN] Created relay listener: local=%v", localAddr)
 
-	// Create enhanced connection without proxy protocol for relay connections
-	enhancedConn := newEnhancedPacketConn(conn, g.server)
+	// Create connection with proxy protocol and remote address tracking
+	proxyConn := newProxyProtocolConn(conn)
 
-	// Create relay address with external IP
+	// why we need enhanced connection monitoring:
+	// - tracks connection health
+	// - provides debugging information
+	// - helps identify networking issues
+	enhancedConn := newEnhancedPacketConn(proxyConn, g.server)
+	enhancedConn.onNewClientAddr = func(clientAddr *net.UDPAddr) {
+		if clientAddr == nil {
+			return
+		}
+		// Update the remote address tracker with the new client
+		proxyConn.tracker.mu.Lock()
+		localKey := fmt.Sprintf("%d", localAddr.Port)
+		proxyConn.tracker.localToRemote[localKey] = clientAddr
+		proxyConn.tracker.mu.Unlock()
+		logWithTime("[TURN] Updated remote address mapping: local_port=%d client=%v", localAddr.Port, clientAddr)
+	}
+
+	// Create relay address with external IP but using the local port
 	relayAddr := &net.UDPAddr{
 		IP:   externalIP,
 		Port: localAddr.Port,
 	}
+	logWithTime("[TURN] Allocated relay: local=%v external=%v", localAddr, relayAddr)
 
-	logWithTime("[TURN] Allocated relay %v (external: %v)", localAddr, relayAddr)
+	// Store relay configuration
+	relayKey := relayAddr.String()
+	g.server.relays[relayKey] = &RelayConfig{
+		LocalIP:    "0.0.0.0",
+		ExternalIP: externalIP.String(),
+		Port:       localAddr.Port,
+	}
+	logWithTime("[TURN] Stored relay config: key=%s local_ip=0.0.0.0 external_ip=%s port=%d",
+		relayKey, externalIP.String(), localAddr.Port)
+
 	return enhancedConn, relayAddr, nil
 }
 
@@ -327,23 +363,66 @@ func (g *customRelayAddressGenerator) Validate() error {
 }
 
 // why we need container ip detection:
-// - ensures proper binding in fargate
-// - handles different network setups
-// - provides reliable local addressing
+// - handles docker port mapping scenarios
+// - ensures consistent ip usage in development and production
+// - maintains reliable turn relay addressing
 func getContainerIP() (net.IP, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	// use ECS metadata only in production
+	if os.Getenv("AWESTRUCK_ENV") == "production" {
+		ip, err := getECSContainerIP()
+		if err == nil {
+			log.Printf("[TURN] Using ECS container IP: %s", ip.String())
+			return ip, nil
+		}
+		return nil, fmt.Errorf("failed to get ECS container IP in production: %v", err)
+	}
+
+	// in development, use the same IP as external IP for consistency
+	externalIP := os.Getenv("EXTERNAL_IP")
+	if externalIP == "" {
+		externalIP = "127.0.0.1" // default to localhost if not set
+	}
+
+	ip := net.ParseIP(externalIP)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid external IP: %s", externalIP)
+	}
+
+	log.Printf("[TURN] Development mode: using external IP %s for container IP", ip.String())
+	return ip, nil
+}
+
+// why we need ecs metadata detection:
+// - supports aws ecs container deployments
+// - provides reliable container ip detection
+// - handles task networking configuration
+func getECSContainerIP() (net.IP, error) {
+	// ECS container metadata endpoint
+	resp, err := http.Get("http://169.254.170.2/v2/metadata")
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect container IP: %v", err)
+		return nil, fmt.Errorf("ECS metadata endpoint not available: %v", err)
 	}
-	defer conn.Close()
+	defer resp.Body.Close()
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	if ipv4 := localAddr.IP.To4(); ipv4 != nil {
-		log.Printf("[TURN] Using container IP: %s", ipv4.String())
-		return ipv4, nil
+	var metadata struct {
+		Networks []struct {
+			IPv4Addresses []string `json:"IPv4Addresses"`
+		} `json:"Networks"`
 	}
 
-	return nil, fmt.Errorf("no valid IPv4 address found")
+	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+		return nil, fmt.Errorf("failed to decode ECS metadata: %v", err)
+	}
+
+	if len(metadata.Networks) > 0 && len(metadata.Networks[0].IPv4Addresses) > 0 {
+		if ip := net.ParseIP(metadata.Networks[0].IPv4Addresses[0]); ip != nil {
+			if ipv4 := ip.To4(); ipv4 != nil {
+				return ipv4, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no IPv4 address found in ECS metadata")
 }
 
 // why we need periodic dns resolution:
@@ -392,6 +471,22 @@ func NewTurnServer(config *Config) (*TurnServer, error) {
 		environment:   config.Environment,
 		config:        config,
 		dtlsStats:     newDTLSStats(),
+		relays:        make(map[string]*RelayConfig),
+	}
+
+	// detect container IP and set external IP consistently
+	containerIP, err := getContainerIP()
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect container IP: %v", err)
+	}
+	server.containerIP = containerIP.String()
+
+	// in development, use container IP as external IP for consistency
+	if config.Environment != "production" {
+		server.primaryIP = containerIP.String()
+		config.ExternalIP = containerIP.String() // ensure config is consistent
+	} else {
+		server.primaryIP = config.ExternalIP
 	}
 
 	log.Printf("[TURN] Starting server with realm: %q, port: %d", config.Realm, config.SignalingPort)
@@ -411,13 +506,6 @@ func NewTurnServer(config *Config) (*TurnServer, error) {
 	// Create a logging UDP listener
 	loggingListener := newEnhancedPacketConn(udpListener, server)
 
-	// Get the container IP for relay binding
-	relayIP, err := getContainerIP()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get container IP: %v", err)
-	}
-	log.Printf("[TURN] Using container IP for relay binding: %v", relayIP)
-
 	// Initialize external IP manager
 	externalAddr := config.ExternalIP
 	if externalAddr == "" {
@@ -425,7 +513,7 @@ func NewTurnServer(config *Config) (*TurnServer, error) {
 			return nil, fmt.Errorf("EXTERNAL_IP must be set in production")
 		}
 		// For development, use the container's IP as the external address
-		externalAddr = relayIP.String()
+		externalAddr = containerIP.String()
 		log.Printf("[TURN] Development mode: using container IP %s as external address", externalAddr)
 	}
 
@@ -475,7 +563,7 @@ func NewTurnServer(config *Config) (*TurnServer, error) {
 			{
 				PacketConn: loggingListener,
 				RelayAddressGenerator: &customRelayAddressGenerator{
-					relayIP:     relayIP,
+					relayIP:     containerIP,
 					addrManager: externalIPManager,
 					server:      server,
 				},
@@ -842,29 +930,44 @@ func newEnhancedPacketConn(conn net.PacketConn, server *TurnServer) *enhancedPac
 func (c *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	n, addr, err = c.PacketConn.ReadFrom(p)
 	if err == nil && addr != nil {
-		// Track DTLS handshake packets (they start with content type 22)
-		if n > 0 && p[0] == 22 {
-			logWithTime("[DTLS] Received handshake packet from %v", addr)
-			c.server.incrementDTLSHandshakePackets()
+		// Log packet type and details
+		if n > 0 {
+			if p[0] == 22 {
+				logWithTime("[DTLS] Received handshake packet from %v", addr)
+				c.server.incrementDTLSHandshakePackets()
 
-			// Track new DTLS sessions
-			sessionKey := addr.String()
-			c.mu.Lock()
-			if !c.activeSessions[sessionKey] {
-				c.activeSessions[sessionKey] = true
-				c.mu.Unlock()
-				c.server.handleNewSession()
-				logWithTime("[DTLS] Started new session for %v", addr)
+				// Track new DTLS sessions
+				sessionKey := addr.String()
+				c.mu.Lock()
+				if !c.activeSessions[sessionKey] {
+					c.activeSessions[sessionKey] = true
+					c.mu.Unlock()
+					c.server.handleNewSession()
+					logWithTime("[DTLS] Started new session for %v", addr)
+				} else {
+					c.mu.Unlock()
+				}
+			} else if p[0] >= 20 && p[0] <= 23 {
+				logWithTime("[DTLS] Received packet type %d from %v", p[0], addr)
+			} else if n >= 20 && p[0] == 0x00 && p[1] == 0x01 {
+				logWithTime("[STUN] Received binding request from %v", addr)
+			} else if n >= 20 && p[0] == 0x00 && p[1] == 0x03 {
+				logWithTime("[TURN] Received allocate request from %v", addr)
+			} else if n >= 20 && p[0] == 0x00 && p[1] == 0x08 {
+				logWithTime("[TURN] Received create permission request from %v", addr)
+			} else if n >= 20 && p[0] == 0x00 && p[1] == 0x09 {
+				logWithTime("[TURN] Received channel bind request from %v", addr)
+			} else if n >= 4 && p[0] == 0x40 {
+				logWithTime("[TURN] Received data indication from %v", addr)
 			} else {
-				c.mu.Unlock()
+				logWithTime("[PACKET] Received unknown packet type 0x%02x from %v", p[0], addr)
 			}
-		} else if n > 0 && p[0] >= 20 && p[0] <= 23 {
-			logWithTime("[DTLS] Received packet type %d from %v", p[0], addr)
 		}
 
 		if proxyConn, ok := c.PacketConn.(*proxyProtocolConn); ok {
 			if clientAddr := proxyConn.GetRealClientAddr(addr); clientAddr != nil && c.onNewClientAddr != nil {
 				c.onNewClientAddr(clientAddr)
+				logWithTime("[PROXY] Real client address: %v", clientAddr)
 			}
 		}
 		logWithTime("[TURN] Received %d bytes from %v", n, addr)
@@ -875,6 +978,24 @@ func (c *enhancedPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error
 func (c *enhancedPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	n, err = c.PacketConn.WriteTo(p, addr)
 	if err == nil && addr != nil {
+		// Log packet type and details for outgoing packets
+		if n > 0 {
+			if p[0] >= 20 && p[0] <= 23 {
+				logWithTime("[DTLS] Sent packet type %d to %v", p[0], addr)
+			} else if n >= 20 && p[0] == 0x01 && p[1] == 0x01 {
+				logWithTime("[STUN] Sent binding success response to %v", addr)
+			} else if n >= 20 && p[0] == 0x01 && p[1] == 0x03 {
+				logWithTime("[TURN] Sent allocate success response to %v", addr)
+			} else if n >= 20 && p[0] == 0x01 && p[1] == 0x08 {
+				logWithTime("[TURN] Sent create permission success response to %v", addr)
+			} else if n >= 20 && p[0] == 0x01 && p[1] == 0x09 {
+				logWithTime("[TURN] Sent channel bind success response to %v", addr)
+			} else if n >= 4 && p[0] == 0x40 {
+				logWithTime("[TURN] Sent data indication to %v", addr)
+			} else {
+				logWithTime("[PACKET] Sent unknown packet type 0x%02x to %v", p[0], addr)
+			}
+		}
 		logWithTime("[TURN] Sent %d bytes to %v", n, addr)
 	}
 	return
@@ -911,4 +1032,14 @@ func (s *TurnServer) handleSessionEnd() {
 
 func newHealthCheck() *healthCheck {
 	return &healthCheck{}
+}
+
+// why we need relay configuration:
+// - tracks local and external addresses for each relay
+// - ensures consistent ip usage across the turn server
+// - maintains mapping between container and external ips
+type RelayConfig struct {
+	LocalIP    string
+	ExternalIP string
+	Port       int
 }

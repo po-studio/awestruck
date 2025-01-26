@@ -19,12 +19,15 @@ func NewRouter() *mux.Router {
 	router.HandleFunc("/generate-synth", synth.GenerateSynth).Methods("POST")
 	router.HandleFunc("/synth-code", webrtc.HandleSynthCode).Methods("GET")
 	router.HandleFunc("/config", webrtc.HandleConfig).Methods("GET")
+	router.HandleFunc("/turn/permission", webrtc.HandleTURNPermission).Methods("POST")
+	router.HandleFunc("/log", webrtc.HandleClientLog).Methods("POST")
 	router.PathPrefix("/").Handler(serveStatic("./client/"))
 	return router
 }
 
 func serveHome(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "./client/index.html")
+	// http.ServeFile(w, r, "./client/index.html")
+	http.ServeFile(w, r, "./client/index2.html")
 }
 
 func serveStatic(path string) http.Handler {

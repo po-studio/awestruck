@@ -12,45 +12,57 @@ version: '3.8'
 x-host-ip: &host_ip
   ${HOST_IP:-$(./scripts/get_host_ip.sh)}
 
+# why we need multiple networks:
+# - simulates aws vpc networking
+# - enables service isolation
+# - replicates load balancer setup
+networks:
+  frontend:
+    name: frontend
+  backend:
+    name: backend
+
 services:
-  # why we need a webrtc service:
-  # - handles audio synthesis and streaming
+  # why we need nginx:
+  # - simulates aws application load balancer
+  # - handles ssl termination
+  # - provides consistent domain routing
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/certs:/etc/nginx/certs
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - webrtc-server
+      - turn-server
+
+  # why we need webrtc-server:
+  # - handles audio synthesis
   # - manages webrtc connections
-  # - provides api endpoints
+  # - streams real-time audio
   webrtc-server:
-    platform: linux/arm64
     build:
       context: .
       dockerfile: Dockerfile
-      platforms:
-        - linux/arm64
-    # why we need host networking:
-    # - enables direct access to network interfaces
-    # - required for proper ice candidate generation
-    # - simplifies nat traversal in development
-    network_mode: host
+    # why we need specific volume mounts:
+    # - preserves built binary in /app
+    # - enables live development of client files
+    # - allows supercollider file updates
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
       - ./client:/app/client
-      - ./supercollider/src:/app/supercollider/src
-      - ./supercollider/synthdefs:/app/supercollider/synthdefs
-    shm_size: 1g
-    security_opt:
-      - seccomp:unconfined
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-      stack:
-        soft: 67108864
-        hard: 67108864
-      rtprio: 99
-    # why we need webrtc server configuration:
-    # - handles audio synthesis and streaming
-    # - manages webrtc connections
-    # - communicates with turn server
+      - ./supercollider:/app/supercollider
+      - ./server:/app/server
     environment:
       - AWESTRUCK_ENV=development
+      - TURN_SERVER=turn.localhost
+      - TURN_USERNAME=awestruck_user
+      - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
       - JACK_NO_AUDIO_RESERVATION=1
       - JACK_PORT_MAX=128
       - GST_DEBUG=2
@@ -58,78 +70,45 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
       - GST_BUFFER_SIZE=4194304
-      # why we need optimized jack settings:
-      # - reduces audio xruns
-      # - improves real-time performance
-      # - balances latency and stability
       - JACK_PERIOD_SIZE=1024
       - JACK_PERIODS=2
       - JACK_PRIORITY=95
       - JACK_REALTIME_PRIORITY=95
       - JACK_TIMEOUT=2000
       - JACK_BUFFER_SIZE=2048
-      # why we need host ip for turn server:
-      # - enables proper nat traversal
-      # - simulates production environment
-      # - allows relay candidates to work
-      - TURN_SERVER=${HOST_IP:-$(./scripts/get_host_ip.sh)}
     ports:
-      # why we need these ports:
-      # - web/api traffic only
-      # - webrtc uses dynamic ports
-      # - media relay handled by turn server
-      - 8080:8080
+      - "8080:8080"
+    networks:
+      - backend
     depends_on:
-      turn-server:
-        condition: service_healthy
+      - turn-server
 
-  # why we need a turn service:
-  # - provides both stun and turn functionality
-  # - enables nat traversal for webrtc
-  # - improves connection reliability
+  # why we need turn-server:
+  # - provides consistent turn setup locally
+  # - enables testing of ice candidates
+  # - mirrors aws turn configuration
   turn-server:
     build:
       context: .
-      dockerfile: Dockerfile.turn
-    platform: linux/arm64
-    # why we need host networking:
-    # - enables direct access to network interfaces
-    # - required for proper ice candidate generation
-    # - simplifies nat traversal in development
-    network_mode: host
+      dockerfile: Dockerfile.turn2
+    # why we need bridge networking for turn:
+    # - mirrors aws vpc networking
+    # - enables proper service discovery
+    # - maintains network isolation
+    networks:
+      - backend
     ports:
-      # why we need these ports:
-      # - stun/turn signaling (3478/udp)
-      # - health checks (3479/tcp)
-      # - dynamic ports for media relay
-      - 3478:3478/udp
-      - 3479:3479/tcp
-      # why we need port range exposure:
-      # - allows dynamic port allocation
-      # - enables concurrent connections
-      # - handled by pion/turn library
+      - "3478:3478/udp"
+      - "3479:3479/tcp"
       - "49152-49252:49152-49252/udp"
     environment:
       - AWESTRUCK_ENV=development
-      - TURN_USERNAME=dummy-username
-      - TURN_PASSWORD=c07f1c92982b4621af1d1a63dda5539c
-      # why we need host ip for realm:
-      # - matches real network topology
+      - TURN_REALM=localhost
+      # why we need host's actual ip for turn:
+      # - required by pion turn implementation
+      # - ensures browser compatibility
       # - enables proper ice candidate generation
-      # - required for webrtc connectivity
-      - TURN_REALM=${HOST_IP:-$(./scripts/get_host_ip.sh)}
-      - EXTERNAL_IP=${HOST_IP:-$(./scripts/get_host_ip.sh)}
-      # why we need port configuration:
-      # - ensures consistent port usage
-      # - matches webrtc settings
-      # - enables proper routing
-      - SIGNALING_PORT=3478
-      - HEALTH_PORT=3479
-    volumes:
-      - ./turn:/app/turn
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3479/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 1s
+      - PUBLIC_IP=${HOST_IP:-$(./scripts/get_host_ip.sh)}
+      - USERS=awestruck_user=verySecurePassword1234567890abcdefghijklmnop
+      - MIN_PORT=49152
+      - MAX_PORT=49252 

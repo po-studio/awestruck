@@ -15,7 +15,7 @@ ECR_WEBRTC_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_WEB
 ECR_TURN_REPO = po-studio/awestruck/services/turn
 ECR_TURN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_TURN_REPO)
 
-.PHONY: build build-turn up down test-generate-synth aws-login aws-push aws-push-turn deploy-all deploy-infra build-all
+.PHONY: build build-turn up down test-generate-synth aws-login aws-push aws-push-turn deploy-all deploy-infra build-all setup setup-ssl setup-hosts clean-ssl dev
 
 # ---------------------------------------
 # local dev only
@@ -130,3 +130,61 @@ build-all: build build-turn
 # - maintains build cache across deployments
 # - deploys infrastructure after images are ready
 deploy-all: build-all aws-push aws-push-turn deploy-infra
+
+# why we need phony targets:
+# - prevents conflicts with files
+# - ensures targets always run
+# - improves makefile clarity
+.PHONY: setup setup-ssl setup-hosts clean-ssl dev
+
+# why we need setup dependencies:
+# - ensures complete environment configuration
+# - handles ssl and hosts in correct order
+# - provides single command setup
+setup: setup-ssl setup-hosts
+
+# why we need ssl setup:
+# - enables https for local development
+# - matches production ssl termination
+# - required for webrtc security
+setup-ssl:
+	@echo "Setting up SSL certificates..."
+	@mkdir -p nginx/certs
+	@if [ ! -f nginx/certs/localhost.crt ]; then \
+		openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+		-keyout nginx/certs/localhost.key \
+		-out nginx/certs/localhost.crt \
+		-subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
+		-addext "subjectAltName=DNS:localhost,DNS:turn.localhost"; \
+		echo "SSL certificates generated successfully."; \
+	else \
+		echo "SSL certificates already exist."; \
+	fi
+
+# why we need hosts setup:
+# - enables local domain resolution
+# - simulates aws dns setup
+# - required for turn server discovery
+setup-hosts:
+	@echo "Setting up /etc/hosts entries..."
+	@if ! grep -q "turn.localhost" /etc/hosts; then \
+		echo "Adding turn.localhost to /etc/hosts..."; \
+		echo "127.0.0.1 turn.localhost" | sudo tee -a /etc/hosts; \
+	else \
+		echo "turn.localhost already in /etc/hosts"; \
+	fi
+
+# why we need ssl cleanup:
+# - enables certificate regeneration
+# - removes old certificates
+# - helps troubleshoot ssl issues
+clean-ssl:
+	@echo "Cleaning SSL certificates..."
+	@rm -rf nginx/certs
+
+# why we need dev environment:
+# - starts all required services
+# - ensures proper initialization
+# - simplifies local development
+dev: setup
+	docker-compose up --build

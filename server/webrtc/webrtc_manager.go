@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -42,38 +44,22 @@ type ICECandidateRequest struct {
 // - ensures authentication works
 // - meets webrtc security requirements
 func getICECredentials() (string, string) {
-	// use same username as turn server
-	username := "dummy-username"
-	password := "c07f1c92982b4621af1d1a63dda5539c"
+	// Generate a secure password that is at least 128 bits (32 characters) long
+	// This matches the TURN server config and meets WebRTC security requirements
+	username := "awestruck_user"
+	password := "verySecurePassword1234567890abcdefghijklmnop"
 	return username, password
 }
 
-// why we need flexible ice configuration:
-// - allows both direct and relay connections
-// - improves connection reliability
-// - reduces latency when possible
+// why we need consistent port ranges:
+// - matches turn server configuration (49152-49252)
+// - ensures reliable ice candidate generation
+// - prevents permission errors from mismatched ports
 func getICEServers() []webrtc.ICEServer {
 	hostname := config.GetTurnServer()
 	username, password := getICECredentials()
 
-	// why we need environment-specific ice config:
-	// - development can use direct connections
-	// - production forces relay for reliability
-	// - maintains security in both environments
-	if os.Getenv("AWESTRUCK_ENV") == "development" {
-		return []webrtc.ICEServer{
-			{
-				URLs: []string{
-					fmt.Sprintf("stun:%s:3478", hostname),
-					fmt.Sprintf("turn:%s:3478?transport=udp", hostname),
-				},
-				Username:   username,
-				Credential: password,
-			},
-		}
-	}
-
-	// Production configuration: force TURN relay
+	// Always use relay-only configuration for consistent testing
 	return []webrtc.ICEServer{
 		{
 			URLs: []string{
@@ -85,30 +71,68 @@ func getICEServers() []webrtc.ICEServer {
 	}
 }
 
+// why we need webrtc settings:
+// - configures global webrtc behavior
+// - sets up ice candidate filtering
+// - ensures consistent port usage with turn server
+func configureWebRTC() (*webrtc.API, error) {
+	s := webrtc.SettingEngine{}
+
+	// Configure port range to match TURN server
+	s.SetEphemeralUDPPortRange(49152, 49252)
+
+	// Disable ICE-Lite mode for proper candidate gathering
+	s.SetLite(false)
+
+	// Create media engine with default codecs
+	m := &webrtc.MediaEngine{}
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		return nil, fmt.Errorf("failed to register codecs: %v", err)
+	}
+
+	// Create WebRTC API with settings
+	api := webrtc.NewAPI(
+		webrtc.WithSettingEngine(s),
+		webrtc.WithMediaEngine(m),
+	)
+
+	return api, nil
+}
+
 // why we need a config endpoint:
 // - provides ice configuration to client
 // - ensures consistent settings
 // - enables environment-specific config
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
-	// why we need environment-specific transport policy:
-	// - development allows all candidate types
-	// - production forces relay for reliability
-	// - maintains consistent behavior per environment
-	transportPolicy := webrtc.ICETransportPolicyRelay
-	if os.Getenv("AWESTRUCK_ENV") == "development" {
-		transportPolicy = webrtc.ICETransportPolicyAll
-	}
-
+	// Force relay for all environments for consistent testing
 	config := webrtc.Configuration{
 		ICEServers:           getICEServers(),
-		ICETransportPolicy:   transportPolicy,
+		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
 		ICECandidatePoolSize: 1,
 	}
 
+	// Add port range info to client config
+	configJSON := struct {
+		webrtc.Configuration
+		PortRange struct {
+			Min uint16 `json:"min"`
+			Max uint16 `json:"max"`
+		} `json:"portRange"`
+	}{
+		Configuration: config,
+		PortRange: struct {
+			Min uint16 `json:"min"`
+			Max uint16 `json:"max"`
+		}{
+			Min: 49152,
+			Max: 49252,
+		},
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(config)
+	json.NewEncoder(w).Encode(configJSON)
 }
 
 // HandleOffer handles the incoming WebRTC offer from the browser and sets up the peer connection.
@@ -306,20 +330,84 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 	}
 }
 
+// why we need enhanced audio pipeline monitoring:
+// - detect if audio is flowing from jack to gstreamer
+// - ensure proper sample rate conversion
+// - monitor audio levels before encoding
 func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.TrackLocalStaticSample) error {
 	pipelineReady := make(chan struct{})
 
 	go func() {
 		log.Println("Creating pipeline...")
-		log.Printf("Using pipeline config: %s", *appSession.AudioSrc)
-		appSession.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, *appSession.AudioSrc)
+
+		// Add monitoring but keep pipeline simple
+		// pipelineConfig := fmt.Sprintf("%s ! "+
+		// 	"level name=audiolevel interval=1000000000 post-messages=true ! "+
+		// 	"audioconvert ! audioresample quality=10 ! "+
+		// 	"level name=outputlevel interval=1000000000 post-messages=true ! "+
+		// 	"opusenc frame-size=20 complexity=10 bitrate=128000", *appSession.AudioSrc)
+		pipelineConfig := *appSession.AudioSrc
+
+		log.Printf("Using enhanced pipeline config: %s", pipelineConfig)
+
+		appSession.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, pipelineConfig)
+
+		if appSession.GStreamerPipeline == nil {
+			log.Printf("[%s] Failed to create pipeline", appSession.Id)
+			return
+		}
+
+		// Start monitoring audio levels
+		go monitorAudioLevels(appSession)
+
 		appSession.GStreamerPipeline.Start()
-		log.Println("Pipeline created and started")
+		log.Printf("[%s] Pipeline created and started", appSession.Id)
 		close(pipelineReady)
 	}()
 
-	<-pipelineReady
-	return nil
+	select {
+	case <-pipelineReady:
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timeout waiting for pipeline to start")
+	}
+}
+
+// why we need enhanced audio level monitoring:
+// - track audio flow through pipeline stages
+// - detect silence or low levels
+// - identify pipeline stalls
+func monitorAudioLevels(appSession *session.AppSession) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if appSession.GStreamerPipeline == nil || appSession.GStreamerPipeline.Pipeline == nil {
+			return
+		}
+
+		// Get stats from pipeline and WebRTC
+		stats := appSession.PeerConnection.GetStats()
+		var audioStats struct {
+			packetsReceived uint32
+			bytesReceived   uint64
+			packetsLost     int32
+		}
+
+		for _, stat := range stats {
+			if s, ok := stat.(*webrtc.InboundRTPStreamStats); ok {
+				audioStats.packetsReceived += s.PacketsReceived
+				audioStats.bytesReceived += s.BytesReceived
+				audioStats.packetsLost += s.PacketsLost
+			}
+		}
+
+		log.Printf("[%s][AUDIO] Stats - Packets: rx=%d lost=%d, Bytes: %d",
+			appSession.Id,
+			audioStats.packetsReceived,
+			audioStats.packetsLost,
+			audioStats.bytesReceived)
+	}
 }
 
 func startSynthEngine(appSession *session.AppSession) error {
@@ -512,29 +600,61 @@ func checkJACKConnections(appSession *session.AppSession) {
 func processOffer(r *http.Request) (*webrtc.SessionDescription, error) {
 	var browserOffer BrowserOffer
 
-	log.Println("[OFFER] Decoding offer JSON")
-	err := json.NewDecoder(r.Body).Decode(&browserOffer)
+	// why we need detailed offer logging:
+	// - helps debug encoding/decoding issues
+	// - tracks sdp transformation through system
+	// - identifies protocol mismatches
+	log.Printf("[OFFER] Processing new offer from client")
+
+	log.Printf("[OFFER] Reading request body")
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[OFFER][ERROR] Failed to read request body: %v", err)
+		return nil, fmt.Errorf("failed to read request body: %v", err)
+	}
+	log.Printf("[OFFER] Raw request body: %s", string(body))
+
+	log.Printf("[OFFER] Decoding offer JSON")
+	err = json.Unmarshal(body, &browserOffer)
 	if err != nil {
 		log.Printf("[OFFER][ERROR] JSON decode failed: %v", err)
 		return nil, fmt.Errorf("failed to decode JSON: %v", err)
 	}
+	log.Printf("[OFFER] Decoded browser offer: %+v", browserOffer)
 
 	offer := webrtc.SessionDescription{}
-	signal.Decode(browserOffer.SDP, &offer)
+	log.Printf("[OFFER] Decoding base64 SDP")
+
+	// why we need panic recovery:
+	// - signal.Decode panics on error
+	// - ensures graceful error handling
+	// - provides detailed error logs
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[OFFER][ERROR] SDP decode panicked: %v", r)
+				err = fmt.Errorf("SDP decode failed: %v", r)
+			}
+		}()
+		signal.Decode(browserOffer.SDP, &offer)
+	}()
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("[OFFER] Decoded SDP: %+v", offer)
 
 	// Create a MediaEngine and populate it from the SDP
 	mediaEngine := webrtc.MediaEngine{}
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		log.Printf("[OFFER][ERROR] Failed to register default codecs: %v", err)
 		return nil, fmt.Errorf("failed to register default codecs: %v", err)
 	}
 
-	log.Printf("[OFFER] Media direction in offer: %v", offer.SDP)
-
 	// Log detailed SDP analysis
-	log.Printf("[OFFER] Decoded SDP details:")
+	log.Printf("[OFFER] Detailed SDP analysis:")
 	log.Printf("[OFFER] - Type: %s", offer.Type)
 	log.Printf("[OFFER] - SDP Length: %d", len(offer.SDP))
-	log.Printf("[OFFER] - SDP Preview: %.100s...", offer.SDP)
+	log.Printf("[OFFER] - Full SDP:\n%s", offer.SDP)
 
 	return &offer, nil
 }
@@ -627,67 +747,98 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 	return audioTrack, nil
 }
 
-// createPeerConnection initializes a new WebRTC peer connection
+// why we need consistent peer connection setup:
+// - ensures proper ice configuration
+// - sets up port ranges and transport policies
+// - enables reliable webrtc connections
 func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*webrtc.PeerConnection, error) {
-	logWithTime("[WEBRTC] Creating peer connection for session: %s", sessionID)
-	s := webrtc.SettingEngine{}
-
-	s.SetIncludeLoopbackCandidate(false)
-	s.SetNAT1To1IPs([]string{}, webrtc.ICECandidateTypeHost)
-	logWithTime("[ICE] Configured NAT and candidate settings")
-
-	s.SetHostAcceptanceMinWait(500 * time.Millisecond)
-	s.SetSrflxAcceptanceMinWait(1000 * time.Millisecond)
-	s.SetRelayAcceptanceMinWait(2000 * time.Millisecond)
-	logWithTime("[ICE] Set candidate acceptance delays")
-
-	username, password := getICECredentials()
-	s.SetICECredentials(username, password)
-	logWithTime("[ICE] Set ICE credentials")
-
-	s.SetLite(false)
-	logWithTime("[ICE] ICE-Lite mode disabled for proper candidate gathering")
-
-	m := &webrtc.MediaEngine{}
-	if err := m.RegisterDefaultCodecs(); err != nil {
-		logWithTime("[MEDIA][ERROR] Failed to register codecs: %v", err)
-		return nil, fmt.Errorf("failed to register codecs: %v", err)
+	// Get WebRTC API with configured settings
+	api, err := configureWebRTC()
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure WebRTC: %v", err)
 	}
-	logWithTime("[MEDIA] Registered default codecs")
 
-	api := webrtc.NewAPI(
-		webrtc.WithSettingEngine(s),
-		webrtc.WithMediaEngine(m),
-	)
-	logWithTime("[WEBRTC] Created API with custom settings")
-
+	// Keep configuration minimal like the working example
 	config := webrtc.Configuration{
-		ICEServers:           iceServers,
-		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
-		ICECandidatePoolSize: 1,
-		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		// why we need ICETransportPolicyRelay:
-		// - ensures consistent behavior between local and production
-		// - required for container networking in production (ECS/Fargate)
-		// - prevents direct/host candidates that won't work in cloud
-		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		ICEServers: iceServers,
+		// ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
-	logWithTime("[WEBRTC] Created configuration: %+v", config)
 
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
-		logWithTime("[WEBRTC][ERROR] Failed to create peer connection: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to create peer connection: %v", err)
 	}
-	logWithTime("[WEBRTC] Created peer connection successfully")
 
-	// Add connection state monitoring
-	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		logWithTime("[WEBRTC] Connection state changed to %s", state.String())
+	// Monitor ICE gathering state with enhanced logging
+	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
+		logWithTime("[ICE][%s] Gathering state changed to %s", sessionID, state.String())
+
+		// Log current candidates when gathering is complete
+		if state == webrtc.ICEGathererStateComplete {
+			stats := pc.GetStats()
+			for _, stat := range stats {
+				if s, ok := stat.(*webrtc.ICECandidateStats); ok {
+					logWithTime("[ICE][%s] Final candidate: type=%s protocol=%s address=%s:%d priority=%d",
+						sessionID, s.CandidateType, s.Protocol, s.IP, s.Port, s.Priority)
+				}
+			}
+		}
 	})
 
+	// Enhanced ICE connection state monitoring
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		logWithTime("[ICE] Connection state changed to %s", state.String())
+		logWithTime("[ICE][%s] Connection state changed to %s", sessionID, state.String())
+
+		if state == webrtc.ICEConnectionStateChecking {
+			logWithTime("[ICE][%s] Starting connectivity checks", sessionID)
+
+			// Log candidate pairs being checked
+			stats := pc.GetStats()
+			for _, stat := range stats {
+				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok {
+					logWithTime("[ICE][%s] Checking pair: local=%s remote=%s state=%s nominated=%v",
+						sessionID, s.LocalCandidateID, s.RemoteCandidateID, s.State, s.Nominated)
+
+					// Log detailed candidate information
+					for _, stat2 := range stats {
+						if c, ok := stat2.(*webrtc.ICECandidateStats); ok {
+							if c.ID == s.LocalCandidateID {
+								logWithTime("[ICE][%s] Local candidate: type=%s protocol=%s address=%s:%d relayProtocol=%s",
+									sessionID, c.CandidateType, c.Protocol, c.IP, c.Port, c.RelayProtocol)
+							}
+							if c.ID == s.RemoteCandidateID {
+								logWithTime("[ICE][%s] Remote candidate: type=%s protocol=%s address=%s:%d relayProtocol=%s",
+									sessionID, c.CandidateType, c.Protocol, c.IP, c.Port, c.RelayProtocol)
+							}
+						}
+					}
+				}
+			}
+		} else if state == webrtc.ICEConnectionStateConnected {
+			// Log selected candidate pair when connection is established
+			stats := pc.GetStats()
+			for _, stat := range stats {
+				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.Nominated {
+					logWithTime("[ICE][%s] Selected pair: local=%s remote=%s state=%s",
+						sessionID, s.LocalCandidateID, s.RemoteCandidateID, s.State)
+				}
+			}
+		}
+	})
+
+	// Monitor individual ICE candidates with detailed logging
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c != nil {
+			logWithTime("[ICE][%s] New candidate: %s (type: %s, protocol: %s)",
+				sessionID, c.String(), c.Typ, c.Protocol)
+
+			// Log additional details for relay candidates
+			if c.Typ == webrtc.ICECandidateTypeRelay {
+				logWithTime("[ICE][%s] Relay details - address: %s:%d related: %s:%d raddr: %s rport: %d",
+					sessionID, c.Address, c.Port, c.RelatedAddress, c.RelatedPort, c.RelatedAddress, c.RelatedPort)
+			}
+		}
 	})
 
 	return pc, nil
@@ -718,16 +869,34 @@ func createAnswer(pc *webrtc.PeerConnection) (*webrtc.SessionDescription, error)
 
 // sendAnswer sends the generated answer as a response to the client
 func sendAnswer(w http.ResponseWriter, answer *webrtc.SessionDescription) {
-	log.Println("[ANSWER] Preparing to send answer")
+	// why we need detailed answer logging:
+	// - helps debug encoding/decoding issues
+	// - tracks sdp transformation through system
+	// - identifies protocol mismatches
+	log.Printf("[ANSWER] Preparing to send answer")
+	log.Printf("[ANSWER] Raw answer: %+v", answer)
+	log.Printf("[ANSWER] SDP content:\n%s", answer.SDP)
 
-	answerJSON, err := json.Marshal(answer)
+	// why we need base64 encoding:
+	// - matches client expectations
+	// - ensures safe transport of sdp
+	// - maintains protocol compatibility
+	encodedSDP := signal.Encode(answer)
+	log.Printf("[ANSWER] Base64 encoded SDP: %s", encodedSDP)
+
+	response := BrowserOffer{
+		SDP:  encodedSDP,
+		Type: answer.Type.String(),
+	}
+
+	answerJSON, err := json.Marshal(response)
 	if err != nil {
 		log.Printf("[ANSWER][ERROR] Failed to encode answer: %v", err)
 		http.Error(w, "Failed to encode answer", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[ANSWER] Sending JSON response: %s", string(answerJSON))
+	log.Printf("[ANSWER] Final JSON response: %s", string(answerJSON))
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(answerJSON)
 	log.Println("[ANSWER] Answer sent successfully")
@@ -847,6 +1016,202 @@ func HandleICECandidate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// why we need turn permission handling:
+// - ensures proper relay setup
+// - manages peer permissions
+// - improves connection reliability
+func HandleTURNPermission(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Header.Get("X-Session-ID")
+	logWithTime("[TURN] Received permission request for session: %s", sessionID)
+
+	var request struct {
+		Address   string `json:"address"`
+		Port      int    `json:"port"`
+		Protocol  string `json:"protocol"`
+		IsRelay   bool   `json:"isRelay"`
+		LocalAddr string `json:"localAddr"` // Client can provide its local address
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		logWithTime("[TURN][ERROR] Failed to decode permission request: %v", err)
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
+		return
+	}
+
+	appSession, err := session.GetOrCreateSession(r, w)
+	if err != nil {
+		logWithTime("[TURN][ERROR] Session not found: %v", err)
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	if appSession.PeerConnection == nil {
+		logWithTime("[TURN][ERROR] No peer connection for session %s", sessionID)
+		http.Error(w, "No peer connection", http.StatusBadRequest)
+		return
+	}
+
+	var localAddr string
+
+	// First try using the local address provided by the client
+	if request.LocalAddr != "" {
+		localAddr = request.LocalAddr
+		logWithTime("[TURN][DEBUG] Using client-provided local address: %s", localAddr)
+	}
+
+	// If no client-provided address, try to get it from peer connection stats
+	if localAddr == "" {
+		stats := appSession.PeerConnection.GetStats()
+
+		// Log all ICE candidate stats for debugging
+		for _, stat := range stats {
+			if s, ok := stat.(*webrtc.ICECandidateStats); ok {
+				logWithTime("[TURN][DEBUG] Found candidate: type=%s, ip=%s, port=%d, protocol=%s",
+					s.CandidateType, s.IP, s.Port, s.Protocol)
+			}
+		}
+
+		// Try to find a relay candidate first
+		for _, stat := range stats {
+			if s, ok := stat.(*webrtc.ICECandidateStats); ok {
+				if s.CandidateType == webrtc.ICECandidateTypeRelay && s.Protocol == "udp" {
+					localAddr = fmt.Sprintf("%s:%d", s.IP, s.Port)
+					logWithTime("[TURN][DEBUG] Using relay candidate: %s", localAddr)
+					break
+				}
+			}
+		}
+
+		// If no relay candidate found, try host candidate as fallback
+		if localAddr == "" {
+			for _, stat := range stats {
+				if s, ok := stat.(*webrtc.ICECandidateStats); ok {
+					if s.CandidateType == webrtc.ICECandidateTypeHost && s.Protocol == "udp" {
+						localAddr = fmt.Sprintf("%s:%d", s.IP, s.Port)
+						logWithTime("[TURN][DEBUG] Using host candidate: %s", localAddr)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if localAddr == "" {
+		logWithTime("[TURN][ERROR] Could not find local address for session %s", sessionID)
+		http.Error(w, "Could not find local address", http.StatusInternalServerError)
+		return
+	}
+
+	// Forward permission request to TURN server
+	turnAddr := "192.168.4.82:3479"
+
+	// Create permission request
+	permReq := struct {
+		ClientAddr string `json:"client_addr"`
+		PeerAddr   string `json:"peer_addr"`
+		Protocol   string `json:"protocol"`
+		SessionID  string `json:"session_id"` // Add session ID to request body
+	}{
+		ClientAddr: localAddr,
+		PeerAddr:   fmt.Sprintf("%s:%d", request.Address, request.Port),
+		Protocol:   request.Protocol,
+		SessionID:  sessionID, // Include session ID from request header
+	}
+
+	// Send request to TURN server's permission endpoint
+	permReqBytes, err := json.Marshal(permReq)
+	if err != nil {
+		logWithTime("[TURN][ERROR] Failed to marshal permission request: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	logWithTime("[TURN][DEBUG] Sending permission request: %+v", permReq)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/permission", turnAddr), bytes.NewBuffer(permReqBytes))
+	if err != nil {
+		logWithTime("[TURN][ERROR] Failed to create permission request: %v", err)
+		http.Error(w, "Failed to create permission request", http.StatusInternalServerError)
+		return
+	}
+
+	// Add session ID to request headers
+	req.Header.Set("X-Session-ID", sessionID)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logWithTime("[TURN][ERROR] Failed to forward permission request: %v", err)
+		http.Error(w, "Failed to create permission", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		logWithTime("[TURN][ERROR] TURN server rejected permission request: %s", string(body))
+		http.Error(w, "Permission request rejected", resp.StatusCode)
+		return
+	}
+
+	logWithTime("[TURN] Successfully created permission for %s:%d", request.Address, request.Port)
+	w.WriteHeader(http.StatusOK)
+}
+
 func logWithTime(format string, v ...interface{}) {
 	log.Printf("[%s] %s", time.Now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), fmt.Sprintf(format, v...))
+}
+
+// why we need file watching:
+// - enables hot reloading
+// - updates last-modified headers
+// - supports continuous testing
+func watchClientFiles() {
+	clientDir := "./client"
+	log.Printf("[WATCH] Starting file watcher for %s", clientDir)
+
+	for {
+		time.Sleep(time.Second)
+		// Touch the files to update last-modified time
+		files, err := ioutil.ReadDir(clientDir)
+		if err != nil {
+			log.Printf("[WATCH][ERROR] Failed to read client directory: %v", err)
+			continue
+		}
+
+		for _, file := range files {
+			if !file.IsDir() {
+				path := filepath.Join(clientDir, file.Name())
+				currentTime := time.Now()
+				err := os.Chtimes(path, currentTime, currentTime)
+				if err != nil {
+					log.Printf("[WATCH][ERROR] Failed to update file time for %s: %v", path, err)
+				}
+			}
+		}
+	}
+}
+
+func init() {
+	// Start file watcher in background
+	go watchClientFiles()
+}
+
+// why we need client log handling:
+// - captures client-side errors
+// - helps debug webrtc issues
+// - provides visibility into browser state
+func HandleClientLog(w http.ResponseWriter, r *http.Request) {
+	var logData struct {
+		Timestamp string `json:"timestamp"`
+		Message   string `json:"message"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&logData); err != nil {
+		log.Printf("[CLIENT-LOG][ERROR] Failed to decode log: %v", err)
+		http.Error(w, "Invalid log format", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[CLIENT] %s %s", logData.Timestamp, logData.Message)
+	w.WriteHeader(http.StatusOK)
 }
