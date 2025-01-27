@@ -21,7 +21,7 @@ ECR_TURN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_TURN_
 # local dev only
 # ---------------------------------------
 export_host_ip:
-	$(eval HOST_IP := $(shell ./scripts/get_host_ip.sh))
+	$(eval HOST_IP := $(shell ./scripts/get_dev_host_ip.sh))
 	@echo "Using host IP: $(HOST_IP)"
 
 up: export_host_ip

@@ -1,9 +1,5 @@
 version: '3.8'
 
-# why we need multiple networks:
-# - simulates aws vpc networking
-# - enables service isolation
-# - replicates load balancer setup
 networks:
   frontend:
     name: frontend
@@ -15,10 +11,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # why we need bridge networking:
-    # - matches production port mappings
-    # - validates container networking
-    # - ensures proper service discovery
     networks:
       - backend
     volumes:
@@ -27,7 +19,7 @@ services:
       - ./server:/app/server
     environment:
       - AWESTRUCK_ENV=development
-      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_host_ip.sh)}
+      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
       # MAYBE REMOVE?
@@ -50,19 +42,10 @@ services:
       - "8080:8080"
     depends_on:
       - turn-server
-
-  # why we need turn-server:
-  # - provides consistent turn setup locally
-  # - enables testing of ice candidates
-  # - mirrors aws turn configuration
   turn-server:
     build:
       context: .
-      dockerfile: Dockerfile.turn2
-    # why we need bridge networking:
-    # - validates port mappings for production
-    # - ensures proper udp relay ports
-    # - matches aws networking model
+      dockerfile: Dockerfile.turn
     networks:
       - backend
     ports:
@@ -72,7 +55,7 @@ services:
     environment:
       - AWESTRUCK_ENV=development
       - TURN_REALM=localhost
-      - PUBLIC_IP=${HOST_IP:-$(./scripts/get_host_ip.sh)}
+      - PUBLIC_IP=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
       - USERS=awestruck_user=verySecurePassword1234567890abcdefghijklmnop
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop

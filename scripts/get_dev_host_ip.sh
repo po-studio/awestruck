@@ -4,7 +4,7 @@
 # - different commands for different os
 # - handles both macos and linux
 # - provides consistent output format
-get_host_ip() {
+get_dev_host_ip() {
     case "$(uname -s)" in
         Darwin)
             # Try WiFi first (most common for macOS)
@@ -37,5 +37,5 @@ get_host_ip() {
 
 # Output just the IP if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    get_host_ip
+    get_dev_host_ip
 fi 

@@ -305,6 +305,10 @@ class AwestruckInfrastructure extends TerraformStack {
         allocationId: turnElasticIp.allocationId
       }],
       enableCrossZoneLoadBalancing: true,
+      ipAddressType: "ipv4",
+      tags: {
+        Name: "awestruck-webrtc-nlb"
+      }
     });
 
     // why we need both A records:
@@ -506,10 +510,6 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "SIGNALING_PORT", value: "3478" },
               { name: "HEALTH_PORT", value: "3479" },
               { name: "TURN_REALM", value: "awestruck.io" },
-              // why we need static ip configuration:
-              // - ensures stable turn server addressing
-              // - simplifies ice candidate generation
-              // - avoids dns resolution complexity
               { name: "PUBLIC_IP", value: turnElasticIp.publicIp },
               { name: "TURN_USERNAME", value: "awestruck_user" },
               { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" },
