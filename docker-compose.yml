@@ -41,7 +41,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - turn-server
+      turn-server:
+        condition: service_healthy
   turn-server:
     build:
       context: .
@@ -61,3 +62,14 @@ services:
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
       - MIN_PORT=49152
       - MAX_PORT=49252
+      - HEALTH_PORT=3479
+    # why we need health checks:
+    # - ensures service is ready before use
+    # - matches aws health check behavior
+    # - enables local development testing
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3479"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s

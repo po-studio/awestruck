@@ -411,7 +411,7 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a turn target group:
     // - handles stun/turn control traffic on port 3478
-    // - enables health checks for turn service
+    // - enables health checks for turn service via tcp port 3479
     // - routes turn traffic through fargate tasks
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
       name: "awestruck-turn-tg",
@@ -426,7 +426,7 @@ class AwestruckInfrastructure extends TerraformStack {
         interval: 30,
         timeout: 10,
         healthyThreshold: 3,
-        unhealthyThreshold: 5
+        unhealthyThreshold: 3
       }
     });
 
@@ -507,7 +507,6 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             environment: [
               { name: "AWESTRUCK_ENV", value: "production" },
-              { name: "SIGNALING_PORT", value: "3478" },
               { name: "HEALTH_PORT", value: "3479" },
               { name: "TURN_REALM", value: "awestruck.io" },
               { name: "PUBLIC_IP", value: turnElasticIp.publicIp },

@@ -160,6 +160,42 @@ func main() {
 	turnLogger.Info("TURN server is running on UDP " + udpListener.LocalAddr().String())
 	turnLogger.Infof("Using relay ports %d-%d", minPort, maxPort)
 
+	// why we need a health check endpoint:
+	// - enables aws load balancer health checks
+	// - provides container readiness probe
+	// - supports local development testing
+	//
+	// NB: ideally this would be UDP since this is what the turn server uses
+	// for its core functionality, but ECS health checks require TCP
+	healthPort := "3479"
+	if portStr := os.Getenv("HEALTH_PORT"); portStr != "" {
+		healthPort = portStr
+	}
+
+	go func() {
+		healthListener, err := net.Listen("tcp", "0.0.0.0:"+healthPort)
+		if err != nil {
+			turnLogger.Errorf("Failed to create health check listener: %v", err)
+			return
+		}
+		defer healthListener.Close()
+
+		turnLogger.Info("Health check endpoint running on TCP " + healthListener.Addr().String())
+
+		for {
+			conn, err := healthListener.Accept()
+			if err != nil {
+				turnLogger.Errorf("Failed to accept health check connection: %v", err)
+				continue
+			}
+
+			go func(c net.Conn) {
+				defer c.Close()
+				c.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+			}(conn)
+		}
+	}()
+
 	// Block main goroutine forever
 	select {}
 }
