@@ -375,7 +375,9 @@ class AwestruckInfrastructure extends TerraformStack {
               // - enables service discovery in aws
               // - matches turn server's alias record
               // - ensures consistent networking
-              { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" }
+              { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" },
+              { name: "TURN_USERNAME", value: "awestruck_user" },
+              { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },

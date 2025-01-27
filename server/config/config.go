@@ -31,6 +31,12 @@ func Init(
 	if turnServerHost == "" {
 		panic("TURN_SERVER_HOST is required but was empty")
 	}
+	if turnUsername == "" {
+		panic("TURN_USERNAME is required but was empty")
+	}
+	if turnPassword == "" {
+		panic("TURN_PASSWORD is required but was empty")
+	}
 
 	globalConfig = &Config{
 		Environment:     environment,
