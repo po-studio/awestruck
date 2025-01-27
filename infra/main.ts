@@ -135,6 +135,16 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
+          // why we need health check port:
+          // - enables nlb health checks via tcp
+          // - ensures service availability monitoring
+          // - required for target group registration
+          fromPort: 3479,
+          toPort: 3479,
+          protocol: "tcp",
+          cidrBlocks: [vpc.cidrBlock],
+        },
+        {
           // why we need ephemeral ports:
           // - allows dynamic port allocation for webrtc media
           // - matches docker-compose configuration
@@ -352,10 +362,11 @@ class AwestruckInfrastructure extends TerraformStack {
         enabled: true,
         port: "3479",
         protocol: "TCP",
-        interval: 30,
-        timeout: 10,
-        healthyThreshold: 3,
-        unhealthyThreshold: 3
+        interval: 10,  // More frequent checks
+        timeout: 5,    // Shorter timeout
+        healthyThreshold: 2,  // Faster to become healthy
+        unhealthyThreshold: 3,
+        matcher: "200-299"  // Expect HTTP success codes
       }
     });
 
