@@ -304,7 +304,7 @@ class AwestruckInfrastructure extends TerraformStack {
         subnetId: subnet1.id,
         allocationId: turnElasticIp.allocationId
       }],
-      enableCrossZoneLoadBalancing: true,
+      enableCrossZoneLoadBalancing: false,
       ipAddressType: "ipv4",
       tags: {
         Name: "awestruck-webrtc-nlb"
@@ -452,7 +452,7 @@ class AwestruckInfrastructure extends TerraformStack {
     // - matches docker-compose configuration
     const turnRelayTargetGroup = new LbTargetGroup(this, "awestruck-turn-relay-tg", {
       name: "awestruck-turn-relay-tg",
-      port: 49152,  // Base port, security group controls full range
+      port: 49152,
       protocol: "UDP",
       targetType: "ip",
       vpcId: vpc.id,
@@ -469,17 +469,34 @@ class AwestruckInfrastructure extends TerraformStack {
 
     // why we need a relay listener:
     // - handles media relay traffic
-    // - works with security group port range
-    // - enables webrtc streaming
+    // - enables port range for turn allocation
+    // - ensures reliable media streaming
     const relayListener = new LbListener(this, "turn-relay-listener", {
       loadBalancerArn: webrtcNlb.arn,
-      port: 49152,  // Base port, security group controls full range
+      port: 49152,
       protocol: "UDP",
       defaultAction: [{
         type: "forward",
         targetGroupArn: turnRelayTargetGroup.arn
       }]
     });
+
+    // why we need additional relay port mappings:
+    // - enables full port range for turn
+    // - matches security group configuration
+    // - required for dynamic port allocation
+    const additionalRelayPorts = Array.from({ length: 49252 - 49152 }, (_, i) => 49153 + i);
+    const additionalRelayListeners = additionalRelayPorts.map(port => 
+      new LbListener(this, `turn-relay-listener-${port}`, {
+        loadBalancerArn: webrtcNlb.arn,
+        port,
+        protocol: "UDP",
+        defaultAction: [{
+          type: "forward",
+          targetGroupArn: turnRelayTargetGroup.arn
+        }]
+      })
+    );
 
     // why we need a dedicated webrtc service:
     // - separates concerns from other services
@@ -606,7 +623,7 @@ class AwestruckInfrastructure extends TerraformStack {
         containerName: "turn-server",
         containerPort: 49152
       }],
-      dependsOn: [turnListener, relayListener]
+      dependsOn: [turnListener, relayListener, ...additionalRelayListeners]
     });
 
     // Add CloudWatch dashboard for monitoring both services
