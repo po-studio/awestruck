@@ -137,10 +137,10 @@ class AwestruckInfrastructure extends TerraformStack {
         {
           // why we need ephemeral ports:
           // - allows dynamic port allocation for webrtc media
-          // - follows IANA standard port allocation (49152-65535)
-          // - ensures consistent port range across services
+          // - matches docker-compose configuration
+          // - ensures consistent port range across environments
           fromPort: 49152,
-          toPort: 65535,
+          toPort: 49252,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -446,6 +446,41 @@ class AwestruckInfrastructure extends TerraformStack {
       }]
     });
 
+    // why we need a turn relay target group:
+    // - handles media relay traffic on ports 49152-49252
+    // - enables webrtc media streaming
+    // - matches docker-compose configuration
+    const turnRelayTargetGroup = new LbTargetGroup(this, "awestruck-turn-relay-tg", {
+      name: "awestruck-turn-relay-tg",
+      port: 49152,  // Base port, security group controls full range
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "3479",
+        protocol: "TCP",
+        interval: 30,
+        timeout: 10,
+        healthyThreshold: 3,
+        unhealthyThreshold: 3
+      }
+    });
+
+    // why we need a relay listener:
+    // - handles media relay traffic
+    // - works with security group port range
+    // - enables webrtc streaming
+    const relayListener = new LbListener(this, "turn-relay-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 49152,  // Base port, security group controls full range
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: turnRelayTargetGroup.arn
+      }]
+    });
+
     // why we need a dedicated webrtc service:
     // - separates concerns from other services
     // - enables independent scaling
@@ -514,7 +549,9 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "PUBLIC_IP", value: turnElasticIp.publicIp },
               { name: "TURN_USERNAME", value: "awestruck_user" },
               { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" },
-              { name: "USERS", value: "awestruck_user=verySecurePassword1234567890abcdefghijklmnop" }
+              { name: "USERS", value: "awestruck_user=verySecurePassword1234567890abcdefghijklmnop" },
+              { name: "MIN_PORT", value: "49152" },
+              { name: "MAX_PORT", value: "49252" }
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -555,8 +592,12 @@ class AwestruckInfrastructure extends TerraformStack {
         targetGroupArn: turnTargetGroup.arn,
         containerName: "turn-server",
         containerPort: 3478
+      }, {
+        targetGroupArn: turnRelayTargetGroup.arn,
+        containerName: "turn-server",
+        containerPort: 49152
       }],
-      dependsOn: [turnListener]
+      dependsOn: [turnListener, relayListener]
     });
 
     // Add CloudWatch dashboard for monitoring both services
