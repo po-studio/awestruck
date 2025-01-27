@@ -540,7 +540,16 @@ class AwestruckInfrastructure extends TerraformStack {
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/turn:latest`,
             portMappings: [
               { containerPort: 3478, hostPort: 3478, protocol: "udp" },
-              { containerPort: 3479, hostPort: 3479, protocol: "tcp" }
+              { containerPort: 3479, hostPort: 3479, protocol: "tcp" },
+              // why we need relay port range mapping:
+              // - enables dynamic port allocation for media relay
+              // - matches security group configuration
+              // - required for webrtc streaming through turn
+              ...Array.from({ length: 49252 - 49152 + 1 }, (_, i) => ({
+                containerPort: 49152 + i,
+                hostPort: 49152 + i,
+                protocol: "udp"
+              }))
             ],
             environment: [
               { name: "AWESTRUCK_ENV", value: "production" },
