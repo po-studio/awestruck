@@ -15,7 +15,9 @@ var (
 	awestruck_env     = os.Getenv("AWESTRUCK_ENV")
 	awestruck_api_key = os.Getenv("AWESTRUCK_API_KEY")
 	openai_api_key    = os.Getenv("OPENAI_API_KEY")
-	turn_server       = os.Getenv("TURN_SERVER")
+	turn_server_host  = os.Getenv("TURN_SERVER_HOST")
+	turn_username     = os.Getenv("TURN_USERNAME")
+	turn_password     = os.Getenv("TURN_PASSWORD")
 )
 
 func main() {
@@ -26,7 +28,9 @@ func main() {
 		awestruck_env,
 		awestruck_api_key,
 		openai_api_key,
-		turn_server,
+		turn_server_host,
+		turn_username,
+		turn_password,
 	)
 	log.Printf("Starting server in %s environment", awestruck_env)
 

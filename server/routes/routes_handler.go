@@ -12,16 +12,32 @@ import (
 
 func NewRouter() *mux.Router {
 	router := mux.NewRouter()
-	router.HandleFunc("/offer", webrtc.HandleOffer).Methods("POST")
-	router.HandleFunc("/stop", webrtc.HandleStop).Methods("POST")
+	// not sure if we need this...
 	router.HandleFunc("/", serveHome).Methods("GET")
-	router.HandleFunc("/ice-candidate", webrtc.HandleICECandidate).Methods("POST")
-	router.HandleFunc("/generate-synth", synth.GenerateSynth).Methods("POST")
-	router.HandleFunc("/synth-code", webrtc.HandleSynthCode).Methods("GET")
+
+	// gets webrtc config including ice credentials, host, etc.
 	router.HandleFunc("/config", webrtc.HandleConfig).Methods("GET")
-	router.HandleFunc("/turn/permission", webrtc.HandleTURNPermission).Methods("POST")
-	router.HandleFunc("/log", webrtc.HandleClientLog).Methods("POST")
+
+	// for creating the webrtc offer once the client has fetched the config
+	router.HandleFunc("/offer", webrtc.HandleOffer).Methods("POST")
+
+	// stops the webrtc connection and executes synthesis/session cleanup
+	router.HandleFunc("/stop", webrtc.HandleStop).Methods("POST")
+
+	router.HandleFunc("/ice-candidate", webrtc.HandleICECandidate).Methods("POST")
+
+	// serve static files, i.e. website
+	// this is a temporary hack until we have a proper frontend
 	router.PathPrefix("/").Handler(serveStatic("./client/"))
+
+	// just for frontend -- displays the source code of the synth
+	// being synthesized/streamed in real-time
+	router.HandleFunc("/synth-code", webrtc.HandleSynthCode).Methods("GET")
+
+	// experimental, for testing generative LLM synths
+	// this should become a recurring background job
+	router.HandleFunc("/generate-synth", synth.GenerateSynth).Methods("POST")
+
 	return router
 }
 

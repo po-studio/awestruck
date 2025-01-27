@@ -22,6 +22,7 @@ import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
 import { CloudwatchDashboard } from "@cdktf/provider-aws/lib/cloudwatch-dashboard";
+import { Eip } from "@cdktf/provider-aws/lib/eip";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -283,20 +284,43 @@ class AwestruckInfrastructure extends TerraformStack {
     // - handles udp traffic for media streams
     // - provides stable networking for webrtc
     // - enables proper port forwarding
+
+    // why we need elastic ip for turn:
+    // - provides stable ip for turn server
+    // - survives nlb replacements
+    // - enables consistent ice candidates
+    const turnElasticIp = new Eip(this, "turn-eip", {
+      vpc: true,
+      tags: {
+        Name: "turn-nlb-eip"
+      }
+    });
+
     const webrtcNlb = new Lb(this, "awestruck-webrtc-nlb", {
       name: "awestruck-webrtc-nlb",
       internal: false,
       loadBalancerType: "network",
-      subnets: [subnet1.id, subnet2.id],
+      subnetMapping: [{
+        subnetId: subnet1.id,
+        allocationId: turnElasticIp.allocationId
+      }],
       enableCrossZoneLoadBalancing: true,
     });
-    
-    // why we need dns records for turn:
-    // - enables client discovery of turn services
-    // - allows for future ip changes without client updates
-    new Route53Record(this, "turn-dns", {
+
+    // why we need both A records:
+    // - elastic ip record for direct access
+    // - alias record for nlb health checks
+    new Route53Record(this, "turn-dns-eip", {
       zoneId: hostedZone.zoneId,
       name: "turn.awestruck.io",
+      type: "A",
+      ttl: 60,
+      records: [turnElasticIp.publicIp],
+    });
+
+    new Route53Record(this, "turn-dns-nlb", {
+      zoneId: hostedZone.zoneId,
+      name: "turn-nlb.awestruck.io",
       type: "A",
       allowOverwrite: true,
       alias: {
@@ -347,7 +371,7 @@ class AwestruckInfrastructure extends TerraformStack {
               // - enables service discovery in aws
               // - matches turn server's alias record
               // - ensures consistent networking
-              { name: "TURN_SERVER", value: "turn.awestruck.io" }
+              { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" }
             ],
             ulimits: [
               { name: "memlock", softLimit: -1, hardLimit: -1 },
@@ -481,14 +505,15 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "AWESTRUCK_ENV", value: "production" },
               { name: "SIGNALING_PORT", value: "3478" },
               { name: "HEALTH_PORT", value: "3479" },
-              // why we need correct realm:
-              // - matches main domain for authentication
-              // - ensures consistent ice credentials
-              // - required for webrtc security
               { name: "TURN_REALM", value: "awestruck.io" },
-              { name: "EXTERNAL_IP", value: "turn.awestruck.io" },
+              // why we need static ip configuration:
+              // - ensures stable turn server addressing
+              // - simplifies ice candidate generation
+              // - avoids dns resolution complexity
+              { name: "PUBLIC_IP", value: turnElasticIp.publicIp },
               { name: "TURN_USERNAME", value: "awestruck_user" },
-              { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" }
+              { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" },
+              { name: "USERS", value: "awestruck_user=verySecurePassword1234567890abcdefghijklmnop" }
             ],
             logConfiguration: {
               logDriver: "awslogs",
@@ -503,13 +528,13 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     );
 
-    // why we need to expose the nlb dns name:
+    // why we need to expose the elastic ip:
     // - helps with debugging turn connectivity
-    // - enables direct nlb access if needed
-    // - supports dns-based failover
-    new TerraformOutput(this, "turn-nlb-dns", {
-      value: webrtcNlb.dnsName,
-      description: "Network Load Balancer DNS name for TURN server",
+    // - enables direct ip access if needed
+    // - supports manual testing
+    new TerraformOutput(this, "turn-elastic-ip", {
+      value: turnElasticIp.publicIp,
+      description: "Elastic IP address for TURN server",
     });
 
     // Update turn-service to use the main security group

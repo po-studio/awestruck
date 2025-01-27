@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 
 	"github.com/pion/logging"
 	"github.com/pion/turn/v4"
@@ -73,12 +74,43 @@ func (f *verboseLoggerFactory) NewLogger(scope string) logging.LeveledLogger {
 // - maps client addresses properly
 // - enables reliable media relay
 func main() {
-	// Create a logger that writes to stdout
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds)
-
-	// Create verbose logger for TURN operations
 	loggerFactory := &verboseLoggerFactory{}
 	turnLogger := loggerFactory.NewLogger("turn")
+
+	turnRealm := os.Getenv("TURN_REALM")
+	if turnRealm == "" {
+		panic("TURN_REALM is not set")
+	}
+
+	fixedUsername := os.Getenv("TURN_USERNAME")
+	if fixedUsername == "" {
+		panic("TURN_USERNAME is not set")
+	}
+
+	fixedPassword := os.Getenv("TURN_PASSWORD")
+	if fixedPassword == "" {
+		panic("TURN_PASSWORD is not set")
+	}
+
+	publicIP := os.Getenv("PUBLIC_IP")
+	if publicIP == "" {
+		panic("PUBLIC_IP is not set")
+	}
+
+	minPort := 49152
+	if portStr := os.Getenv("MIN_PORT"); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			minPort = port
+		}
+	}
+
+	maxPort := 49252
+	if portStr := os.Getenv("MAX_PORT"); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			maxPort = port
+		}
+	}
 
 	// Create UDP listener
 	udpListener, err := net.ListenPacket("udp4", "0.0.0.0:3478")
@@ -89,13 +121,12 @@ func main() {
 
 	// Create TURN server configuration
 	config := turn.ServerConfig{
-		Realm: "awestruck.audio",
+		Realm: turnRealm,
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
 			turnLogger.Debugf("Auth request from %s for user %s", srcAddr.String(), username)
-			// Use fixed credentials for testing
-			if username == "awestruck_user" {
+			if username == fixedUsername {
 				turnLogger.Debugf("Auth success for user %s", username)
-				return turn.GenerateAuthKey(username, realm, "verySecurePassword1234567890abcdefghijklmnop"), true
+				return turn.GenerateAuthKey(username, realm, fixedPassword), true
 			}
 			turnLogger.Debugf("Auth failed for user %s", username)
 			return nil, false
@@ -103,13 +134,16 @@ func main() {
 		PacketConnConfigs: []turn.PacketConnConfig{
 			{
 				PacketConn: udpListener,
-				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: net.ParseIP("192.168.4.82"), // Your server's public IP
+				RelayAddressGenerator: &turn.RelayAddressGeneratorPortRange{
+					RelayAddress: net.ParseIP(publicIP),
 					Address:      "0.0.0.0",
+					MinPort:      uint16(minPort),
+					MaxPort:      uint16(maxPort),
 				},
+				PermissionHandler: turn.DefaultPermissionHandler,
 			},
 		},
-		LoggerFactory: loggerFactory, // Use our verbose logger
+		LoggerFactory: loggerFactory,
 	}
 
 	// Create server instance
@@ -124,6 +158,7 @@ func main() {
 	}()
 
 	turnLogger.Info("TURN server is running on UDP " + udpListener.LocalAddr().String())
+	turnLogger.Infof("Using relay ports %d-%d", minPort, maxPort)
 
 	// Block main goroutine forever
 	select {}

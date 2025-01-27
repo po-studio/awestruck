@@ -41,29 +41,6 @@ class Logger {
     static error(msg, data) { this.log('ERROR', msg, data); }
 }
 
-// why we need turn configuration:
-// - manages turn credentials
-// - handles session-based authentication
-// - configures ice servers
-class TurnConfig {
-    static async getCredentials() {
-        const sessionId = SessionManager.getSessionId();
-        return {
-            username: `awestruck_user`,  // Fixed username from TURN server config
-            credential: 'verySecurePassword1234567890abcdefghijklmnop',  // Fixed password from TURN server config
-            credentialType: 'password'
-        };
-    }
-
-    static async getIceServers() {
-        const creds = await this.getCredentials();
-        return [{
-            urls: ['turn:localhost:3478?transport=udp'],
-            ...creds,
-        }];
-    }
-}
-
 // why we need connection state tracking:
 // - monitors ice and peer connection state
 // - updates ui status
@@ -239,24 +216,124 @@ class AudioHandler {
     }
 }
 
+// why we need ice candidate handling:
+// - ensures proper turn relay allocation
+// - manages candidate gathering and sending
+// - handles turn server authentication
+class ICEHandler {
+    constructor(pc, sessionId) {
+        this.pc = pc;
+        this.sessionId = sessionId;
+        this.pendingCandidates = [];
+        this.hasRemoteDescription = false;
+        this.setupICEHandling();
+    }
+
+    setupICEHandling() {
+        // Track ICE gathering progress
+        this.pc.onicegatheringstatechange = () => {
+            Logger.ice('Gathering state changed', {
+                state: this.pc.iceGatheringState
+            });
+            
+            if (this.pc.iceGatheringState === 'complete') {
+                Logger.ice('Gathering completed');
+            }
+        };
+
+        // Handle new ICE candidates
+        this.pc.onicecandidate = async (event) => {
+            if (!event.candidate) {
+                Logger.ice('Finished gathering candidates');
+                return;
+            }
+
+            const candidate = event.candidate;
+            Logger.ice('New candidate', {
+                type: this.extractCandidateType(candidate.candidate),
+                protocol: candidate.protocol,
+                address: candidate.address,
+                port: candidate.port
+            });
+
+            if (!this.hasRemoteDescription) {
+                Logger.ice('Queueing candidate until remote description is set');
+                this.pendingCandidates.push(candidate);
+                return;
+            }
+
+            await this.sendCandidate(candidate);
+        };
+    }
+
+    extractCandidateType(candidateStr) {
+        const match = candidateStr.match(/typ ([a-z]+)/);
+        return match ? match[1] : 'unknown';
+    }
+
+    async sendCandidate(candidate) {
+        try {
+            const payload = {
+                candidate: btoa(JSON.stringify({
+                    candidate: candidate.candidate,
+                    sdpMid: candidate.sdpMid,
+                    sdpMLineIndex: candidate.sdpMLineIndex,
+                    usernameFragment: candidate.usernameFragment
+                }))
+            };
+
+            const response = await fetch('/ice-candidate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Session-ID': this.sessionId
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to send candidate: ${response.status}`);
+            }
+
+            Logger.ice('Successfully sent candidate');
+        } catch (error) {
+            Logger.error('Failed to send ICE candidate', error);
+            // Queue for retry
+            this.pendingCandidates.push(candidate);
+        }
+    }
+
+    setRemoteDescription(hasRemote) {
+        this.hasRemoteDescription = hasRemote;
+        if (hasRemote && this.pendingCandidates.length > 0) {
+            Logger.ice(`Sending ${this.pendingCandidates.length} pending candidates`);
+            this.pendingCandidates.forEach(candidate => this.sendCandidate(candidate));
+            this.pendingCandidates = [];
+        }
+    }
+}
+
 // why we need webrtc setup:
 // - initializes peer connection
 // - handles signaling
 // - manages media streams
 async function start() {
     try {
-        const iceServers = await TurnConfig.getIceServers();
-        Logger.ice('Using ICE servers', iceServers);
+        Logger.webrtc('Fetching WebRTC configuration');
+        const configResponse = await fetch('/config');
+        if (!configResponse.ok) {
+            throw new Error(`Config fetch failed: ${configResponse.status}`);
+        }
+        const config = await configResponse.json();
+        
+        // Force TURN relay for testing
+        config.iceTransportPolicy = 'relay';
+        Logger.ice('Using ICE configuration', config);
 
-        const pc = new RTCPeerConnection({ 
-            iceServers,
-            // iceTransportPolicy: 'relay',  // Force TURN usage
-            iceTransportPolicy: 'all',
-            bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require'
-        });
-
+        const pc = new RTCPeerConnection(config);
+        const sessionId = SessionManager.getSessionId();
         const monitor = new ConnectionMonitor(pc);
+        const iceHandler = new ICEHandler(pc, sessionId);
 
         // Add audio transceiver
         pc.addTransceiver('audio', {
@@ -274,37 +351,45 @@ async function start() {
             }
         };
 
-        const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: false
-        });
-
+        // Create and send offer
+        const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        Logger.webrtc('Created offer', { type: offer.type });
+        Logger.webrtc('Created and set local description');
 
-        const response = await fetch('/offer', {
+        // Send offer to server
+        const offerPayload = {
+            sdp: btoa(JSON.stringify({
+                type: offer.type,
+                sdp: offer.sdp
+            }))
+        };
+
+        const offerResponse = await fetch('/offer', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Session-ID': SessionManager.getSessionId()
+                'X-Session-ID': sessionId
             },
-            body: JSON.stringify({
-                sdp: btoa(JSON.stringify({
-                    type: offer.type,
-                    sdp: offer.sdp
-                }))
-            })
+            body: JSON.stringify(offerPayload)
         });
 
-        if (!response.ok) {
-            throw new Error(`Offer failed: ${response.status}`);
+        if (!offerResponse.ok) {
+            throw new Error(`Failed to send offer: ${offerResponse.status}`);
         }
 
-        const answer = await response.json();
-        const parsed = JSON.parse(atob(answer.sdp));
-        await pc.setRemoteDescription(new RTCSessionDescription(parsed));
-        
-        Logger.webrtc('Connection setup complete');
+        const encodedAnswer = await offerResponse.json();
+        Logger.webrtc('Received answer from server');
+
+        // Decode the base64 answer
+        const decodedAnswer = JSON.parse(atob(encodedAnswer.sdp));
+        const answer = new RTCSessionDescription({
+            type: 'answer',
+            sdp: decodedAnswer.sdp
+        });
+
+        await pc.setRemoteDescription(answer);
+        iceHandler.setRemoteDescription(true);
+        Logger.webrtc('Set remote description');
         
         // Start stats monitoring
         setInterval(async () => {
