@@ -375,7 +375,9 @@ class AwestruckInfrastructure extends TerraformStack {
               // - enables service discovery in aws
               // - matches turn server's alias record
               // - ensures consistent networking
-              { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" },
+              // { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" },
+              // hack to try to resolve ICE candidate fetching
+              { name: "TURN_SERVER_HOST", value: turnElasticIp.publicIp },
               { name: "TURN_USERNAME", value: "awestruck_user" },
               { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" }
             ],
@@ -456,6 +458,7 @@ class AwestruckInfrastructure extends TerraformStack {
       protocol: "UDP",
       targetType: "ip",
       vpcId: vpc.id,
+      preserveClientIp: "true",
       healthCheck: {
         enabled: true,
         port: "3479",
