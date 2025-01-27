@@ -5,14 +5,10 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"os/signal"
-	"regexp"
-	"syscall"
 
 	"github.com/pion/logging"
 	"github.com/pion/turn/v4"
@@ -72,74 +68,63 @@ func (f *verboseLoggerFactory) NewLogger(scope string) logging.LeveledLogger {
 	return &verboseLogger{prefix: scope}
 }
 
+// why we need proper turn configuration:
+// - ensures correct relay address allocation
+// - maps client addresses properly
+// - enables reliable media relay
 func main() {
-	publicIP := flag.String("public-ip", "", "IP Address that TURN can be contacted by.")
-	port := flag.Int("port", 3478, "Listening port.")
-	users := flag.String("users", "", "List of username and password (e.g. \"user=pass,user=pass\")")
-	realm := flag.String("realm", "localhost", "Realm (defaults to \"localhost\")")
-	flag.Parse()
+	// Create a logger that writes to stdout
+	logger := log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds)
 
-	if len(*publicIP) == 0 {
-		log.Fatalf("'public-ip' is required")
-	} else if len(*users) == 0 {
-		log.Fatalf("'users' is required")
-	}
-
-	log.Printf("[TURN] Starting server on %s:%d", *publicIP, *port)
-
-	// Create a logger
+	// Create verbose logger for TURN operations
 	loggerFactory := &verboseLoggerFactory{}
-	logger := loggerFactory.NewLogger("turn")
-
-	// Parse users
-	usersMap := map[string][]byte{}
-	for _, kv := range regexp.MustCompile(`(\w+)=(\w+)`).FindAllStringSubmatch(*users, -1) {
-		usersMap[kv[1]] = turn.GenerateAuthKey(kv[1], *realm, kv[2])
-		logger.Debugf("Added user: %s", kv[1])
-	}
+	turnLogger := loggerFactory.NewLogger("turn")
 
 	// Create UDP listener
-	udpListener, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", *port))
+	udpListener, err := net.ListenPacket("udp4", "0.0.0.0:3478")
 	if err != nil {
-		log.Panicf("[TURN] Failed to create UDP listener: %s", err)
+		logger.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	logger.Debugf("UDP listener created on 0.0.0.0:%d (external: %s)", *port, *publicIP)
+	defer udpListener.Close()
 
-	// Configure TURN server
+	// Create TURN server configuration
 	config := turn.ServerConfig{
-		Realm: *realm,
+		Realm: "awestruck.audio",
 		AuthHandler: func(username string, realm string, srcAddr net.Addr) ([]byte, bool) {
-			if key, ok := usersMap[username]; ok {
-				logger.Debugf("Auth success - username: %s, client: %s", username, srcAddr)
-				return key, true
+			turnLogger.Debugf("Auth request from %s for user %s", srcAddr.String(), username)
+			// Use fixed credentials for testing
+			if username == "awestruck_user" {
+				turnLogger.Debugf("Auth success for user %s", username)
+				return turn.GenerateAuthKey(username, realm, "verySecurePassword1234567890abcdefghijklmnop"), true
 			}
-			logger.Debugf("Auth failed - username: %s, client: %s", username, srcAddr)
+			turnLogger.Debugf("Auth failed for user %s", username)
 			return nil, false
 		},
 		PacketConnConfigs: []turn.PacketConnConfig{
 			{
 				PacketConn: udpListener,
 				RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-					RelayAddress: net.ParseIP(*publicIP),
+					RelayAddress: net.ParseIP("192.168.4.82"), // Your server's public IP
 					Address:      "0.0.0.0",
 				},
 			},
 		},
-		LoggerFactory: loggerFactory,
+		LoggerFactory: loggerFactory, // Use our verbose logger
 	}
 
-	// Create and start the server
+	// Create server instance
 	server, err := turn.NewServer(config)
 	if err != nil {
-		log.Fatalf("[TURN] Failed to create server: %v", err)
+		logger.Fatalf("Failed to create TURN server: %v", err)
 	}
+	defer func() {
+		if err = server.Close(); err != nil {
+			logger.Printf("Failed to close TURN server: %v", err)
+		}
+	}()
 
-	// Wait for shutdown signal
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
+	turnLogger.Info("TURN server is running on UDP " + udpListener.LocalAddr().String())
 
-	if err = server.Close(); err != nil {
-		log.Panicf("[TURN] Failed to close server: %s", err)
-	}
+	// Block main goroutine forever
+	select {}
 }

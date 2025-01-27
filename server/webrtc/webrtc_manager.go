@@ -106,8 +106,9 @@ func configureWebRTC() (*webrtc.API, error) {
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
 	// Force relay for all environments for consistent testing
 	config := webrtc.Configuration{
-		ICEServers:           getICEServers(),
-		ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
+		ICEServers: getICEServers(),
+		// ICETransportPolicy:   webrtc.ICETransportPolicyRelay,
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
 		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
 		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
 		ICECandidatePoolSize: 1,
@@ -331,6 +332,62 @@ func finalizeConnectionSetup(appSession *session.AppSession, audioTrack *webrtc.
 }
 
 // why we need enhanced audio pipeline monitoring:
+// - detect if audio is flowing from supercollider to jack
+// - verify gstreamer is receiving and encoding audio
+// - confirm webrtc is sending audio packets
+func monitorAudioLevels(appSession *session.AppSession) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastPacketsSent uint32
+	var lastBytesSent uint64
+
+	for range ticker.C {
+		if appSession.GStreamerPipeline == nil || appSession.GStreamerPipeline.Pipeline == nil {
+			return
+		}
+
+		// Get all WebRTC stats
+		stats := appSession.PeerConnection.GetStats()
+
+		// Track audio stats
+		var audioStats struct {
+			packetsSent   uint32
+			bytesSent     uint64
+			packetsLost   int32
+			roundTripTime float64
+		}
+
+		// Process stats
+		for _, stat := range stats {
+			switch s := stat.(type) {
+			case *webrtc.OutboundRTPStreamStats:
+				audioStats.packetsSent = s.PacketsSent
+				audioStats.bytesSent = s.BytesSent
+			case *webrtc.RemoteInboundRTPStreamStats:
+				audioStats.packetsLost = s.PacketsLost
+				audioStats.roundTripTime = s.RoundTripTime
+			}
+		}
+
+		// Calculate delta from last check
+		packetsDelta := audioStats.packetsSent - lastPacketsSent
+		bytesDelta := audioStats.bytesSent - lastBytesSent
+
+		// Log comprehensive audio flow status
+		log.Printf("[%s][AUDIO][Flow] Stats - Packets: %d->%d (%+d), Bytes: %d->%d (%+d), Lost: %d, RTT: %.2fms",
+			appSession.Id,
+			lastPacketsSent, audioStats.packetsSent, packetsDelta,
+			lastBytesSent, audioStats.bytesSent, bytesDelta,
+			audioStats.packetsLost,
+			audioStats.roundTripTime*1000)
+
+		lastPacketsSent = audioStats.packetsSent
+		lastBytesSent = audioStats.bytesSent
+	}
+}
+
+// why we need enhanced audio pipeline monitoring:
 // - detect if audio is flowing from jack to gstreamer
 // - ensure proper sample rate conversion
 // - monitor audio levels before encoding
@@ -338,30 +395,18 @@ func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.Track
 	pipelineReady := make(chan struct{})
 
 	go func() {
-		log.Println("Creating pipeline...")
+		log.Printf("[%s][PIPELINE] Creating pipeline with track ID: %s", appSession.Id, audioTrack.ID())
+		log.Printf("[%s][PIPELINE] Using config: %s", appSession.Id, *appSession.AudioSrc)
 
-		// Add monitoring but keep pipeline simple
-		// pipelineConfig := fmt.Sprintf("%s ! "+
-		// 	"level name=audiolevel interval=1000000000 post-messages=true ! "+
-		// 	"audioconvert ! audioresample quality=10 ! "+
-		// 	"level name=outputlevel interval=1000000000 post-messages=true ! "+
-		// 	"opusenc frame-size=20 complexity=10 bitrate=128000", *appSession.AudioSrc)
-		pipelineConfig := *appSession.AudioSrc
-
-		log.Printf("Using enhanced pipeline config: %s", pipelineConfig)
-
-		appSession.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, pipelineConfig)
+		appSession.GStreamerPipeline = gst.CreatePipeline("opus", []*webrtc.TrackLocalStaticSample{audioTrack}, *appSession.AudioSrc)
 
 		if appSession.GStreamerPipeline == nil {
-			log.Printf("[%s] Failed to create pipeline", appSession.Id)
+			log.Printf("[%s][PIPELINE] Failed to create pipeline", appSession.Id)
 			return
 		}
 
-		// Start monitoring audio levels
-		go monitorAudioLevels(appSession)
-
 		appSession.GStreamerPipeline.Start()
-		log.Printf("[%s] Pipeline created and started", appSession.Id)
+		log.Printf("[%s][PIPELINE] Pipeline created and started", appSession.Id)
 		close(pipelineReady)
 	}()
 
@@ -370,43 +415,6 @@ func startMediaPipeline(appSession *session.AppSession, audioTrack *webrtc.Track
 		return nil
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("timeout waiting for pipeline to start")
-	}
-}
-
-// why we need enhanced audio level monitoring:
-// - track audio flow through pipeline stages
-// - detect silence or low levels
-// - identify pipeline stalls
-func monitorAudioLevels(appSession *session.AppSession) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if appSession.GStreamerPipeline == nil || appSession.GStreamerPipeline.Pipeline == nil {
-			return
-		}
-
-		// Get stats from pipeline and WebRTC
-		stats := appSession.PeerConnection.GetStats()
-		var audioStats struct {
-			packetsReceived uint32
-			bytesReceived   uint64
-			packetsLost     int32
-		}
-
-		for _, stat := range stats {
-			if s, ok := stat.(*webrtc.InboundRTPStreamStats); ok {
-				audioStats.packetsReceived += s.PacketsReceived
-				audioStats.bytesReceived += s.BytesReceived
-				audioStats.packetsLost += s.PacketsLost
-			}
-		}
-
-		log.Printf("[%s][AUDIO] Stats - Packets: rx=%d lost=%d, Bytes: %d",
-			appSession.Id,
-			audioStats.packetsReceived,
-			audioStats.packetsLost,
-			audioStats.bytesReceived)
 	}
 }
 
@@ -449,13 +457,13 @@ func startSynthEngine(appSession *session.AppSession) error {
 	return nil
 }
 
+// why we need enhanced monitoring:
+// - detect and recover from connection issues
+// - track audio pipeline health
+// - provide detailed diagnostics
 func MonitorAudioPipeline(appSession *session.AppSession) {
 	appSession.MonitorDone = make(chan struct{})
 
-	// why we need enhanced monitoring:
-	// - detect and recover from connection issues
-	// - track audio pipeline health
-	// - provide detailed diagnostics
 	go func() {
 		fastTicker := time.NewTicker(3000 * time.Millisecond)
 		defer fastTicker.Stop()
@@ -498,39 +506,6 @@ func MonitorAudioPipeline(appSession *session.AppSession) {
 						} else if state == webrtc.ICEConnectionStateConnected {
 							consecutiveFailures = 0
 						}
-					}
-				}
-			}
-		}
-	}()
-
-	// Monitor WebRTC stats with enhanced logging
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-
-		var lastStats struct {
-			packetsLost int32
-			jitter      float64
-		}
-
-		for range ticker.C {
-			if appSession.PeerConnection != nil {
-				stats := appSession.PeerConnection.GetStats()
-				for _, stat := range stats {
-					switch s := stat.(type) {
-					case *webrtc.OutboundRTPStreamStats:
-						log.Printf("[%s] Outbound RTP: packets=%d bytes=%d",
-							appSession.Id, s.PacketsSent, s.BytesSent)
-					case *webrtc.InboundRTPStreamStats:
-						packetLossDelta := s.PacketsLost - lastStats.packetsLost
-						jitterDelta := s.Jitter - lastStats.jitter
-
-						log.Printf("[%s] Inbound RTP: packets=%d bytes=%d jitter=%v packet_loss_delta=%d jitter_delta=%f",
-							appSession.Id, s.PacketsReceived, s.BytesReceived, s.Jitter, packetLossDelta, jitterDelta)
-
-						lastStats.packetsLost = s.PacketsLost
-						lastStats.jitter = s.Jitter
 					}
 				}
 			}
@@ -748,9 +723,9 @@ func prepareMedia(appSession session.AppSession) (*webrtc.TrackLocalStaticSample
 }
 
 // why we need consistent peer connection setup:
-// - ensures proper ice configuration
-// - sets up port ranges and transport policies
-// - enables reliable webrtc connections
+// - forces turn relay to ensure production readiness
+// - logs detailed ice candidate info for debugging
+// - monitors active relay paths
 func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*webrtc.PeerConnection, error) {
 	// Get WebRTC API with configured settings
 	api, err := configureWebRTC()
@@ -758,7 +733,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		return nil, fmt.Errorf("failed to configure WebRTC: %v", err)
 	}
 
-	// Keep configuration minimal like the working example
+	// Force TURN relay for production reliability
 	config := webrtc.Configuration{
 		ICEServers: iceServers,
 		// ICETransportPolicy: webrtc.ICETransportPolicyRelay,
@@ -770,73 +745,36 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 		return nil, fmt.Errorf("failed to create peer connection: %v", err)
 	}
 
-	// Monitor ICE gathering state with enhanced logging
-	pc.OnICEGatheringStateChange(func(state webrtc.ICEGathererState) {
-		logWithTime("[ICE][%s] Gathering state changed to %s", sessionID, state.String())
-
-		// Log current candidates when gathering is complete
-		if state == webrtc.ICEGathererStateComplete {
-			stats := pc.GetStats()
-			for _, stat := range stats {
-				if s, ok := stat.(*webrtc.ICECandidateStats); ok {
-					logWithTime("[ICE][%s] Final candidate: type=%s protocol=%s address=%s:%d priority=%d",
-						sessionID, s.CandidateType, s.Protocol, s.IP, s.Port, s.Priority)
-				}
-			}
+	// Enhanced ICE candidate monitoring
+	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate == nil {
+			log.Printf("[%s][ICE] Finished gathering candidates", sessionID)
+			return
 		}
+
+		// Log detailed candidate info
+		log.Printf("[%s][ICE] New candidate - Type: %s, Protocol: %s, Address: %s:%d, RelAddr: %s:%d",
+			sessionID,
+			candidate.Typ,
+			candidate.Protocol,
+			candidate.Address,
+			candidate.Port,
+			candidate.RelatedAddress,
+			candidate.RelatedPort)
 	})
 
-	// Enhanced ICE connection state monitoring
+	// Monitor ICE connection state changes
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		logWithTime("[ICE][%s] Connection state changed to %s", sessionID, state.String())
+		log.Printf("[%s][ICE] Connection state changed to %s", sessionID, state.String())
 
-		if state == webrtc.ICEConnectionStateChecking {
-			logWithTime("[ICE][%s] Starting connectivity checks", sessionID)
-
-			// Log candidate pairs being checked
+		if state == webrtc.ICEConnectionStateConnected {
+			// Log selected candidate pair
 			stats := pc.GetStats()
 			for _, stat := range stats {
-				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok {
-					logWithTime("[ICE][%s] Checking pair: local=%s remote=%s state=%s nominated=%v",
-						sessionID, s.LocalCandidateID, s.RemoteCandidateID, s.State, s.Nominated)
-
-					// Log detailed candidate information
-					for _, stat2 := range stats {
-						if c, ok := stat2.(*webrtc.ICECandidateStats); ok {
-							if c.ID == s.LocalCandidateID {
-								logWithTime("[ICE][%s] Local candidate: type=%s protocol=%s address=%s:%d relayProtocol=%s",
-									sessionID, c.CandidateType, c.Protocol, c.IP, c.Port, c.RelayProtocol)
-							}
-							if c.ID == s.RemoteCandidateID {
-								logWithTime("[ICE][%s] Remote candidate: type=%s protocol=%s address=%s:%d relayProtocol=%s",
-									sessionID, c.CandidateType, c.Protocol, c.IP, c.Port, c.RelayProtocol)
-							}
-						}
-					}
+				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.State == "succeeded" {
+					log.Printf("[%s][ICE] Selected candidate pair - Local: %s, Remote: %s",
+						sessionID, s.LocalCandidateID, s.RemoteCandidateID)
 				}
-			}
-		} else if state == webrtc.ICEConnectionStateConnected {
-			// Log selected candidate pair when connection is established
-			stats := pc.GetStats()
-			for _, stat := range stats {
-				if s, ok := stat.(*webrtc.ICECandidatePairStats); ok && s.Nominated {
-					logWithTime("[ICE][%s] Selected pair: local=%s remote=%s state=%s",
-						sessionID, s.LocalCandidateID, s.RemoteCandidateID, s.State)
-				}
-			}
-		}
-	})
-
-	// Monitor individual ICE candidates with detailed logging
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		if c != nil {
-			logWithTime("[ICE][%s] New candidate: %s (type: %s, protocol: %s)",
-				sessionID, c.String(), c.Typ, c.Protocol)
-
-			// Log additional details for relay candidates
-			if c.Typ == webrtc.ICECandidateTypeRelay {
-				logWithTime("[ICE][%s] Relay details - address: %s:%d related: %s:%d raddr: %s rport: %d",
-					sessionID, c.Address, c.Port, c.RelatedAddress, c.RelatedPort, c.RelatedAddress, c.RelatedPort)
 			}
 		}
 	})

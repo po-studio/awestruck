@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/po-studio/server/synth"
@@ -44,6 +45,26 @@ func getSessionIDFromHeader(r *http.Request) (string, bool) {
 	return sessionID, true
 }
 
+// why we need organized audio pipeline configuration:
+// - centralize all audio setup in one place
+// - maintain consistent audio quality settings
+// - enable easy modification of pipeline parameters
+func buildGstreamerPipeline(id string) string {
+	// Build pipeline elements separately to ensure proper escaping and formatting
+	elements := []string{
+		// JACK source with explicit format
+		fmt.Sprintf("jackaudiosrc name=%s connect=0", id),
+		"audio/x-raw,rate=48000,channels=2",
+		// Audio processing with explicit caps
+		"audioconvert",
+		"audioresample quality=10",
+		"audio/x-raw,rate=48000,channels=2",
+	}
+
+	// Join elements with ' ! ' to create proper pipeline
+	return strings.Join(elements, " ! ")
+}
+
 func (sm *SessionManager) CreateSession(id string) *AppSession {
 	log.Printf("[SESSION] Creating new session: %s", id)
 	sm.mutex.Lock()
@@ -51,11 +72,11 @@ func (sm *SessionManager) CreateSession(id string) *AppSession {
 
 	appSession := &AppSession{}
 	appSession.Id = id
-	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
-	// audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s connect=0 buffer-time=100000 ! audio/x-raw,rate=48000,channels=2,format=F32LE ! audioconvert ! audioresample quality=10 ! audio/x-raw,rate=48000 ! queue max-size-buffers=1024 max-size-time=0 max-size-bytes=0 ! audioconvert", id)
-	audioSrcConfig := fmt.Sprintf("jackaudiosrc name=%s connect=0 ! audioconvert ! audioresample", id)
 
-	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio src")
+	audioSrcFlag := fmt.Sprintf("audio-src-%s", id)
+	audioSrcConfig := buildGstreamerPipeline(id)
+
+	appSession.AudioSrc = flag.String(audioSrcFlag, audioSrcConfig, "GStreamer audio pipeline")
 	appSession.Synth = synth.NewSuperColliderSynth(id)
 	appSession.Synth.SetOnClientName(func(clientName string) {
 		appSession.JackClientName = clientName
