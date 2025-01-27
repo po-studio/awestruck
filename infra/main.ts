@@ -473,7 +473,7 @@ class AwestruckInfrastructure extends TerraformStack {
           containerPort: 8080,
         }
       ],
-      dependsOn: [httpsListener],
+      dependsOn: [httpsListener, awestruckTargetGroup],
     });
 
     // why we need a turn log group:
@@ -571,7 +571,7 @@ class AwestruckInfrastructure extends TerraformStack {
         containerName: "turn-server",
         containerPort: 3478
       }],
-      dependsOn: [turnListener]
+      dependsOn: [turnListener, turnTargetGroup]
     });
 
     // Add CloudWatch dashboard for monitoring both services
