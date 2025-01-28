@@ -26,7 +26,7 @@ import { Eip } from "@cdktf/provider-aws/lib/eip";
 import * as dotenv from "dotenv";
 
 const TURN_MIN_PORT = process.env.TURN_MIN_PORT ? parseInt(process.env.TURN_MIN_PORT) : 49152;
-const TURN_MAX_PORT = process.env.TURN_MAX_PORT ? parseInt(process.env.TURN_MAX_PORT) : 49152;
+const TURN_MAX_PORT = process.env.TURN_MAX_PORT ? parseInt(process.env.TURN_MAX_PORT) : 49252;
 
 dotenv.config();
 
@@ -164,7 +164,7 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     const awestruckTargetGroup = new LbTargetGroup(this, "awestruck-tg", {
-      name: "awestruck-tg-new",
+      name: "awestruck-tg",
       port: 8080,
       protocol: "HTTP",
       targetType: "ip",
@@ -183,7 +183,7 @@ class AwestruckInfrastructure extends TerraformStack {
     });
 
     const alb = new Lb(this, "awestruck-alb", {
-      name: "awestruck-alb-new",
+      name: "awestruck-alb",
       internal: false,
       loadBalancerType: "application",
       securityGroups: [securityGroup.id],
@@ -581,10 +581,6 @@ class AwestruckInfrastructure extends TerraformStack {
       dashboardName: "awestruck-services",
       dashboardBody: JSON.stringify({
         widgets: [
-          // why we need connection failure analysis:
-          // - track exact timing of failures
-          // - identify failure patterns
-          // - correlate with ice/dtls events
           {
             type: "log",
             x: 0,
@@ -593,19 +589,15 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @timestamp > ago(1h) |
+                fields @timestamp, @message |
                 filter @message like /\\[ICE\\]|\\[WebRTC\\]|\\[DTLS\\]/ |
-                sort @timestamp asc |
-                display @timestamp, @message`,
+                sort @timestamp desc |
+                limit 100`,
               region: awsRegion,
               title: "Connection Event Timeline",
               view: "table"
             },
           },
-          // why we need ice candidate analysis:
-          // - verify relay candidates are generated
-          // - check candidate gathering process
-          // - identify networking issues
           {
             type: "log",
             x: 0,
@@ -614,9 +606,9 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @timestamp > ago(1h) |m
+                fields @timestamp, @message |
                 filter @message like /Processing candidate/ |
-                parse @message "*] Processing candidate: protocol=* address=* port=* priority=* type=*" as prefix, protocol, address, port, priority, type |
+                parse @message /Processing candidate: protocol=(?<protocol>\\S+) address=(?<address>\\S+) port=(?<port>\\d+) priority=(?<priority>\\d+) type=(?<type>\\S+)/ |
                 stats count(*) as count by type, protocol |
                 sort count desc`,
               region: awsRegion,
@@ -624,10 +616,6 @@ class AwestruckInfrastructure extends TerraformStack {
               view: "table"
             },
           },
-          // why we need audio pipeline tracing:
-          // - track audio flow from source to sink
-          // - identify where audio stops
-          // - debug pipeline configuration
           {
             type: "log",
             x: 12,
@@ -636,19 +624,15 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @timestamp > ago(1h) |
+                fields @timestamp, @message |
                 filter @message like /\\[AUDIO\\]|\\[GST\\]|Pipeline|JACK/ |
-                sort @timestamp asc |
-                display @timestamp, @message`,
+                sort @timestamp desc |
+                limit 100`,
               region: awsRegion,
               title: "Audio Pipeline Events",
               view: "table"
             },
           },
-          // why we need turn server diagnostics:
-          // - verify turn authentication
-          // - track relay allocation
-          // - monitor turn connectivity
           {
             type: "log",
             x: 0,
@@ -657,19 +641,15 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${turnLogGroup.name}' | 
-                filter @timestamp > ago(1h) |
+                fields @timestamp, @message |
                 filter @message like /Authentication|allocation|ERROR/ |
-                sort @timestamp asc |
-                display @timestamp, @message`,
+                sort @timestamp desc |
+                limit 100`,
               region: awsRegion,
               title: "TURN Server Events",
               view: "table"
             },
           },
-          // why we need session correlation:
-          // - track individual session lifecycle
-          // - correlate events across components
-          // - identify session-specific issues
           {
             type: "log",
             x: 12,
@@ -678,8 +658,8 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @timestamp > ago(1h) |
-                parse @message "*sid_*_*]*" as prefix, session_id, suffix |
+                fields @timestamp, @message |
+                parse @message /sid_(?<session_id>[^_]+)/ |
                 stats count(*) as event_count by session_id |
                 sort event_count desc |
                 limit 10`,
@@ -688,10 +668,6 @@ class AwestruckInfrastructure extends TerraformStack {
               view: "table"
             },
           },
-          // why we need error correlation:
-          // - identify cascading failures
-          // - track error sequences
-          // - find root causes
           {
             type: "log",
             x: 0,
@@ -700,10 +676,10 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @timestamp > ago(1h) |
+                fields @timestamp, @message |
                 filter @message like /ERROR|WARN|failed|disconnected/ |
-                sort @timestamp asc |
-                display @timestamp, @message`,
+                sort @timestamp desc |
+                limit 100`,
               region: awsRegion,
               title: "Error Timeline",
               view: "table"
