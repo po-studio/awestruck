@@ -67,23 +67,13 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    const subnet1 = new Subnet(this, "awestruck-subnet-1", {
+    const subnet = new Subnet(this, "awestruck-subnet-1", {
       vpcId: vpc.id,
       cidrBlock: "10.0.1.0/24",
       availabilityZone: "us-east-1a",
       mapPublicIpOnLaunch: true,
       tags: {
         Name: "awestruck-subnet-1",
-      },
-    });
-
-    const subnet2 = new Subnet(this, "awestruck-subnet-2", {
-      vpcId: vpc.id,
-      cidrBlock: "10.0.2.0/24",
-      availabilityZone: "us-east-1b",
-      mapPublicIpOnLaunch: true,
-      tags: {
-        Name: "awestruck-subnet-2",
       },
     });
 
@@ -100,13 +90,8 @@ class AwestruckInfrastructure extends TerraformStack {
       gatewayId: internetGateway.id,
     });
 
-    new RouteTableAssociation(this, "subnet1-route-table-association", {
-      subnetId: subnet1.id,
-      routeTableId: routeTable.id,
-    });
-
-    new RouteTableAssociation(this, "subnet2-route-table-association", {
-      subnetId: subnet2.id,
+    new RouteTableAssociation(this, "subnet-route-table-association", {
+      subnetId: subnet.id,
       routeTableId: routeTable.id,
     });
 
@@ -202,7 +187,7 @@ class AwestruckInfrastructure extends TerraformStack {
       internal: false,
       loadBalancerType: "application",
       securityGroups: [securityGroup.id],
-      subnets: [subnet1.id, subnet2.id],
+      subnets: [subnet.id],
     });
 
     const hostedZone = new DataAwsRoute53Zone(this, "hosted-zone", {
@@ -318,7 +303,7 @@ class AwestruckInfrastructure extends TerraformStack {
       internal: false,
       loadBalancerType: "network",
       subnetMapping: [{
-        subnetId: subnet1.id,
+        subnetId: subnet.id,
         allocationId: turnElasticIp.allocationId
       }],
       enableCrossZoneLoadBalancing: false,
@@ -366,9 +351,9 @@ class AwestruckInfrastructure extends TerraformStack {
         port: "3479",
         protocol: "HTTP",
         path: "/",
-        interval: 10,  // More frequent checks
-        timeout: 5,    // Shorter timeout
-        healthyThreshold: 2,  // Faster to become healthy
+        interval: 10,
+        timeout: 5,
+        healthyThreshold: 2,
         unhealthyThreshold: 3,
         matcher: "200-299"  // Match the TURN server's 200 OK response
       }
@@ -480,7 +465,7 @@ class AwestruckInfrastructure extends TerraformStack {
       forceNewDeployment: true,
       networkConfiguration: {
         assignPublicIp: true,
-        subnets: [subnet1.id, subnet2.id],
+        subnets: [subnet.id],
         securityGroups: [securityGroup.id],
       },
       loadBalancer: [
@@ -580,7 +565,7 @@ class AwestruckInfrastructure extends TerraformStack {
       forceNewDeployment: true,
       networkConfiguration: {
         assignPublicIp: true,
-        subnets: [subnet1.id, subnet2.id],
+        subnets: [subnet.id],
         securityGroups: [securityGroup.id],
       },
       loadBalancer: [{
@@ -629,7 +614,7 @@ class AwestruckInfrastructure extends TerraformStack {
             height: 6,
             properties: {
               query: `SOURCE '${webrtcLogGroup.name}' | 
-                filter @timestamp > ago(1h) |
+                filter @timestamp > ago(1h) |m
                 filter @message like /Processing candidate/ |
                 parse @message "*] Processing candidate: protocol=* address=* port=* priority=* type=*" as prefix, protocol, address, port, priority, type |
                 stats count(*) as count by type, protocol |
