@@ -25,6 +25,9 @@ import { CloudwatchDashboard } from "@cdktf/provider-aws/lib/cloudwatch-dashboar
 import { Eip } from "@cdktf/provider-aws/lib/eip";
 import * as dotenv from "dotenv";
 
+const TURN_MIN_PORT = process.env.TURN_MIN_PORT ? parseInt(process.env.TURN_MIN_PORT) : 49152;
+const TURN_MAX_PORT = process.env.TURN_MAX_PORT ? parseInt(process.env.TURN_MAX_PORT) : 49152;
+
 dotenv.config();
 
 class AwestruckInfrastructure extends TerraformStack {
@@ -149,8 +152,8 @@ class AwestruckInfrastructure extends TerraformStack {
           // - allows dynamic port allocation for webrtc media
           // - matches docker-compose configuration
           // - ensures consistent port range across environments
-          fromPort: 49152,
-          toPort: 49252,
+          fromPort: TURN_MIN_PORT,
+          toPort: TURN_MAX_PORT,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
@@ -526,9 +529,9 @@ class AwestruckInfrastructure extends TerraformStack {
               // - enables dynamic port allocation for media relay
               // - matches security group configuration
               // - required for webrtc streaming through turn
-              ...Array.from({ length: 49252 - 49152 + 1 }, (_, i) => ({
-                containerPort: 49152 + i,
-                hostPort: 49152 + i,
+              ...Array.from({ length: TURN_MAX_PORT - TURN_MIN_PORT + 1 }, (_, i) => ({
+                containerPort: TURN_MIN_PORT + i,
+                hostPort: TURN_MIN_PORT + i,
                 protocol: "udp"
               }))
             ],
@@ -540,8 +543,8 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_USERNAME", value: "awestruck_user" },
               { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" },
               { name: "USERS", value: "awestruck_user=verySecurePassword1234567890abcdefghijklmnop" },
-              { name: "MIN_PORT", value: "49152" },
-              { name: "MAX_PORT", value: "49252" }
+              { name: "MIN_PORT", value: TURN_MIN_PORT.toString() },
+              { name: "MAX_PORT", value: TURN_MAX_PORT.toString() }
             ],
             logConfiguration: {
               logDriver: "awslogs",

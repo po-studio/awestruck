@@ -22,6 +22,8 @@ services:
       - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
+      - TURN_MIN_PORT=${TURN_MIN_PORT}
+      - TURN_MAX_PORT=${TURN_MAX_PORT}
       # MAYBE REMOVE?
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
       # AUDIO SETTINGS
@@ -52,7 +54,7 @@ services:
     ports:
       - "3478:3478/udp"  # TURN UDP
       - "3479:3479/tcp"  # TURN control
-      - "49152-49252:49152-49252/udp"  # TURN relay ports
+      - "${TURN_MIN_PORT}-${TURN_MAX_PORT}:${TURN_MIN_PORT}-${TURN_MAX_PORT}/udp"  # TURN relay ports
     environment:
       - AWESTRUCK_ENV=development
       - TURN_REALM=localhost
@@ -60,8 +62,8 @@ services:
       - USERS=awestruck_user=verySecurePassword1234567890abcdefghijklmnop
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
-      - MIN_PORT=49152
-      - MAX_PORT=49252
+      - TURN_MIN_PORT=${TURN_MIN_PORT}
+      - TURN_MAX_PORT=${TURN_MAX_PORT}
       - HEALTH_PORT=3479
     # why we need health checks:
     # - ensures service is ready before use

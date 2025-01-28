@@ -98,18 +98,24 @@ func main() {
 		panic("PUBLIC_IP is not set")
 	}
 
-	minPort := 49152
-	if portStr := os.Getenv("MIN_PORT"); portStr != "" {
-		if port, err := strconv.Atoi(portStr); err == nil {
-			minPort = port
-		}
+	minPortStr := os.Getenv("TURN_MIN_PORT")
+	if minPortStr == "" {
+		panic("TURN_MIN_PORT is not set")
 	}
 
-	maxPort := 49252
-	if portStr := os.Getenv("MAX_PORT"); portStr != "" {
-		if port, err := strconv.Atoi(portStr); err == nil {
-			maxPort = port
-		}
+	maxPortStr := os.Getenv("TURN_MAX_PORT")
+	if maxPortStr == "" {
+		panic("TURN_MAX_PORT is not set")
+	}
+
+	minPort, err := strconv.Atoi(minPortStr)
+	if err != nil {
+		panic("TURN_MIN_PORT is not a valid integer")
+	}
+
+	maxPort, err := strconv.Atoi(maxPortStr)
+	if err != nil {
+		panic("TURN_MAX_PORT is not a valid integer")
 	}
 
 	// Create UDP listener

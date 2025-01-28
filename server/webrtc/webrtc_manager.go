@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,8 +42,8 @@ type ICECandidateRequest struct {
 // - ensures authentication works
 // - meets webrtc security requirements
 func getICECredentials() (string, string) {
-	username := config.GetTurnUsername()
-	password := config.GetTurnPassword()
+	username := config.Get().TurnUsername
+	password := config.Get().TurnPassword
 
 	// Log TURN credentials being used (but not the actual values)
 	log.Printf("[TURN] Using credentials for user: %s", username)
@@ -54,7 +55,7 @@ func getICECredentials() (string, string) {
 // - ensures reliable ice candidate generation
 // - prevents permission errors
 func getICEServers() []webrtc.ICEServer {
-	hostname := config.GetTurnServerHost()
+	hostname := config.Get().TurnServerHost
 	username, password := getICECredentials()
 
 	// Create TURN server configuration
@@ -97,8 +98,19 @@ func configureWebRTC() (*webrtc.API, error) {
 	// - ensures consistent port allocation
 	// - prevents permission errors
 	s := webrtc.SettingEngine{}
-	// not sure we need this...
-	s.SetEphemeralUDPPortRange(49152, 49252)
+	minPort, err := strconv.Atoi(config.Get().TurnMinPort)
+	if err != nil {
+		log.Fatalf("Invalid TURN_MIN_PORT: %v", err)
+	}
+	maxPort, err := strconv.Atoi(config.Get().TurnMaxPort)
+	if err != nil {
+		log.Fatalf("Invalid TURN_MAX_PORT: %v", err)
+	}
+
+	s.SetEphemeralUDPPortRange(
+		uint16(minPort),
+		uint16(maxPort),
+	)
 
 	return webrtc.NewAPI(
 		webrtc.WithMediaEngine(m),
