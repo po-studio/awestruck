@@ -56,6 +56,7 @@ build:
 		--cache-from $(ECR_WEBRTC_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-new \
 		-t $(IMAGE_NAME):latest \
+		-f Dockerfile \
 		--load .
 	@rm -rf /tmp/.buildx-cache
 	@mv /tmp/.buildx-cache-new /tmp/.buildx-cache

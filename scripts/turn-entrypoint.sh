@@ -16,16 +16,16 @@ if [ -z "$USERS" ]; then
 fi
 
 # Set default values if not provided
-REALM=${REALM:-"localhost"}
+TURN_REALM=${TURN_REALM:-"awestruck.io"}
 UDP_PORT=${UDP_PORT:-3478}
 
 echo "Starting TURN server with configuration:"
 echo "Public IP: $PUBLIC_IP"
 echo "UDP Port: $UDP_PORT"
-echo "Realm: $REALM"
+echo "Realm: $TURN_REALM"
 
 exec /app/turn-server \
     -public-ip "$PUBLIC_IP" \
     -port "$UDP_PORT" \
     -users "$USERS" \
-    -realm "$REALM" 
+    -realm "$TURN_REALM" 
