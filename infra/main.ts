@@ -430,6 +430,8 @@ class AwestruckInfrastructure extends TerraformStack {
               // - maintains stable addressing even if ip changes
               // - matches dns record for turn service
               { name: "TURN_SERVER_HOST", value: turnDnsRecord.name },
+              { name: "TURN_MIN_PORT", value: TURN_MIN_PORT.toString() },
+              { name: "TURN_MAX_PORT", value: TURN_MAX_PORT.toString() },
               { name: "TURN_USERNAME", value: "awestruck_user" },
               { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" }
             ],
@@ -469,8 +471,8 @@ class AwestruckInfrastructure extends TerraformStack {
     // - separates concerns from other services
     // - enables independent scaling
     // - simplifies monitoring and maintenance
-    new EcsService(this, "webrtc-service", {
-      name: "webrtc-service",
+    new EcsService(this, "awestruck-webrtc-service", {
+      name: "awestruck-webrtc-service",
       cluster: ecsCluster.arn,
       taskDefinition: webrtcTaskDefinition.arn,
       desiredCount: 1,
@@ -543,8 +545,8 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "TURN_USERNAME", value: "awestruck_user" },
               { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" },
               { name: "USERS", value: "awestruck_user=verySecurePassword1234567890abcdefghijklmnop" },
-              { name: "MIN_PORT", value: TURN_MIN_PORT.toString() },
-              { name: "MAX_PORT", value: TURN_MAX_PORT.toString() }
+              { name: "TURN_MIN_PORT", value: TURN_MIN_PORT.toString() },
+              { name: "TURN_MAX_PORT", value: TURN_MAX_PORT.toString() }
             ],
             logConfiguration: {
               logDriver: "awslogs",
