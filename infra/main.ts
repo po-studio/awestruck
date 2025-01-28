@@ -361,12 +361,13 @@ class AwestruckInfrastructure extends TerraformStack {
       healthCheck: {
         enabled: true,
         port: "3479",
-        protocol: "TCP",
+        protocol: "HTTP",
+        path: "/",
         interval: 10,  // More frequent checks
         timeout: 5,    // Shorter timeout
         healthyThreshold: 2,  // Faster to become healthy
         unhealthyThreshold: 3,
-        matcher: "200-299"  // Expect HTTP success codes
+        matcher: "200-299"  // Match the TURN server's 200 OK response
       }
     });
 
