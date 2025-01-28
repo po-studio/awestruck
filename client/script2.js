@@ -326,9 +326,44 @@ async function start() {
         }
         const config = await configResponse.json();
         
-        // Force TURN relay for testing
-        config.iceTransportPolicy = 'relay';
-        Logger.ice('Using ICE configuration', config);
+        // why we need proper ice configuration:
+        // - allows both stun and turn
+        // - validates url formats
+        // - ensures connectivity options
+        config.iceTransportPolicy = 'all';
+        
+        // Validate ICE configuration
+        if (!config.iceServers || !config.iceServers.length) {
+            throw new Error('No ICE servers provided');
+        }
+        
+        const iceServer = config.iceServers[0];
+        if (!iceServer.urls || !iceServer.urls.length) {
+            throw new Error('No ICE server URLs provided');
+        }
+        
+        // Validate URL formats
+        iceServer.urls.forEach(url => {
+            if (url.startsWith('turn:') && !url.includes('?transport=')) {
+                Logger.ice('Warning: TURN URL missing transport parameter', url);
+            }
+            if (url.startsWith('stun:') && url.includes('?transport=')) {
+                Logger.ice('Warning: STUN URL should not have transport parameter', url);
+            }
+        });
+
+        // Only require credentials for TURN
+        if (iceServer.urls.some(url => url.startsWith('turn:')) && 
+            (!iceServer.username || !iceServer.credential)) {
+            throw new Error('Missing TURN credentials');
+        }
+        
+        Logger.ice('Using ICE configuration', {
+            urls: iceServer.urls,
+            username: iceServer.username,
+            credentialProvided: !!iceServer.credential,
+            iceTransportPolicy: config.iceTransportPolicy
+        });
 
         const pc = new RTCPeerConnection(config);
         const sessionId = SessionManager.getSessionId();

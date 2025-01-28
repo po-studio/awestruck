@@ -58,17 +58,21 @@ func getICEServers() []webrtc.ICEServer {
 	hostname := config.Get().TurnServerHost
 	username, password := getICECredentials()
 
-	// Create TURN server configuration
+	// why we need both stun and turn:
+	// - stun for connectivity check
+	// - turn for media relay
+	// - proper url formatting for each
 	turnServer := webrtc.ICEServer{
 		URLs: []string{
-			fmt.Sprintf("turn:%s:3478?transport=udp", hostname),
+			fmt.Sprintf("turn:%s:3478?transport=udp", hostname), // TURN needs transport
+			fmt.Sprintf("stun:%s:3478", hostname),               // STUN doesn't need transport
 		},
 		Username:       username,
 		Credential:     password,
 		CredentialType: webrtc.ICECredentialTypePassword,
 	}
 
-	log.Printf("[ICE] Configured TURN server: %s", hostname)
+	log.Printf("[ICE] Configured ICE servers: %s with user: %s", hostname, username)
 	return []webrtc.ICEServer{turnServer}
 }
 
@@ -78,7 +82,7 @@ func getICEServers() []webrtc.ICEServer {
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
 	config := webrtc.Configuration{
 		ICEServers:         getICEServers(),
-		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -711,7 +715,7 @@ func createPeerConnection(iceServers []webrtc.ICEServer, sessionID string) (*web
 
 	config := webrtc.Configuration{
 		ICEServers:         iceServers,
-		ICETransportPolicy: webrtc.ICETransportPolicyRelay,
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
 	}
 
 	pc, err := api.NewPeerConnection(config)
