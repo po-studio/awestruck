@@ -67,13 +67,13 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    const subnet = new Subnet(this, "awestruck-subnet-1", {
+    const subnet = new Subnet(this, "awestruck-subnet", {
       vpcId: vpc.id,
       cidrBlock: "10.0.1.0/24",
       availabilityZone: "us-east-1a",
       mapPublicIpOnLaunch: true,
       tags: {
-        Name: "awestruck-subnet-1",
+        Name: "awestruck-subnet",
       },
     });
 
@@ -163,48 +163,9 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
-    const awestruckTargetGroup = new LbTargetGroup(this, "awestruck-tg", {
-      name: "awestruck-tg",
-      port: 8080,
-      protocol: "HTTP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        path: "/",
-        port: "8080",
-        protocol: "HTTP",
-        healthyThreshold: 2,
-        unhealthyThreshold: 3,
-        interval: 5,
-        timeout: 2,
-        matcher: "200-299"
-      },
-    });
-
-    const alb = new Lb(this, "awestruck-alb", {
-      name: "awestruck-alb",
-      internal: false,
-      loadBalancerType: "application",
-      securityGroups: [securityGroup.id],
-      subnets: [subnet.id],
-    });
-
     const hostedZone = new DataAwsRoute53Zone(this, "hosted-zone", {
       name: "awestruck.io",
       privateZone: false,
-    });
-
-    new Route53Record(this, "awestruck-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "awestruck.io",
-      type: "A",
-      allowOverwrite: true,
-      alias: {
-        name: alb.dnsName,
-        zoneId: alb.zoneId,
-        evaluateTargetHealth: true,
-      },
     });
 
     const ecsCluster = new EcsCluster(this, "awestruck-cluster", {
