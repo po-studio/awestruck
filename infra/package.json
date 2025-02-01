@@ -14,7 +14,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "upgrade": "npm i cdktf@latest cdktf-cli@latest",
-    "upgrade:next": "npm i cdktf@next cdktf-cli@next"
+    "upgrade:next": "npm i cdktf@next cdktf-cli@next",
+    "deploy": "npm run build && npm run synth && cdktf deploy --auto-approve"
   },
   "engines": {
     "node": ">=18.0"

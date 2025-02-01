@@ -1,60 +1,77 @@
 version: '3.8'
 
-services:
-  coturn:
-    platform: linux/arm64
-    image: coturn/coturn:latest
-    container_name: coturn
-    volumes:
-      - ./config/turnserver.dev.conf:/etc/coturn/turnserver.conf:ro
-    command: ["-c", "/etc/coturn/turnserver.conf"]
-    restart: unless-stopped
-    network_mode: host
-    ports:
-      - "3478:3478"
-      - "3478:3478/udp"
-      - "49152-65535:49152-65535/udp"
+networks:
+  frontend:
+    name: frontend
+  backend:
+    name: backend
 
+services:
   webrtc-server:
-    platform: linux/arm64
     build:
       context: .
       dockerfile: Dockerfile
-      platforms:
-        - linux/arm64
-    container_name: go-webrtc-server-arm64
+    networks:
+      - backend
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
       - ./client:/app/client
-      - ./supercollider/src:/app/supercollider/src
-      - ./supercollider/synthdefs:/app/supercollider/synthdefs
-    network_mode: host
-    shm_size: 1g
-    security_opt:
-      - seccomp:unconfined
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-      stack:
-        soft: 67108864
-        hard: 67108864
-      rtprio: 99
+      - ./supercollider:/app/supercollider
+      - ./server:/app/server
     environment:
-      - TURN_PASSWORD=password
-      - JACK_NO_AUDIO_RESERVATION=1
-      - JACK_OPTIONS=-R -d dummy
-      - JACK_SAMPLE_RATE=48000
-      - GST_DEBUG=2
+      - AWESTRUCK_ENV=development
+      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
+      - TURN_USERNAME=awestruck_user
+      - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
+      - TURN_MIN_PORT=${TURN_MIN_PORT}
+      - TURN_MAX_PORT=${TURN_MAX_PORT}
+      # MAYBE REMOVE?
       - XDG_RUNTIME_DIR=/tmp/runtime-appuser
-      - ENVIRONMENT=development
+      # AUDIO SETTINGS
+      - GST_DEBUG=2
+      - GST_BUFFER_SIZE=4194304
+      - JACK_NO_AUDIO_RESERVATION=1
+      - JACK_PORT_MAX=128
+      - JACK_PERIOD_SIZE=1024
+      - JACK_PERIODS=2
+      - JACK_PRIORITY=95
+      - JACK_REALTIME_PRIORITY=95
+      - JACK_TIMEOUT=2000
+      - JACK_BUFFER_SIZE=2048
+      # SECRETS
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
-    depends_on:
-      - coturn
-    cap_add:
-      - SYS_NICE
     ports:
-      - "8080:8080"  # HTTP server
-      - "49152-65535:49152-65535/udp"  # WebRTC media ports
-      - "10000-10100:10000-10100"
+      - "8080:8080"
+    depends_on:
+      turn-server:
+        condition: service_healthy
+  turn-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.turn
+    networks:
+      - backend
+    ports:
+      - "3478:3478/udp"  # TURN UDP
+      - "3479:3479/tcp"  # TURN control
+      - "${TURN_MIN_PORT}-${TURN_MAX_PORT}:${TURN_MIN_PORT}-${TURN_MAX_PORT}/udp"  # TURN relay ports
+    environment:
+      - AWESTRUCK_ENV=development
+      - TURN_REALM=localhost
+      - PUBLIC_IP=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
+      - USERS=awestruck_user=verySecurePassword1234567890abcdefghijklmnop
+      - TURN_USERNAME=awestruck_user
+      - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
+      - TURN_MIN_PORT=${TURN_MIN_PORT}
+      - TURN_MAX_PORT=${TURN_MAX_PORT}
+      - HEALTH_PORT=3479
+    # why we need health checks:
+    # - ensures service is ready before use
+    # - matches aws health check behavior
+    # - enables local development testing
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3479"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s

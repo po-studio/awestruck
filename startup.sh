@@ -1,8 +1,11 @@
 #!/bin/bash
 set -e
 
-echo "Starting JACK..."
-jackd $JACK_OPTIONS -r $JACK_SAMPLE_RATE &
+# why we need explicit jack configuration:
+# - ensures consistent audio buffering across environments
+# - prevents xruns in cloud deployment
+# - maintains stability in non-realtime environment
+jackd --no-realtime -d dummy --rate 48000 --period 1024 --wait 21333 --playback 2 --capture 2 &
 JACK_PID=$!
 
 sleep 2

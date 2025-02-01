@@ -1,33 +1,32 @@
+import { App } from "cdktf";
 import { Construct } from "constructs";
-import { App, TerraformStack } from "cdktf";
+import { TerraformStack, TerraformOutput } from "cdktf";
 import { AwsProvider } from "@cdktf/provider-aws/lib/provider";
 import { Vpc } from "@cdktf/provider-aws/lib/vpc";
-import { InternetGateway } from "@cdktf/provider-aws/lib/internet-gateway";
-import { Subnet } from "@cdktf/provider-aws/lib/subnet";
-import { RouteTable } from "@cdktf/provider-aws/lib/route-table";
-import { Route } from "@cdktf/provider-aws/lib/route";
-import { RouteTableAssociation } from "@cdktf/provider-aws/lib/route-table-association";
 import { SecurityGroup } from "@cdktf/provider-aws/lib/security-group";
-import { Lb as AlbLoadBalancer } from "@cdktf/provider-aws/lib/lb";
-import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
-import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
+import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
+import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
 import { EcsCluster } from "@cdktf/provider-aws/lib/ecs-cluster";
 import { EcsService } from "@cdktf/provider-aws/lib/ecs-service";
 import { EcsTaskDefinition } from "@cdktf/provider-aws/lib/ecs-task-definition";
 import { IamRole } from "@cdktf/provider-aws/lib/iam-role";
 import { IamRolePolicyAttachment } from "@cdktf/provider-aws/lib/iam-role-policy-attachment";
+import { Subnet } from "@cdktf/provider-aws/lib/subnet";
+import { InternetGateway } from "@cdktf/provider-aws/lib/internet-gateway";
+import { RouteTable } from "@cdktf/provider-aws/lib/route-table";
+import { RouteTableAssociation } from "@cdktf/provider-aws/lib/route-table-association";
+import { Route } from "@cdktf/provider-aws/lib/route";
+import { Lb } from "@cdktf/provider-aws/lib/lb";
+import { LbTargetGroup } from "@cdktf/provider-aws/lib/lb-target-group";
+import { LbListener } from "@cdktf/provider-aws/lib/lb-listener";
 import { CloudwatchLogGroup } from "@cdktf/provider-aws/lib/cloudwatch-log-group";
-import { DataAwsRoute53Zone } from "@cdktf/provider-aws/lib/data-aws-route53-zone";
-import { Route53Record } from "@cdktf/provider-aws/lib/route53-record";
-import { Instance } from "@cdktf/provider-aws/lib/instance";
-import { SecurityGroupRule } from "@cdktf/provider-aws/lib/security-group-rule";
-import { TerraformOutput } from "cdktf";
-import * as dotenv from "dotenv";
 import { SsmParameter } from "@cdktf/provider-aws/lib/ssm-parameter";
-import { IamInstanceProfile } from "@cdktf/provider-aws/lib/iam-instance-profile";
-import { DataAwsAmi } from "@cdktf/provider-aws/lib/data-aws-ami";
+import { CloudwatchDashboard } from "@cdktf/provider-aws/lib/cloudwatch-dashboard";
 import { Eip } from "@cdktf/provider-aws/lib/eip";
-import { EipAssociation } from "@cdktf/provider-aws/lib/eip-association";
+import * as dotenv from "dotenv";
+
+const TURN_MIN_PORT = process.env.TURN_MIN_PORT ? parseInt(process.env.TURN_MIN_PORT) : 49152;
+const TURN_MAX_PORT = process.env.TURN_MAX_PORT ? parseInt(process.env.TURN_MAX_PORT) : 49252;
 
 dotenv.config();
 
@@ -40,130 +39,13 @@ class AwestruckInfrastructure extends TerraformStack {
     const sslCertificateArn =
       process.env.SSL_CERTIFICATE_ARN ||
       this.node.tryGetContext("sslCertificateArn");
-    const turnPassword =
-      process.env.TURN_PASSWORD || this.node.tryGetContext("turnPassword");
     const awsRegion = this.node.tryGetContext("awsRegion") || "us-east-1";
 
-    if (!awsAccountId || !sslCertificateArn || !turnPassword) {
+    if (!awsAccountId || !sslCertificateArn) {
       throw new Error(
-        "AWS_ACCOUNT_ID, SSL_CERTIFICATE_ARN, and TURN_PASSWORD must be set in environment variables or cdktf.json context"
+        "AWS_ACCOUNT_ID and SSL_CERTIFICATE_ARN must be set in environment variables or cdktf.json context"
       );
     }
-    const coturnElasticIp = new Eip(this, "coturn-eip", {
-      vpc: true,
-      tags: {
-        Name: "coturn-eip",
-      },
-    });
-
-    const userData = `#!/bin/bash
-    exec 1> >(logger -s -t $(basename $0)) 2>&1
-
-    yum update -y
-    amazon-linux-extras enable epel
-    yum install -y epel-release
-    yum install -y coturn amazon-cloudwatch-agent
-
-    # Create required directories
-    mkdir -p /etc/coturn /var/log/coturn /run/coturn
-    chmod 755 /etc/coturn /var/log/coturn /run/coturn
-    chown turnserver:turnserver /run/coturn
-
-    # Create systemd override directory
-    mkdir -p /etc/systemd/system/coturn.service.d/
-
-    # Create override file
-    cat > /etc/systemd/system/coturn.service.d/override.conf <<EOF
-    [Service]
-    RuntimeDirectory=coturn
-    RuntimeDirectoryMode=0755
-    PIDFile=/run/coturn/turnserver.pid
-    EOF
-
-    # Reload systemd
-    systemctl daemon-reload
-
-    # Get instance IPs
-    LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-    ELASTIC_IP=${coturnElasticIp.publicIp}
-
-    # Configure TURN server
-    cat > /etc/coturn/turnserver.conf <<EOF
-    # Network settings
-    listening-port=3478
-    listening-ip=$LOCAL_IP
-    relay-ip=$LOCAL_IP
-    external-ip=$ELASTIC_IP/$LOCAL_IP
-    min-port=49152
-    max-port=65535
-
-    # Authentication
-    lt-cred-mech
-    user=awestruck:${turnPassword}
-    realm=awestruck.io
-
-    # Logging
-    log-file=/var/log/coturn/turnserver.log
-    verbose
-
-    # Performance and security
-    no-multicast-peers
-    no-cli
-    mobility
-    fingerprint
-
-    cli-password=password
-    total-quota=100
-    max-bps=0
-    no-auth-pings
-    no-tlsv1
-    no-tlsv1_1
-    stale-nonce=0
-    cipher-list="ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
-    syslog
-    log-binding
-    log-allocate
-    debug
-    extra-logging
-    trace
-    verbose
-    log-binding
-    log-allocate
-    EOF
-
-    # Configure and start CloudWatch agent
-    cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
-    {
-      "logs": {
-          "logs_collected": {
-              "files": {
-                  "collect_list": [
-                      {
-                          "file_path": "/var/log/coturn/turnserver.log",
-                          "log_group_name": "/coturn/turnserver",
-                          "log_stream_name": "{instance_id}",
-                          "timezone": "UTC"
-                      },
-                      {
-                          "file_path": "/var/log/syslog",
-                          "log_group_name": "/coturn/system",
-                          "log_stream_name": "{instance_id}",
-                          "timezone": "UTC"
-                      }
-                  ]
-              }
-          }
-      }
-    }
-    EOF
-
-    systemctl enable amazon-cloudwatch-agent
-    systemctl start amazon-cloudwatch-agent
-
-    # Finally, start COTURN
-    systemctl enable coturn
-    systemctl start coturn
-    `;
 
     new AwsProvider(this, "AWS", {
       region: awsRegion,
@@ -172,6 +54,7 @@ class AwestruckInfrastructure extends TerraformStack {
     const vpc = new Vpc(this, "awestruck-vpc", {
       cidrBlock: "10.0.0.0/16",
       enableDnsHostnames: true,
+      enableDnsSupport: true,
       tags: {
         Name: "awestruck-vpc",
       },
@@ -184,23 +67,13 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    const subnet1 = new Subnet(this, "awestruck-subnet-1", {
+    const subnet = new Subnet(this, "awestruck-subnet", {
       vpcId: vpc.id,
       cidrBlock: "10.0.1.0/24",
       availabilityZone: "us-east-1a",
       mapPublicIpOnLaunch: true,
       tags: {
-        Name: "awestruck-subnet-1",
-      },
-    });
-
-    const subnet2 = new Subnet(this, "awestruck-subnet-2", {
-      vpcId: vpc.id,
-      cidrBlock: "10.0.2.0/24",
-      availabilityZone: "us-east-1b",
-      mapPublicIpOnLaunch: true,
-      tags: {
-        Name: "awestruck-subnet-2",
+        Name: "awestruck-subnet",
       },
     });
 
@@ -217,13 +90,8 @@ class AwestruckInfrastructure extends TerraformStack {
       gatewayId: internetGateway.id,
     });
 
-    new RouteTableAssociation(this, "subnet1-route-table-association", {
-      subnetId: subnet1.id,
-      routeTableId: routeTable.id,
-    });
-
-    new RouteTableAssociation(this, "subnet2-route-table-association", {
-      subnetId: subnet2.id,
+    new RouteTableAssociation(this, "subnet-route-table-association", {
+      subnetId: subnet.id,
       routeTableId: routeTable.id,
     });
 
@@ -245,23 +113,45 @@ class AwestruckInfrastructure extends TerraformStack {
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          fromPort: 10000, // change to 49152? see min-port
-          toPort: 65535,
-          protocol: "udp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
-        {
+          // why we need turn control port:
+          // - allows stun/turn control traffic from clients
+          // - enables nat traversal via turn
+          // - required for webrtc ice connectivity
           fromPort: 3478,
           toPort: 3478,
           protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
         {
-          fromPort: 3478,
-          toPort: 3478,
+          // why we need health check port:
+          // - enables nlb health checks via tcp
+          // - ensures service availability monitoring
+          // - required for target group registration
+          fromPort: 3479,
+          toPort: 3479,
           protocol: "tcp",
+          cidrBlocks: [vpc.cidrBlock],
+        },
+        {
+          // why we need ephemeral ports:
+          // - allows dynamic port allocation for webrtc media
+          // - matches docker-compose configuration
+          // - ensures consistent port range across environments
+          fromPort: TURN_MIN_PORT,
+          toPort: TURN_MAX_PORT,
+          protocol: "udp",
           cidrBlocks: ["0.0.0.0/0"],
         },
+        {
+          // why we need internal vpc traffic:
+          // - allows nlb health checks
+          // - enables turn server communication
+          // - required for service discovery
+          fromPort: 0,
+          toPort: 0,
+          protocol: "-1",
+          cidrBlocks: [vpc.cidrBlock],
+        }
       ],
       egress: [
         {
@@ -273,44 +163,9 @@ class AwestruckInfrastructure extends TerraformStack {
       ],
     });
 
-    const targetGroup = new LbTargetGroup(this, "awestruck-tg", {
-      name: "awestruck-tg-new",
-      port: 8080,
-      protocol: "HTTP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        path: "/",
-        interval: 30,
-      },
-    });
-
-    const alb = new AlbLoadBalancer(this, "awestruck-alb", {
-      name: "awestruck-alb-new",
-      internal: false,
-      loadBalancerType: "application",
-      securityGroups: [securityGroup.id],
-      subnets: [subnet1.id, subnet2.id],
-    });
-
     const hostedZone = new DataAwsRoute53Zone(this, "hosted-zone", {
       name: "awestruck.io",
       privateZone: false,
-    });
-
-    new Route53Record(this, "awestruck-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "awestruck.io",
-      type: "A",
-      allowOverwrite: true, // used for initial deployment
-      // lifecycle: {
-      //   preventDestroy: true
-      // },
-      alias: {
-        name: alb.dnsName,
-        zoneId: alb.zoneId,
-        evaluateTargetHealth: true,
-      },
     });
 
     const ecsCluster = new EcsCluster(this, "awestruck-cluster", {
@@ -323,11 +178,11 @@ class AwestruckInfrastructure extends TerraformStack {
         Version: "2012-10-17",
         Statement: [
           {
+            Action: "sts:AssumeRole",
             Effect: "Allow",
             Principal: {
               Service: "ecs-tasks.amazonaws.com",
             },
-            Action: "sts:AssumeRole",
           },
         ],
       }),
@@ -344,8 +199,8 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
     });
 
-    const logGroup = new CloudwatchLogGroup(this, "awestruck-log-group", {
-      name: `/ecs/${this.node.tryGetContext("taskDefinitionFamily")}`,
+    const webrtcLogGroup = new CloudwatchLogGroup(this, "webrtc-log-group", {
+      name: `/ecs/webrtc-server`,
       retentionInDays: 30,
     });
 
@@ -370,364 +225,6 @@ class AwestruckInfrastructure extends TerraformStack {
       policyArn: "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess",
     });
 
-    const taskDefinition = new EcsTaskDefinition(
-      this,
-      "awestruck-task-definition",
-      {
-        family: "go-webrtc-server-arm64",
-        cpu: "1024",
-        memory: "2048",
-        networkMode: "awsvpc",
-        requiresCompatibilities: ["FARGATE"],
-        executionRoleArn: ecsTaskExecutionRole.arn,
-        taskRoleArn: ecsTaskRole.arn,
-        runtimePlatform: {
-          cpuArchitecture: "ARM64",
-          operatingSystemFamily: "LINUX",
-        },
-        containerDefinitions: JSON.stringify([
-          {
-            name: "go-webrtc-server-arm64",
-            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck:latest`,
-            portMappings: [
-              { containerPort: 8080, hostPort: 8080, protocol: "tcp" },
-              ...Array.from({ length: 101 }, (_, i) => ({
-                containerPort: 10000 + i,
-                hostPort: 10000 + i,
-                protocol: "udp",
-              })),
-            ],
-            environment: [
-              { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
-              { name: "AWESTRUCK_ENV", value: "production" },
-              { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
-              { name: "JACK_OPTIONS", value: "-R -d dummy" },
-              { name: "JACK_SAMPLE_RATE", value: "48000" },
-              { name: "GST_DEBUG", value: "2" },
-              { name: "JACK_BUFFER_SIZE", value: "2048" },
-              { name: "JACK_PERIODS", value: "3" },
-              { name: "GST_BUFFER_SIZE", value: "4194304" },
-              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
-              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" }
-            ],
-            ulimits: [
-              { name: "memlock", softLimit: -1, hardLimit: -1 },
-              { name: "stack", softLimit: 67108864, hardLimit: 67108864 }
-            ],
-            logConfiguration: {
-              logDriver: "awslogs",
-              options: {
-                "awslogs-group": logGroup.name,
-                "awslogs-region": awsRegion,
-                "awslogs-stream-prefix": "ecs",
-              },
-            }
-          }
-        ]),
-      }
-    );
-
-    const listener = new LbListener(this, "awestruck-https-listener", {
-      loadBalancerArn: alb.arn,
-      port: 443,
-      protocol: "HTTPS",
-      sslPolicy: "ELBSecurityPolicy-2016-08",
-      certificateArn: sslCertificateArn,
-      defaultAction: [
-        {
-          type: "forward",
-          targetGroupArn: targetGroup.arn,
-        },
-      ],
-    });
-
-    new EcsService(this, "awestruck-service", {
-      name: "awestruck-service",
-      cluster: ecsCluster.arn,
-      taskDefinition: taskDefinition.arn,
-      desiredCount: 1,
-      launchType: "FARGATE",
-      forceNewDeployment: true,
-      networkConfiguration: {
-        assignPublicIp: true,
-        subnets: [subnet1.id, subnet2.id],
-        securityGroups: [securityGroup.id],
-      },
-      loadBalancer: [
-        {
-          targetGroupArn: targetGroup.arn,
-          containerName: "go-webrtc-server-arm64",
-          containerPort: 8080,
-        },
-      ],
-      dependsOn: [listener],
-    });
-
-    const coturnSecurityGroup = new SecurityGroup(
-      this,
-      "coturn-security-group",
-      {
-        name: "coturn-security-group",
-        vpcId: vpc.id,
-        description: "Security group for COTURN server",
-        tags: {
-          Name: "coturn-security-group",
-        },
-      }
-    );
-
-    // STUN/TURN ports
-    const stunTurnPorts = [
-      { port: 3478, protocol: "tcp" }, // STUN/TURN
-      { port: 3478, protocol: "udp" }, // STUN/TURN
-    ];
-
-    // Allow TURN relay ports
-    new SecurityGroupRule(this, "coturn-relay-range", {
-      type: "ingress",
-      fromPort: 49152,
-      toPort: 65535,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    // Add STUN/TURN specific ports
-    stunTurnPorts.forEach(({ port, protocol }) => {
-      new SecurityGroupRule(this, `coturn-${protocol}-${port}`, {
-        type: "ingress",
-        fromPort: port,
-        toPort: port,
-        protocol,
-        cidrBlocks: ["0.0.0.0/0"],
-        securityGroupId: coturnSecurityGroup.id,
-      });
-    });
-
-    // Allow all outbound traffic
-    new SecurityGroupRule(this, "coturn-egress", {
-      type: "egress",
-      fromPort: 0,
-      toPort: 0,
-      protocol: "-1",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "coturn-https-inbound", {
-      type: "ingress",
-      fromPort: 443,
-      toPort: 443,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "coturn-http-inbound", {
-      type: "ingress",
-      fromPort: 80,
-      toPort: 80,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: coturnSecurityGroup.id,
-    });
-
-    const coturnInstanceRole = new IamRole(this, "coturn-instance-role", {
-      name: "coturn-instance-role",
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Action: "sts:AssumeRole",
-            Effect: "Allow",
-            Principal: {
-              Service: "ec2.amazonaws.com",
-            },
-          },
-        ],
-      }),
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-ssm-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-acm-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AWSCertificateManagerReadOnly",
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-ecr-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-    });
-
-    const coturnInstanceProfile = new IamInstanceProfile(
-      this,
-      "coturn-instance-profile",
-      {
-        name: "coturn-instance-profile",
-        role: coturnInstanceRole.name,
-      }
-    );
-
-    const amazonLinux2ArmAmi = new DataAwsAmi(this, "amazonLinux2ArmAmi", {
-      owners: ["amazon"],
-      mostRecent: true,
-      filter: [
-        {
-          name: "name",
-          values: ["amzn2-ami-hvm-*-gp2"],
-        },
-        {
-          name: "architecture",
-          values: ["arm64"],
-        },
-      ],
-    });
-
-    const coturnInstance = new Instance(this, "coturn-server", {
-      ami: amazonLinux2ArmAmi.id,
-      instanceType: "t4g.small",
-      subnetId: subnet1.id,
-      vpcSecurityGroupIds: [coturnSecurityGroup.id],
-      associatePublicIpAddress: true,
-      iamInstanceProfile: coturnInstanceProfile.name,
-      tags: {
-        Name: "coturn-server",
-      },
-      lifecycle: {
-        createBeforeDestroy: true,
-      },
-      userData: userData,
-    });
-
-    new EipAssociation(this, "coturn-eip-association", {
-      instanceId: coturnInstance.id,
-      allocationId: coturnElasticIp.id,
-    });
-
-    new TerraformOutput(this, "coturn-elastic-ip", {
-      value: coturnElasticIp.publicIp,
-    });
-
-    new Route53Record(this, "turn-dns", {
-      zoneId: hostedZone.zoneId,
-      name: "turn.awestruck.io",
-      type: "A",
-      ttl: 60,
-      records: [coturnElasticIp.publicIp],
-      allowOverwrite: true,
-      lifecycle: {
-        createBeforeDestroy: true,
-      },
-      dependsOn: [coturnInstance, coturnElasticIp],
-    });
-
-    // Add outputs for the TURN server details
-    new TerraformOutput(this, "turn-server-details", {
-      value: {
-        domain: "turn.awestruck.io",
-        elastic_ip: coturnElasticIp.publicIp,
-        username: "awestruck",
-        ports: {
-          stun: 3478,
-          turn: 3478,
-        },
-      },
-    });
-
-    new SsmParameter(this, "turn-password", {
-      name: "/awestruck/turn_password",
-      type: "SecureString",
-      value: turnPassword,
-      description: "TURN server password for WebRTC connections",
-    });
-
-    new CloudwatchLogGroup(this, "coturn-logs", {
-      name: "/coturn/turnserver",
-      retentionInDays: 14,
-      tags: {
-        Name: "coturn-logs",
-      },
-    });
-
-    new SsmParameter(this, "cloudwatch-agent-config", {
-      name: "/AmazonCloudWatch-Config",
-      type: "String",
-      value: JSON.stringify({
-        logs: {
-          logs_collected: {
-            files: {
-              collect_list: [
-                {
-                  file_path: "/var/log/coturn/turnserver.log",
-                  log_group_name: "/coturn/turnserver",
-                  log_stream_name: "{instance_id}",
-                  timezone: "UTC",
-                },
-                {
-                  file_path: "/var/log/syslog",
-                  log_group_name: "/coturn/system",
-                  log_stream_name: "{instance_id}",
-                  timezone: "UTC"
-                }
-              ],
-            },
-          },
-        },
-      }),
-    });
-
-    new IamRolePolicyAttachment(this, "ecs-task-cloudwatch-policy", {
-      role: ecsTaskExecutionRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
-    });
-
-    new IamRolePolicyAttachment(this, "coturn-cloudwatch-policy", {
-      role: coturnInstanceRole.name,
-      policyArn: "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess",
-    });
-
-    new SecurityGroupRule(this, "ecs-stun-turn-ports", {
-      type: "ingress",
-      fromPort: 3478,
-      toPort: 3478,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: securityGroup.id,
-    });
-
-    new SecurityGroupRule(this, "ecs-turn-tls", {
-      type: "ingress",
-      fromPort: 5349,
-      toPort: 5349,
-      protocol: "tcp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: securityGroup.id,
-    });
-
-    // Allow WebRTC media traffic
-    new SecurityGroupRule(this, "webrtc-media-range", {
-      type: "ingress",
-      fromPort: 49152,
-      toPort: 65535,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: securityGroup.id,
-    });
-
-    // Allow all outbound WebRTC traffic from ECS tasks
-    new SecurityGroupRule(this, "ecs-webrtc-egress", {
-      type: "egress",
-      fromPort: 49152,
-      toPort: 65535,
-      protocol: "udp",
-      cidrBlocks: ["0.0.0.0/0"],
-      securityGroupId: securityGroup.id,
-    });
-
     new SsmParameter(this, "openai-api-key", {
       name: "/awestruck/openai_api_key",
       type: "SecureString",
@@ -740,6 +237,439 @@ class AwestruckInfrastructure extends TerraformStack {
       type: "SecureString",
       value: process.env.AWESTRUCK_API_KEY || this.node.tryGetContext("awestruckApiKey"),
       description: "Awestruck API key for authentication",
+    });
+    
+    // why we need a network load balancer for webrtc:
+    // - handles udp traffic for media streams
+    // - provides stable networking for webrtc
+    // - enables proper port forwarding
+
+    // why we need elastic ip for turn:
+    // - provides stable ip for turn server
+    // - survives nlb replacements
+    // - enables consistent ice candidates
+    const turnElasticIp = new Eip(this, "turn-eip", {
+      vpc: true,
+      tags: {
+        Name: "turn-nlb-eip"
+      }
+    });
+
+    // why we need a simplified nlb setup:
+    // - reduces aws resource usage
+    // - simplifies traffic flow
+    // - maintains essential turn functionality
+    const webrtcNlb = new Lb(this, "awestruck-webrtc-nlb", {
+      name: "awestruck-webrtc-nlb",
+      internal: false,
+      loadBalancerType: "network",
+      subnetMapping: [{
+        subnetId: subnet.id,
+        allocationId: turnElasticIp.allocationId
+      }],
+      enableCrossZoneLoadBalancing: false,
+      ipAddressType: "ipv4",
+      tags: {
+        Name: "awestruck-webrtc-nlb"
+      }
+    });
+
+    // why we need both A records:
+    // - elastic ip record for direct turn access
+    // - alias record for nlb-based web traffic
+    const turnDnsRecord = new Route53Record(this, "turn-dns-eip", {
+      zoneId: hostedZone.zoneId,
+      name: "turn.awestruck.io",
+      type: "A",
+      ttl: 60,
+      records: [turnElasticIp.publicIp],
+    });
+
+    new Route53Record(this, "awestruck-dns", {
+      zoneId: hostedZone.zoneId,
+      name: "awestruck.io",
+      type: "A",
+      allowOverwrite: true,
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true
+      }
+    });
+
+    // why we need both target groups:
+    // - turn-tg handles stun/turn control traffic
+    // - webrtc-tg handles web service traffic
+    const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
+      name: "awestruck-turn-tg",
+      port: 3478,
+      protocol: "UDP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "3479",
+        protocol: "HTTP",
+        path: "/",
+        interval: 10,
+        timeout: 5,
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        matcher: "200-299"
+      }
+    });
+
+    const webrtcTargetGroup = new LbTargetGroup(this, "awestruck-webrtc-tg", {
+      name: "awestruck-webrtc-tg",
+      port: 8080,
+      protocol: "TCP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        path: "/",
+        port: "8080",
+        protocol: "HTTP",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 5,
+        timeout: 2,
+        matcher: "200-299"
+      }
+    });
+
+    // why we need both listeners:
+    // - udp listener for turn traffic
+    // - tcp listener for web traffic
+    const turnListener = new LbListener(this, "turn-udp-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 3478,
+      protocol: "UDP",
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: turnTargetGroup.arn
+      }]
+    });
+
+    const webrtcListener = new LbListener(this, "webrtc-tcp-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 443,
+      protocol: "TLS",
+      certificateArn: sslCertificateArn,
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: webrtcTargetGroup.arn
+      }]
+    });
+
+    // why we need to store task definition in a variable:
+    // - enables reuse in multiple services
+    // - allows referencing in other resources
+    // - improves code maintainability
+    const webrtcTaskDefinition = new EcsTaskDefinition(
+      this,
+      "awestruck-webrtc-task-definition",
+      {
+        family: "server-arm64",
+        cpu: "2048",
+        memory: "4096",
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        executionRoleArn: ecsTaskExecutionRole.arn,
+        taskRoleArn: ecsTaskRole.arn,
+        runtimePlatform: {
+          cpuArchitecture: "ARM64",
+          operatingSystemFamily: "LINUX",
+        },
+        containerDefinitions: JSON.stringify([
+          {
+            name: "server-arm64",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
+            portMappings: [
+              { containerPort: 8080, hostPort: 8080, protocol: "tcp" }
+            ],
+            environment: [
+              { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
+              { name: "AWESTRUCK_ENV", value: "production" },
+              { name: "JACK_NO_AUDIO_RESERVATION", value: "1" },
+              { name: "JACK_RATE", value: "48000" },
+              { name: "JACK_PERIOD_SIZE", value: "1024" },
+              { name: "JACK_WAIT_TIME", value: "21333" },
+              { name: "JACK_PLAYBACK_PORTS", value: "2" },
+              { name: "JACK_CAPTURE_PORTS", value: "2" },
+              { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
+              { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" },
+              // why we need turn server dns:
+              // - ensures clients connect through nlb
+              // - maintains stable addressing even if ip changes
+              // - matches dns record for turn service
+              { name: "TURN_SERVER_HOST", value: turnDnsRecord.name },
+              { name: "TURN_MIN_PORT", value: TURN_MIN_PORT.toString() },
+              { name: "TURN_MAX_PORT", value: TURN_MAX_PORT.toString() },
+              { name: "TURN_USERNAME", value: "awestruck_user" },
+              { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" }
+            ],
+            ulimits: [
+              { name: "memlock", softLimit: -1, hardLimit: -1 },
+              { name: "stack", softLimit: 67108864, hardLimit: 67108864 },
+              { name: "rtprio", softLimit: 99, hardLimit: 99 }
+            ],
+            logConfiguration: {
+              logDriver: "awslogs",
+              options: {
+                "awslogs-group": webrtcLogGroup.name,
+                "awslogs-region": awsRegion,
+                "awslogs-stream-prefix": "webrtc",
+              },
+            }
+          }
+        ]),
+      }
+    );
+
+    // why we need a turn log group:
+    // - centralizes turn server logs
+    // - enables log retention policies 
+    const turnLogGroup = new CloudwatchLogGroup(this, "turn-log-group", {
+      name: `/ecs/turn-server`,
+      retentionInDays: 30,
+    });
+
+    // why we need a turn task definition:
+    // - runs our pion turn implementation
+    // - handles only connection establishment
+    // - no media relay as audio goes through nlb
+    const turnTaskDefinition = new EcsTaskDefinition(
+      this,
+      "awestruck-turn-task-definition",
+      {
+        family: "turn-server",
+        cpu: "512",
+        memory: "1024",
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        executionRoleArn: ecsTaskExecutionRole.arn,
+        taskRoleArn: ecsTaskRole.arn,
+        runtimePlatform: {
+          cpuArchitecture: "ARM64",
+          operatingSystemFamily: "LINUX",
+        },
+        containerDefinitions: JSON.stringify([
+          {
+            name: "turn-server",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/turn:latest`,
+            portMappings: [
+              { containerPort: 3478, hostPort: 3478, protocol: "udp" },
+              { containerPort: 3479, hostPort: 3479, protocol: "tcp" },
+              // why we need relay port range mapping:
+              // - enables dynamic port allocation for media relay
+              // - matches security group configuration
+              // - required for webrtc streaming through turn
+              ...Array.from({ length: TURN_MAX_PORT - TURN_MIN_PORT + 1 }, (_, i) => ({
+                containerPort: TURN_MIN_PORT + i,
+                hostPort: TURN_MIN_PORT + i,
+                protocol: "udp"
+              }))
+            ],
+            environment: [
+              { name: "AWESTRUCK_ENV", value: "production" },
+              { name: "HEALTH_PORT", value: "3479" },
+              { name: "TURN_REALM", value: "awestruck.io" },
+              { name: "PUBLIC_IP", value: turnElasticIp.publicIp },
+              { name: "TURN_USERNAME", value: "awestruck_user" },
+              { name: "TURN_PASSWORD", value: "verySecurePassword1234567890abcdefghijklmnop" },
+              { name: "USERS", value: "awestruck_user=verySecurePassword1234567890abcdefghijklmnop" },
+              { name: "TURN_MIN_PORT", value: TURN_MIN_PORT.toString() },
+              { name: "TURN_MAX_PORT", value: TURN_MAX_PORT.toString() }
+            ],
+            logConfiguration: {
+              logDriver: "awslogs",
+              options: {
+                "awslogs-group": turnLogGroup.name,
+                "awslogs-region": awsRegion,
+                "awslogs-stream-prefix": "turn",
+              },
+            }
+          }
+        ]),
+      }
+    );
+
+    // why we need to expose the elastic ip:
+    // - helps with debugging turn connectivity
+    // - enables direct ip access if needed
+    // - supports manual testing
+    new TerraformOutput(this, "turn-elastic-ip", {
+      value: turnElasticIp.publicIp,
+      description: "Elastic IP address for TURN server",
+    });
+
+    // Update turn-service to use simplified load balancer configuration
+    new EcsService(this, "turn-service", {
+      name: "awestruck-turn-service",
+      cluster: ecsCluster.arn,
+      taskDefinition: turnTaskDefinition.arn,
+      desiredCount: 1,
+      launchType: "FARGATE",
+      forceNewDeployment: true,
+      networkConfiguration: {
+        assignPublicIp: true,
+        subnets: [subnet.id],
+        securityGroups: [securityGroup.id],
+      },
+      loadBalancer: [{
+        targetGroupArn: turnTargetGroup.arn,
+        containerName: "turn-server",
+        containerPort: 3478
+      }],
+      dependsOn: [turnListener, turnTargetGroup]
+    });
+
+    // Add CloudWatch dashboard for monitoring both services
+    new CloudwatchDashboard(this, "awestruck-dashboard", {
+      dashboardName: "awestruck-services",
+      dashboardBody: JSON.stringify({
+        widgets: [
+          {
+            type: "log",
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                fields @timestamp, @message |
+                filter @message like /\\[ICE\\]|\\[WebRTC\\]|\\[DTLS\\]/ |
+                sort @timestamp desc |
+                limit 100`,
+              region: awsRegion,
+              title: "Connection Event Timeline",
+              view: "table"
+            },
+          },
+          {
+            type: "log",
+            x: 0,
+            y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                fields @timestamp, @message |
+                filter @message like /Processing candidate/ |
+                parse @message /Processing candidate: protocol=(?<protocol>\\S+) address=(?<address>\\S+) port=(?<port>\\d+) priority=(?<priority>\\d+) type=(?<type>\\S+)/ |
+                stats count(*) as count by type, protocol |
+                sort count desc`,
+              region: awsRegion,
+              title: "ICE Candidate Distribution",
+              view: "table"
+            },
+          },
+          {
+            type: "log",
+            x: 12,
+            y: 6,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                fields @timestamp, @message |
+                filter @message like /\\[AUDIO\\]|\\[GST\\]|Pipeline|JACK/ |
+                sort @timestamp desc |
+                limit 100`,
+              region: awsRegion,
+              title: "Audio Pipeline Events",
+              view: "table"
+            },
+          },
+          {
+            type: "log",
+            x: 0,
+            y: 12,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${turnLogGroup.name}' | 
+                fields @timestamp, @message |
+                filter @message like /Authentication|allocation|ERROR/ |
+                sort @timestamp desc |
+                limit 100`,
+              region: awsRegion,
+              title: "TURN Server Events",
+              view: "table"
+            },
+          },
+          {
+            type: "log",
+            x: 12,
+            y: 12,
+            width: 12,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                fields @timestamp, @message |
+                parse @message /sid_(?<session_id>[^_]+)/ |
+                stats count(*) as event_count by session_id |
+                sort event_count desc |
+                limit 10`,
+              region: awsRegion,
+              title: "Session Activity",
+              view: "table"
+            },
+          },
+          {
+            type: "log",
+            x: 0,
+            y: 18,
+            width: 24,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                fields @timestamp, @message |
+                filter @message like /ERROR|WARN|failed|disconnected/ |
+                sort @timestamp desc |
+                limit 100`,
+              region: awsRegion,
+              title: "Error Timeline",
+              view: "table"
+            },
+          }
+        ],
+      }),
+    });
+
+    // Attach ECR read policy to allow pulling images
+    new IamRolePolicyAttachment(this, "ecs-ecr-policy", {
+      role: ecsTaskExecutionRole.name,
+      policyArn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+    });
+
+    // Add CloudWatch metrics permissions to task role
+    new IamRolePolicyAttachment(this, "cloudwatch-metrics-policy", {
+      role: ecsTaskRole.name,
+      policyArn: "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+    });
+
+    new EcsService(this, "awestruck-webrtc-service", {
+      name: "awestruck-webrtc-service",
+      cluster: ecsCluster.arn,
+      taskDefinition: webrtcTaskDefinition.arn,
+      desiredCount: 1,
+      launchType: "FARGATE",
+      forceNewDeployment: true,
+      networkConfiguration: {
+        assignPublicIp: true,
+        subnets: [subnet.id],
+        securityGroups: [securityGroup.id],
+      },
+      loadBalancer: [
+        {
+          targetGroupArn: webrtcTargetGroup.arn,
+          containerName: "server-arm64",
+          containerPort: 8080
+        }
+      ],
+      dependsOn: [webrtcListener, webrtcTargetGroup]
     });
   }
 }

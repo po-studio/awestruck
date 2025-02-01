@@ -1,3 +1,7 @@
+body {
+    font-family: 'Space Grotesk', sans-serif;
+}
+
 .code-display {
     display: none;
     font-family: 'IBM Plex Mono', monospace;
@@ -14,7 +18,6 @@
     white-space: pre-wrap;
     opacity: 0;
     transition: opacity 0.3s ease;
-    scroll-behavior: smooth;
 }
 
 .code-display.visible {
@@ -28,23 +31,26 @@
 }
 
 .code-display .token.comment {
-    color: #6a9955;
+    color: #00FF86;
+    opacity: 0.6;
 }
 
 .code-display .token.function {
-    color: #dcdcaa;
+    color: #FF0086;
 }
 
 .code-display .token.keyword {
-    color: #569cd6;
+    color: #00FF86;
 }
 
 .code-display .token.string {
-    color: #ce9178;
+    color: #FF0086;
+    opacity: 0.8;
 }
 
 .code-display .token.number {
-    color: #b5cea8;
+    color: #00FF86;
+    opacity: 0.9;
 }
 
 .code-display .token.operator {
@@ -53,6 +59,7 @@
 
 .code-display .token.punctuation {
     color: #d4d4d4;
+    opacity: 0.7;
 }
 
 /* Scrollbar styling */
@@ -72,4 +79,166 @@
 
 .code-display::-webkit-scrollbar-thumb:hover {
     background: #666;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+    background: #000;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.container {
+    padding: 2rem;
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    gap: 4rem;
+}
+
+/* Add the rest of the styles from the inline CSS in index.html */
+
+.connection-button {
+    background: #00FF86;
+    border: none;
+    color: #000;
+    padding: 1rem 2rem;
+    font-size: 1rem;
+    font-family: 'Figtree', sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 12rem;
+    text-align: center;
+    border-radius: 4px;
+}
+
+.connection-button:hover {
+    filter: brightness(1.1);
+}
+
+.connection-button.button-disconnect {
+    background: #FF0086;
+}
+
+.connection-button.button-disconnect:hover {
+    filter: brightness(1.1);
+}
+
+.connection-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+h1 {
+    font-size: 3rem;
+    margin: 0;
+    font-weight: 500;
+}
+
+h2 {
+    font-size: 2.5rem;
+    margin: 0.5rem 0;
+    font-weight: 500;
+}
+
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.description {
+    font-size: 1.2rem;
+    margin: 0.5rem 0;
+    color: #ccc;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.logo-mark {
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+.logo-mark img {
+    width: 100%;
+    height: 100%;
+}
+
+.nav {
+    position: fixed;
+    bottom: 2rem;
+    left: 2rem;
+    display: flex;
+    gap: 1rem;
+}
+
+.nav a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1.2rem;
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+.nav a:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 1024px) {
+    .container {
+        flex-direction: column;
+        gap: 2rem;
+    }
+
+    .code-display {
+        width: auto;
+        max-height: 50vh;
+    }
+
+    h1 { font-size: 2.5rem; }
+    h2 { font-size: 2rem; }
+    .description { font-size: 1rem; }
+}
+
+@media (max-width: 480px) {
+    .container {
+        padding: 1rem;
+        gap: 1.5rem;
+    }
+    
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.75rem; }
+    .description { font-size: 0.9rem; }
+    
+    button {
+        width: 100%;
+        padding: 0.875rem 1.5rem;
+    }
+    
+    .nav {
+        left: 1rem;
+        bottom: 1rem;
+    }
+    
+    .nav a { font-size: 1rem; }
+    .logo-mark {
+        width: 2rem;
+        height: 2rem;
+    }
+}
+
+@media (max-height: 700px) {
+    .code-display {
+        max-height: 40vh;
+    }
 } 
