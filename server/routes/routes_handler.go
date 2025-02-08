@@ -43,7 +43,7 @@ func NewRouter() *mux.Router {
 
 func serveHome(w http.ResponseWriter, r *http.Request) {
 	// http.ServeFile(w, r, "./client/index.html")
-	http.ServeFile(w, r, "./client/index2.html")
+	http.ServeFile(w, r, "./client/index.html")
 }
 
 func serveStatic(path string) http.Handler {

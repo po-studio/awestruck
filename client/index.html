@@ -3,53 +3,968 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aurafex</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/prism.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/plugins/line-numbers/prism-line-numbers.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <title>Awestruck</title>
+    <!-- Bungee Shade for Logo -->
+    <link href="https://fonts.googleapis.com/css2?family=Bungee+Shade&display=swap" rel="stylesheet">
+    <!-- Space Grotesk for Everything Else -->
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+    <!-- Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <style>
+        /* Reset */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+            width: 100%;
+            display: flex;
+            flex-direction: row;
+            font-family: 'Space Grotesk', sans-serif;
+            overflow: hidden;
+            /* remove if you need scrolling */
+        }
+
+        /* === LEFT PANEL (NEON PINK) === */
+        .left-panel {
+            flex: 1;
+            background: #FF0080;
+            /* Neon pink */
+            color: #000;
+            padding: 40px 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
+            overflow-y: auto;
+        }
+
+        .brandmark {
+            font-family: 'Bungee Shade', cursive;
+            font-size: 5rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            font-size: 1.6rem;
+            font-weight: 700;
+            line-height: 1.3;
+        }
+
+        .description {
+            font-size: 1rem;
+            font-weight: 400;
+            max-width: 400px;
+            line-height: 1.4;
+            margin-top: -10px;
+            margin-bottom: 20px;
+        }
+
+        .cta-btn {
+            display: inline-block;
+            padding: 16px 32px;
+            border: none;
+            background: #000;
+            color: #FF0080;
+            font-weight: 700;
+            font-size: 1.1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            position: relative;
+            max-width: 50%;
+            width: fit-content;
+            transition: background-color 0.2s ease;
+        }
+
+        .cta-btn:hover {
+            background: #222;
+        }
+
+        .features {
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+            max-width: 500px;
+            margin-top: 20px;
+        }
+
+        .feature {
+            padding-left: 10px;
+            border-left: 4px solid #000;
+        }
+
+        .feature h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .feature p {
+            font-size: 0.95rem;
+            line-height: 1.4;
+            color: #111;
+        }
+
+        .footer {
+            margin-top: auto;
+            font-size: 0.8rem;
+        }
+
+        /* === RIGHT PANEL (DARK / NEON ACCENTS) === */
+        .right-panel {
+            flex: 1;
+            background: #111;
+            color: #eee;
+            padding: 40px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
+            border-left: 4px solid #FF0080;
+        }
+
+        /* Status bar with improved contrast */
+        #status {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #222;
+            color: #FF0080;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            transition: all 0.3s ease;
+            text-transform: lowercase;
+            font-size: 1rem;
+            border-left: 4px solid #FF0080;
+            width: fit-content;
+        }
+
+        #status.connected {
+            background: #00ff66 !important;
+            color: #000;
+            border-left-color: #00cc44;
+        }
+
+        /* Playback section with centered layout */
+        .playback-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 30px;
+            padding: 30px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+
+        /* Circular Play/Stop button with neon ring */
+        .playstop-button {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            border: none;
+            font-size: 3rem;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: #FF0080;
+            color: #111;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            margin: 0;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(255, 0, 128, 0.2);
+        }
+
+        .playstop-button:hover {
+            transform: scale(1.05);
+            background: #ff1a8f;
+            box-shadow: 0 0 30px rgba(255, 0, 128, 0.4);
+        }
+
+        .playstop-button:active {
+            transform: scale(0.95);
+            background: #e6007a;
+            box-shadow: 0 0 10px rgba(255, 0, 128, 0.3);
+        }
+
+        .playstop-button .material-icons-round {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .playstop-button[data-state="playing"] {
+            background: #e6007a;
+        }
+
+        /* Canvas container with border */
+        .canvas-container {
+            width: 100%;
+            padding: 20px;
+            background: #161616;
+            border-radius: 6px;
+            border: 1px solid #333;
+            position: relative;
+        }
+
+        .canvas-container::before {
+            content: 'Waveform';
+            position: absolute;
+            top: -10px;
+            left: 10px;
+            background: #161616;
+            padding: 0 10px;
+            font-size: 0.8rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        #waveCanvas {
+            width: 100%;
+            height: 120px;
+            display: block;
+        }
+
+        /* Logs container with a pink border for brand consistency */
+        .logs-container {
+            background-color: #222;
+            border: 1px solid #FF0080;
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            height: 160px;
+            overflow-y: auto;
+        }
+
+        .log-line {
+            margin-bottom: 5px;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        /* A small suggestions box for additional features or controls */
+        .suggestions {
+            margin-top: auto;
+            /* push to bottom */
+            border-top: 1px dashed #FF0080;
+            padding-top: 10px;
+            color: #bbb;
+            font-size: 0.9rem;
+        }
+
+        .suggestions h3 {
+            font-size: 1rem;
+            color: #FF0080;
+            margin-bottom: 6px;
+        }
+
+        .suggestions ul {
+            list-style: disc;
+            list-style-position: inside;
+            line-height: 1.3;
+        }
+    </style>
 </head>
 
 <body>
-    <div class="container">
-        <div class="main-content">
-            <div class="logo">
-                <div class="logo-mark">
-                    <img src="assets/brandmark.svg" alt="Aurafex logo">
-                </div>
-                <h1><b>aurafex</b></h1>
+
+    <!-- LEFT PANEL -->
+    <div class="left-panel">
+        <div class="brandmark">AWESTRUCK</div>
+        <div class="tagline">Design Sound, in the Moment</div>
+        <div class="description">
+            Awestruck is a real-time audio engine that lets you shape and stream
+            custom synths on the fly.
+        </div>
+        <button class="cta-btn">Get Updates</button>
+
+        <div class="features">
+            <div class="feature">
+                <h2>Live Synthesis</h2>
+                <p>Generate and stream new sounds instantly using our server-side audio engine. Remix and evolve community synths in real-time.</p>
             </div>
-            <h2>Design Sound,<br>in the Moment</h2>
-            <p class="description">
-                Aurafex uses natural language to craft<br>
-                real-time audio for generative media
-            </p>
-            <div id="connection-controls">
-                <button 
-                    id="synthButton"
-                    class="connection-button">
-                    Try It
-                </button>
+            <div class="feature">
+                <h2>AI-Compiled Programs</h2>
+                <p>Use text prompts to produce original algorithmic music with LLMs. Publish your favorite synths to the community.</p>
+            </div>
+            <div class="feature">
+                <h2>Developer API (coming soon)</h2>
+                <p>Integrate real-time audio synthesis into games, interactive experiences, and applications with our 
+                   WebRTC API and SDKs.</p>
             </div>
         </div>
-        <div id="codeDisplay" class="code-display"></div>
+
+        <div class="footer">
+            &copy; 2025 Aurafex Technologies
+        </div>
     </div>
-    <nav class="nav">
-        <a href="/docs">docs</a>
-        <a href="/api">api</a>
-        <a href="/contact">contact</a>
-    </nav>
+
+    <!-- RIGHT PANEL -->
+    <div class="right-panel">
+        <!-- Status bar -->
+        <div id="status">disconnected</div>
+
+        <!-- Playback section -->
+        <div class="playback-section">
+            <!-- Play/Stop button -->
+            <button class="playstop-button" id="playstop-button" data-state="stopped" onclick="toggleSynth(this)">
+                <span class="material-icons-round">play_arrow</span>
+            </button>
+
+            <!-- Waveform visualization -->
+            <div class="canvas-container">
+                <canvas id="waveCanvas" width="600" height="120"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inline Script -->
     <script>
-        window.STUN_SERVERS = window.location.hostname === 'localhost' 
-            ? ['localhost:3478']  // local development
-            : ['stun.awestruck.io:3478'];  // production udp
+        // ==========================================================
+        //  SCRIPT: Classes + toggling logic
+        //  with expanded ICE logs & 100-line cap
+        // ==========================================================
+
+        // Simple session management
+        class SessionManager {
+            static getSessionId() {
+                let sessionId = localStorage.getItem('sessionId');
+                if (!sessionId) {
+                    sessionId = Math.random().toString(36).substring(2, 15);
+                    localStorage.setItem('sessionId', sessionId);
+                }
+                return sessionId;
+            }
+        }
+
+        // Minimal logger with shorter lines in the UI,
+        // plus a max of 100 lines to avoid memory bloat.
+        class Logger {
+            static log(type, message, data) {
+                const shortMsg = `[${type}] ${message}`;
+                console.log(shortMsg, data || '');
+
+                const logsElement = document.getElementById('logs');
+                if (logsElement) {
+                    const line = document.createElement('div');
+                    line.className = 'log-line';
+                    line.textContent = shortMsg;
+
+                    logsElement.appendChild(line);
+                    logsElement.scrollTop = logsElement.scrollHeight;
+
+                    // If data is interesting, let's show some ICE info
+                    if (data && data.candidate) {
+                        // Example: parse candidate string for IP / port
+                        line.textContent += ` (Candidate: ${data.candidate})`;
+                    }
+                    if (data && data.address && data.port) {
+                        line.textContent += ` [${data.address}:${data.port}]`;
+                    }
+
+                    // Enforce 100-line cap
+                    const logLines = logsElement.querySelectorAll('.log-line');
+                    if (logLines.length > 100) {
+                        // Remove oldest line
+                        logLines[0].remove();
+                    }
+                }
+            }
+
+            static webrtc(msg, data) { this.log('WebRTC', msg, data); }
+            static ice(msg, data) { this.log('ICE', msg, data); }
+            static turn(msg, data) { this.log('TURN', msg, data); }
+            static error(msg, data) { this.log('ERROR', msg, data); }
+        }
+
+        // Monitor connection states
+        class ConnectionMonitor {
+            constructor(pc) {
+                this.pc = pc;
+                this.startTime = Date.now();
+                this.intervals = [];
+                this.setupListeners();
+            }
+
+            setupListeners() {
+                this.pc.onconnectionstatechange = () => {
+                    Logger.webrtc(`Connection state changed`, {
+                        state: this.pc.connectionState,
+                        elapsed: (Date.now() - this.startTime) / 1000
+                    });
+                    this.updateStatus();
+                };
+
+                this.pc.oniceconnectionstatechange = () => {
+                    Logger.ice(`ICE state changed`, {
+                        state: this.pc.iceConnectionState,
+                        elapsed: (Date.now() - this.startTime) / 1000
+                    });
+                };
+
+                this.pc.onicegatheringstatechange = () => {
+                    Logger.ice(`Gathering state changed`, {
+                        state: this.pc.iceGatheringState,
+                        elapsed: (Date.now() - this.startTime) / 1000
+                    });
+                };
+
+                // Log ICE candidates with more detail
+                this.pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        Logger.ice(`New candidate`, {
+                            candidate: event.candidate.candidate,
+                            sdpMid: event.candidate.sdpMid,
+                            sdpMLineIndex: event.candidate.sdpMLineIndex
+                        });
+                    }
+                };
+            }
+
+            updateStatus() {
+                const status = document.getElementById('status');
+                if (!status) return;
+
+                const colors = {
+                    'new': '#222',
+                    'connecting': '#444',
+                    'connected': '#222',
+                    'disconnected': '#444',
+                    'failed': '#444',
+                    'closed': '#333'
+                };
+
+                status.textContent = this.pc.connectionState;
+                status.style.backgroundColor = colors[this.pc.connectionState] || '#222';
+            }
+
+            stop() {
+                this.intervals.forEach(interval => {
+                    if (interval) {
+                        clearInterval(interval);
+                    }
+                });
+                this.intervals = [];
+                Logger.webrtc('Stopped connection monitoring');
+            }
+
+            async getStats() {
+                const stats = await this.pc.getStats();
+                const result = {};
+
+                stats.forEach(stat => {
+                    if (['transport', 'candidate-pair', 'local-candidate', 'remote-candidate'].includes(stat.type)) {
+                        result[stat.type] = stat;
+                    }
+                });
+                return result;
+            }
+        }
+
+        // Handles audio playback & monitors levels
+        class AudioHandler {
+            constructor(track) {
+                this.track = track;
+                this.setupAudioElement();
+                this.setupAudioContext();
+            }
+
+            setupAudioElement() {
+                const audio = new Audio();
+                audio.srcObject = new MediaStream([this.track]);
+                audio.volume = 1.0;
+                audio.autoplay = true;
+                audio.muted = false; // Explicitly unmute
+
+                audio.onerror = (err) => {
+                    Logger.error('Audio playback error', {
+                        error: err,
+                        name: err.name,
+                        message: err.message
+                    });
+                };
+                audio.onplay = () => {
+                    Logger.log('AUDIO', 'Playback started', {
+                        volume: audio.volume,
+                        muted: audio.muted,
+                        readyState: audio.readyState
+                    });
+                    // Ensure audio context is resumed on user interaction
+                    if (this.audioContext && this.audioContext.state === 'suspended') {
+                        this.audioContext.resume().then(() => {
+                            Logger.log('AUDIO', 'Context resumed successfully');
+                        }).catch(err => {
+                            Logger.error('Failed to resume context', err);
+                        });
+                    }
+                };
+
+                this.audioElement = audio;
+                document.body.appendChild(audio); // Attach to DOM for better browser support
+
+                // Attempt to play and handle autoplay restrictions
+                audio.play().catch(err => {
+                    Logger.error('Audio playback failed', err);
+                    // Add a visible play button if autoplay fails
+                    const playButton = document.createElement('button');
+                    playButton.textContent = 'Enable Audio';
+                    playButton.style.position = 'fixed';
+                    playButton.style.top = '10px';
+                    playButton.style.right = '10px';
+                    playButton.style.zIndex = '1000';
+                    playButton.onclick = () => {
+                        audio.play().catch(e => Logger.error('Retry playback failed', e));
+                        if (this.audioContext && this.audioContext.state === 'suspended') {
+                            this.audioContext.resume();
+                        }
+                        playButton.remove();
+                    };
+                    document.body.appendChild(playButton);
+                });
+            }
+
+            setupAudioContext() {
+                try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    const source = ctx.createMediaStreamSource(new MediaStream([this.track]));
+                    const gainNode = ctx.createGain();
+                    const analyser = ctx.createAnalyser();
+
+                    // Configure analyser for better visualization
+                    analyser.fftSize = 2048;
+                    analyser.smoothingTimeConstant = 0.85;
+                    analyser.minDecibels = -90;
+                    analyser.maxDecibels = -10;
+
+                    // Connect nodes: source -> gain -> analyser -> destination
+                    source.connect(gainNode);
+                    gainNode.connect(analyser);
+                    gainNode.connect(ctx.destination);
+
+                    // Set initial gain
+                    gainNode.gain.value = 1.0;
+
+                    // Store references
+                    this.audioContext = ctx;
+                    this.gainNode = gainNode;
+                    this.analyser = analyser;
+
+                    // Log the audio chain setup
+                    Logger.log('AUDIO', 'Audio chain setup', {
+                        contextState: ctx.state,
+                        sampleRate: ctx.sampleRate,
+                        gainValue: gainNode.gain.value,
+                        analyserConfig: {
+                            fftSize: analyser.fftSize,
+                            minDecibels: analyser.minDecibels,
+                            maxDecibels: analyser.maxDecibels
+                        }
+                    });
+
+                    // Resume context if suspended
+                    if (ctx.state === 'suspended') {
+                        ctx.resume().then(() => {
+                            Logger.log('AUDIO', 'Context resumed on setup');
+                        }).catch(err => {
+                            Logger.error('Failed to resume context on setup', err);
+                        });
+                    }
+
+                    // Start monitoring
+                    this.monitorLevels(analyser);
+                    this.setupWaveCanvas(analyser);
+
+                } catch (err) {
+                    Logger.error('Audio context setup failed', {
+                        error: err,
+                        name: err.name,
+                        message: err.message,
+                        stack: err.stack
+                    });
+                }
+            }
+
+            monitorLevels(analyser) {
+                const dataArray = new Float32Array(analyser.frequencyBinCount);
+
+                const check = () => {
+                    analyser.getFloatTimeDomainData(dataArray);
+                    const level = Math.sqrt(dataArray.reduce((acc, val) => acc + val * val, 0) / dataArray.length);
+
+                    Logger.log('AUDIO', 'Level', {
+                        rms: level.toFixed(4),
+                        peak: Math.max(...dataArray.map(Math.abs)).toFixed(4)
+                    });
+                };
+
+                setInterval(check, 2000);
+            }
+
+            /* ----------------------------------------------------------------
+               NEW: Waveform Visualization
+               ---------------------------------------------------------------- */
+            setupWaveCanvas(analyser) {
+                // Attempt to find a canvas with id="waveCanvas"
+                const canvas = document.getElementById('waveCanvas');
+                if (!canvas) {
+                    Logger.log('AUDIO', 'No waveCanvas found, skipping waveform drawing');
+                    return;
+                }
+
+                const canvasCtx = canvas.getContext('2d');
+                const bufferLength = analyser.frequencyBinCount;
+                const waveData = new Uint8Array(bufferLength);
+
+                // Define the animation loop
+                const drawWaveform = () => {
+                    requestAnimationFrame(drawWaveform);
+
+                    // Pull time-domain data
+                    analyser.getByteTimeDomainData(waveData);
+
+                    // Clear canvas
+                    canvasCtx.fillStyle = '#111';
+                    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // Draw the waveform
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.strokeStyle = '#FF0080'; // neon pink wave
+                    canvasCtx.beginPath();
+
+                    const sliceWidth = canvas.width / bufferLength;
+                    let x = 0;
+
+                    for (let i = 0; i < bufferLength; i++) {
+                        const v = waveData[i] / 128.0; // scale from [0, 255] -> around [0,2]
+                        const y = (v * canvas.height) / 2; // center around halfway point
+
+                        if (i === 0) {
+                            canvasCtx.moveTo(x, y);
+                        } else {
+                            canvasCtx.lineTo(x, y);
+                        }
+                        x += sliceWidth;
+                    }
+
+                    canvasCtx.lineTo(canvas.width, canvas.height / 2);
+                    canvasCtx.stroke();
+                };
+
+                // Start the animation
+                drawWaveform();
+            }
+
+            /* Optional Volume Control, etc. */
+            setVolume(value) {
+                if (this.audioElement) {
+                    this.audioElement.volume = value;
+                }
+                if (this.gainNode) {
+                    this.gainNode.gain.value = value;
+                }
+            }
+        }
+
+        // ICE candidate handling
+        class ICEHandler {
+            constructor(pc, sessionId) {
+                this.pc = pc;
+                this.sessionId = sessionId;
+                this.pendingCandidates = [];
+                this.hasRemoteDescription = false;
+                this.setupICEHandling();
+            }
+
+            setupICEHandling() {
+                this.pc.onicegatheringstatechange = () => {
+                    Logger.ice('Gathering state changed', {
+                        state: this.pc.iceGatheringState
+                    });
+
+                    if (this.pc.iceGatheringState === 'complete') {
+                        Logger.ice('Gathering completed');
+                    }
+                };
+
+                this.pc.onicecandidate = async (event) => {
+                    if (!event.candidate) {
+                        Logger.ice('Finished gathering candidates');
+                        return;
+                    }
+
+                    const candidate = event.candidate;
+                    Logger.ice('New candidate', {
+                        candidate: candidate.candidate,
+                        sdpMid: candidate.sdpMid,
+                        sdpMLineIndex: candidate.sdpMLineIndex
+                    });
+
+                    if (!this.hasRemoteDescription) {
+                        Logger.ice('Queueing candidate until remote description is set');
+                        this.pendingCandidates.push(candidate);
+                        return;
+                    }
+
+                    await this.sendCandidate(candidate);
+                };
+            }
+
+            async sendCandidate(candidate) {
+                try {
+                    const payload = {
+                        candidate: btoa(JSON.stringify({
+                            candidate: candidate.candidate,
+                            sdpMid: candidate.sdpMid,
+                            sdpMLineIndex: candidate.sdpMLineIndex,
+                            usernameFragment: candidate.usernameFragment
+                        }))
+                    };
+
+                    const response = await fetch('/ice-candidate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Session-ID': this.sessionId
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Failed to send candidate: ${response.status}`);
+                    }
+
+                    Logger.ice('Successfully sent candidate');
+                } catch (error) {
+                    Logger.error('Failed to send ICE candidate', error);
+                    this.pendingCandidates.push(candidate);
+                }
+            }
+
+            setRemoteDescription(hasRemote) {
+                this.hasRemoteDescription = hasRemote;
+                if (hasRemote && this.pendingCandidates.length > 0) {
+                    Logger.ice(`Sending ${this.pendingCandidates.length} pending candidates`);
+                    this.pendingCandidates.forEach(candidate => this.sendCandidate(candidate));
+                    this.pendingCandidates = [];
+                }
+            }
+        }
+
+        function setStatusMessage(msg) {
+            const status = document.getElementById('status');
+            if (status) {
+                status.textContent = msg.toLowerCase();
+                if (msg.toLowerCase() === 'connected') {
+                    status.classList.add('connected');
+                } else {
+                    status.classList.remove('connected');
+                }
+            }
+        }
+
+        // Cleanup logic
+        async function stopSynth() {
+            Logger.webrtc('Stopping synth');
+            setStatusMessage('stopping...');
+
+            try {
+                await cleanupConnection();
+                Logger.webrtc('Successfully stopped synth');
+                setStatusMessage('disconnected');
+            } catch (error) {
+                Logger.error('Error stopping synth', error);
+                setStatusMessage('Error stopping');
+            }
+        }
+
+        async function cleanupConnection() {
+            Logger.webrtc('Starting cleanup');
+
+            try {
+                await fetch('/stop', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-ID': SessionManager.getSessionId()
+                    }
+                });
+                Logger.webrtc('Sent stop signal to server');
+            } catch (error) {
+                Logger.error('Failed to send stop signal', error);
+            }
+
+            if (window.audioHandler) {
+                if (window.audioHandler.audioContext) {
+                    await window.audioHandler.audioContext.close();
+                }
+                if (window.audioHandler.audioElement) {
+                    window.audioHandler.audioElement.pause();
+                    window.audioHandler.audioElement.srcObject = null;
+                    window.audioHandler.audioElement.remove();
+                }
+                window.audioHandler = null;
+                Logger.webrtc('Cleaned up audio resources');
+            }
+
+            if (window.pc) {
+                window.pc.getReceivers().forEach(receiver => {
+                    if (receiver.track) {
+                        receiver.track.stop();
+                    }
+                });
+                window.pc.close();
+                window.pc = null;
+                Logger.webrtc('Closed peer connection');
+            }
+
+            if (window.monitor) {
+                window.monitor.stop();
+                window.monitor = null;
+                Logger.webrtc('Stopped monitoring');
+            }
+
+            Logger.webrtc('Cleanup complete');
+        }
+
+        async function start() {
+            try {
+                setStatusMessage('connecting...');
+                Logger.webrtc('Fetching WebRTC configuration');
+
+                const configResponse = await fetch('/config');
+                if (!configResponse.ok) {
+                    throw new Error(`Config fetch failed: ${configResponse.status}`);
+                }
+                const config = await configResponse.json();
+
+                config.iceTransportPolicy = 'all';
+                if (!config.iceServers || !config.iceServers.length) {
+                    throw new Error('No ICE servers provided');
+                }
+                const iceServer = config.iceServers[0];
+                if (!iceServer.urls || !iceServer.urls.length) {
+                    throw new Error('No ICE server URLs provided');
+                }
+
+                window.pc = new RTCPeerConnection(config);
+                const sessionId = SessionManager.getSessionId();
+                window.monitor = new ConnectionMonitor(window.pc);
+                const iceHandler = new ICEHandler(window.pc, sessionId);
+
+                window.pc.addTransceiver('audio', { direction: 'recvonly' });
+
+                window.pc.ontrack = event => {
+                    Logger.webrtc('Received track', {
+                        kind: event.track.kind,
+                        id: event.track.id
+                    });
+                    if (event.track.kind === 'audio') {
+                        window.audioHandler = new AudioHandler(event.track);
+                    }
+                };
+
+                const offer = await window.pc.createOffer();
+                await window.pc.setLocalDescription(offer);
+                Logger.webrtc('Created and set local description');
+
+                // Send offer
+                const offerPayload = {
+                    sdp: btoa(JSON.stringify({
+                        type: offer.type,
+                        sdp: offer.sdp
+                    }))
+                };
+                const offerResponse = await fetch('/offer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-ID': sessionId
+                    },
+                    body: JSON.stringify(offerPayload)
+                });
+                if (!offerResponse.ok) {
+                    throw new Error(`Failed to send offer: ${offerResponse.status}`);
+                }
+                const encodedAnswer = await offerResponse.json();
+                Logger.webrtc('Received answer from server');
+
+                // Decode answer
+                const decodedAnswer = JSON.parse(atob(encodedAnswer.sdp));
+                const answer = new RTCSessionDescription({
+                    type: 'answer',
+                    sdp: decodedAnswer.sdp
+                });
+                await window.pc.setRemoteDescription(answer);
+                iceHandler.setRemoteDescription(true);
+                Logger.webrtc('Set remote description');
+
+                // Start stats monitoring
+                setInterval(async () => {
+                    if (!window.monitor) return;
+                    const stats = await window.monitor.getStats();
+                    Logger.webrtc('Connection stats', stats);
+                }, 5000);
+
+                setStatusMessage('Connected');
+
+                // Fake streaming log lines
+                let chunkCount = 0;
+                window.streamingInterval = setInterval(() => {
+                    if (!window.pc) return;
+                    chunkCount++;
+                    Logger.log('STREAM', `Synth chunk #${chunkCount} streaming...`);
+                }, 3000);
+
+            } catch (error) {
+                Logger.error('Failed to start', error);
+                setStatusMessage('Failed to connect');
+            }
+        }
+
+        // Single toggle for Play/Stop
+        function toggleSynth(button) {
+            if (!button) return;
+            const icon = button.querySelector('.material-icons-round');
+
+            if (button.dataset.state === 'stopped') {
+                // Start the connection
+                start();
+                button.dataset.state = 'playing';
+                icon.textContent = 'stop'; // stop icon
+                Logger.log('UI', 'Synth started');
+            } else {
+                // Stop the connection
+                stopSynth();
+                button.dataset.state = 'stopped';
+                icon.textContent = 'play_arrow'; // play icon
+                Logger.log('UI', 'Synth stopped');
+
+                if (window.streamingInterval) {
+                    clearInterval(window.streamingInterval);
+                    window.streamingInterval = null;
+                }
+            }
+        }
     </script>
-    <script src="script.js"></script>
+
 </body>
 
 </html>
