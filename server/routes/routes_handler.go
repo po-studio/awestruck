@@ -26,10 +26,6 @@ func NewRouter() *mux.Router {
 
 	router.HandleFunc("/ice-candidate", webrtc.HandleICECandidate).Methods("POST")
 
-	// serve static files, i.e. website
-	// this is a temporary hack until we have a proper frontend
-	router.PathPrefix("/").Handler(serveStatic("./client/"))
-
 	// just for frontend -- displays the source code of the synth
 	// being synthesized/streamed in real-time
 	router.HandleFunc("/synth-code", webrtc.HandleSynthCode).Methods("GET")
@@ -37,6 +33,10 @@ func NewRouter() *mux.Router {
 	// experimental, for testing generative LLM synths
 	// this should become a recurring background job
 	router.HandleFunc("/generate-synth", synth.GenerateSynth).Methods("POST")
+
+	// serve static files, i.e. website
+	// this is a temporary hack until we have a proper frontend
+	router.PathPrefix("/").Handler(serveStatic("./client/"))
 
 	return router
 }

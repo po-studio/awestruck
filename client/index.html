@@ -10,6 +10,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
     <!-- Material Icons -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <!-- Prism.js Core -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-supercollider.min.js"></script>
+    <!-- Add IBM Plex Mono after other font imports -->
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         /* Reset */
         * {
@@ -71,9 +77,8 @@
             border: none;
             background: #000;
             color: #FF0080;
-            font-weight: 700;
-            font-size: 1.1rem;
-            text-transform: uppercase;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.2rem;
             letter-spacing: 0.1em;
             cursor: pointer;
             position: relative;
@@ -122,32 +127,12 @@
             background: #111;
             color: #eee;
             padding: 40px;
-            overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 40px;
             border-left: 4px solid #FF0080;
-        }
-
-        /* Status bar with improved contrast */
-        #status {
-            display: inline-block;
-            padding: 12px 24px;
-            background: #222;
-            color: #FF0080;
-            font-weight: 600;
-            letter-spacing: 0.05em;
-            transition: all 0.3s ease;
-            text-transform: lowercase;
-            font-size: 1rem;
-            border-left: 4px solid #FF0080;
-            width: fit-content;
-        }
-
-        #status.connected {
-            background: #00ff66 !important;
-            color: #000;
-            border-left-color: #00cc44;
+            position: relative;
+            height: 100%;
+            overflow: hidden;  /* prevent panel scrolling */
         }
 
         /* Playback section with centered layout */
@@ -155,65 +140,61 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 30px;
+            gap: 20px;  /* reduced from 30px */
             padding: 30px;
             background: #1a1a1a;
             border-radius: 8px;
             border: 1px solid #333;
-        }
-
-        /* Circular Play/Stop button with neon ring */
-        .playstop-button {
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            border: none;
-            font-size: 3rem;
-            cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            background: #FF0080;
-            color: #111;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            height: 100%;
             position: relative;
-            margin: 0;
+        }
+
+        /* Source code container */
+        .source-container {
+            display: none;
+            width: 100%;
+            background: #161616;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 20px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #eee;
+            position: relative;
             overflow: hidden;
-            box-shadow: 0 0 20px rgba(255, 0, 128, 0.2);
+            flex: 1;
+            margin-bottom: 20px;
         }
 
-        .playstop-button:hover {
-            transform: scale(1.05);
-            background: #ff1a8f;
-            box-shadow: 0 0 30px rgba(255, 0, 128, 0.4);
-        }
-
-        .playstop-button:active {
-            transform: scale(0.95);
-            background: #e6007a;
-            box-shadow: 0 0 10px rgba(255, 0, 128, 0.3);
-        }
-
-        .playstop-button .material-icons-round {
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .playstop-button[data-state="playing"] {
-            background: #e6007a;
+        /* Controls container fixed to bottom */
+        .controls-container {
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            width: calc(50% - 2px);  /* half width minus border */
+            background: #1a1a1a;
+            padding: 20px 40px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+            border-top: 1px solid #333;
         }
 
         /* Canvas container with border */
         .canvas-container {
             width: 100%;
-            padding: 20px;
+            padding: 15px;  /* reduced padding */
             background: #161616;
             border-radius: 6px;
             border: 1px solid #333;
             position: relative;
+            height: 100px;  /* fixed height */
         }
 
         .canvas-container::before {
-            content: 'Waveform';
+            content: attr(data-status);  /* use attribute for status text */
             position: absolute;
             top: -10px;
             left: 10px;
@@ -225,10 +206,116 @@
             letter-spacing: 0.1em;
         }
 
+        .canvas-container[data-connected="true"]::before {
+            color: #00ff66;
+        }
+
         #waveCanvas {
             width: 100%;
-            height: 120px;
+            height: 100%;
             display: block;
+        }
+
+        /* Circular Play/Stop button with subtle styling */
+        .playstop-button {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            border: 2px solid #333;
+            font-size: 5rem;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: #222;
+            color: #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .playstop-button:hover {
+            transform: scale(1.05);
+            background: #2a2a2a;
+            border-color: #444;
+            color: #888;
+        }
+
+        .playstop-button:active {
+            transform: scale(0.95);
+            background: #1a1a1a;
+            border-color: #333;
+        }
+
+        .playstop-button[data-state="playing"] {
+            background: #1a1a1a;
+            border-color: #444;
+            color: #eee;
+        }
+
+        .playstop-button[data-state="playing"]:hover {
+            background: #222;
+            border-color: #555;
+        }
+
+        .playstop-button[data-state="playing"]:active {
+            background: #161616;
+            border-color: #333;
+        }
+
+        .playstop-button .material-icons-round {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Show Source button */
+        .show-source-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #222;
+            color: #FF0080;
+            border: none;
+            border-left: 4px solid #FF0080;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 20px;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .show-source-btn.enabled {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .show-source-btn.enabled:hover {
+            background: #333;
+        }
+
+        .show-source-btn.enabled:active {
+            transform: translateY(1px);
+        }
+
+        /* Custom scrollbar for source code */
+        .source-container pre::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .source-container pre::-webkit-scrollbar-track {
+            background: #1a1a1a;
+            border-radius: 4px;
+        }
+
+        .source-container pre::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+
+        .source-container pre::-webkit-scrollbar-thumb:hover {
+            background: #444;
         }
 
         /* Logs container with a pink border for brand consistency */
@@ -281,6 +368,94 @@
             list-style-position: inside;
             line-height: 1.3;
         }
+
+        /* Update Prism.js theme */
+        code[class*="language-"],
+        pre[class*="language-"] {
+            color: #eee;
+            background: none;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.9rem;
+            text-align: left;
+            white-space: pre;
+            word-spacing: normal;
+            word-break: normal;
+            word-wrap: normal;
+            line-height: 1.5;
+            tab-size: 4;
+            hyphens: none;
+            font-weight: 400;
+            text-shadow: none;
+        }
+
+        /* Token colors - flatter style */
+        .token.comment,
+        .token.prolog,
+        .token.doctype,
+        .token.cdata {
+            color: #666;
+            font-style: normal;
+        }
+
+        .token.function,
+        .token.class-name {
+            color: #FF0080;  /* neon pink */
+            font-weight: 500;
+        }
+
+        .token.keyword {
+            color: #7B68EE;  /* medium slate blue */
+            font-weight: 500;
+        }
+
+        .token.string {
+            color: #00ff66;  /* neon green */
+        }
+
+        .token.number {
+            color: #00BFFF;  /* deep sky blue */
+        }
+
+        .token.operator {
+            color: #FF69B4;  /* hot pink */
+        }
+
+        .token.constant {
+            color: #FF1493;  /* deep pink */
+        }
+
+        .token.punctuation {
+            color: #888;
+        }
+
+        .token.property {
+            color: #40E0D0;  /* turquoise */
+        }
+
+        .token.symbol {
+            color: #BB86FC;  /* light purple */
+        }
+
+        /* Source container adjustments */
+        .source-container pre {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .source-container pre code {
+            display: block;
+            opacity: 0;
+            transform: translateX(-20px);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            font-weight: 400;
+        }
+
+        .source-container pre code.visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
     </style>
 </head>
 
@@ -302,7 +477,7 @@
                 <p>Generate and stream new sounds instantly using our server-side audio engine. Remix and evolve community synths in real-time.</p>
             </div>
             <div class="feature">
-                <h2>AI-Compiled Programs</h2>
+                <h2>AI-Compiled Programs (coming soon)</h2>
                 <p>Use text prompts to produce original algorithmic music with LLMs. Publish your favorite synths to the community.</p>
             </div>
             <div class="feature">
@@ -319,19 +494,24 @@
 
     <!-- RIGHT PANEL -->
     <div class="right-panel">
-        <!-- Status bar -->
-        <div id="status">disconnected</div>
-
         <!-- Playback section -->
         <div class="playback-section">
-            <!-- Play/Stop button -->
-            <button class="playstop-button" id="playstop-button" data-state="stopped" onclick="toggleSynth(this)">
-                <span class="material-icons-round">play_arrow</span>
-            </button>
+            <!-- Source code container -->
+            <div class="source-container" id="source-container">
+                <pre></pre>
+            </div>
 
-            <!-- Waveform visualization -->
-            <div class="canvas-container">
-                <canvas id="waveCanvas" width="600" height="120"></canvas>
+            <!-- Fixed controls container -->
+            <div class="controls-container">
+                <!-- Waveform visualization -->
+                <div class="canvas-container" data-status="disconnected">
+                    <canvas id="waveCanvas" width="600" height="80"></canvas>
+                </div>
+
+                <!-- Play/Stop button -->
+                <button class="playstop-button" id="playstop-button" data-state="stopped" onclick="toggleSynth(this)">
+                    <span class="material-icons-round">play_arrow</span>
+                </button>
             </div>
         </div>
     </div>
@@ -440,7 +620,7 @@
             }
 
             updateStatus() {
-                const status = document.getElementById('status');
+                const status = document.querySelector('.canvas-container');
                 if (!status) return;
 
                 const colors = {
@@ -452,8 +632,22 @@
                     'closed': '#333'
                 };
 
-                status.textContent = this.pc.connectionState;
+                status.setAttribute('data-status', this.pc.connectionState);
+                status.setAttribute('data-connected', this.pc.connectionState === 'connected');
                 status.style.backgroundColor = colors[this.pc.connectionState] || '#222';
+
+                // Automatically fetch source code when connected
+                if (this.pc.connectionState === 'connected') {
+                    status.classList.add('connected');
+                    fetchSourceCode();
+                } else {
+                    status.classList.remove('connected');
+                    // Hide source code when disconnected
+                    const container = document.getElementById('source-container');
+                    if (container) {
+                        container.style.display = 'none';
+                    }
+                }
             }
 
             stop() {
@@ -769,14 +963,10 @@
         }
 
         function setStatusMessage(msg) {
-            const status = document.getElementById('status');
-            if (status) {
-                status.textContent = msg.toLowerCase();
-                if (msg.toLowerCase() === 'connected') {
-                    status.classList.add('connected');
-                } else {
-                    status.classList.remove('connected');
-                }
+            const container = document.querySelector('.canvas-container');
+            if (container) {
+                container.setAttribute('data-status', msg.toLowerCase());
+                container.setAttribute('data-connected', msg.toLowerCase() === 'connected');
             }
         }
 
@@ -943,6 +1133,7 @@
         function toggleSynth(button) {
             if (!button) return;
             const icon = button.querySelector('.material-icons-round');
+            const showSourceBtn = document.querySelector('.show-source-btn');
 
             if (button.dataset.state === 'stopped') {
                 // Start the connection
@@ -950,6 +1141,9 @@
                 button.dataset.state = 'playing';
                 icon.textContent = 'stop'; // stop icon
                 Logger.log('UI', 'Synth started');
+                
+                // Enable the Show Source button when synth is playing
+                showSourceBtn.classList.add('enabled');
             } else {
                 // Stop the connection
                 stopSynth();
@@ -957,10 +1151,194 @@
                 icon.textContent = 'play_arrow'; // play icon
                 Logger.log('UI', 'Synth stopped');
 
+                // Disable the Show Source button when synth is stopped
+                showSourceBtn.classList.remove('enabled');
+                
+                // Hide source code if it's showing
+                const sourceContainer = document.getElementById('source-container');
+                if (sourceContainer.style.display !== 'none') {
+                    sourceContainer.style.display = 'none';
+                    showSourceBtn.textContent = 'Show Source';
+                }
+
                 if (window.streamingInterval) {
                     clearInterval(window.streamingInterval);
                     window.streamingInterval = null;
                 }
+            }
+        }
+
+        // Source code display functionality
+        async function toggleSourceCode(button) {
+            const container = document.getElementById('source-container');
+            const pre = container.querySelector('pre');
+
+            if (container.style.display === 'none' || !container.style.display) {
+                try {
+                    button.disabled = true;
+                    button.textContent = 'Loading...';
+                    
+                    // Check if synth is playing first
+                    const playButton = document.querySelector('.playstop-button');
+                    if (!playButton || playButton.dataset.state !== 'playing') {
+                        throw new Error('Please start the synth first to view its code.');
+                    }
+                    
+                    Logger.log('UI', 'Fetching source code...');
+                    const sessionId = SessionManager.getSessionId();
+                    Logger.log('UI', `Using session ID: ${sessionId}`);
+                    
+                    const response = await fetch('/synth-code', {
+                        method: 'GET', // explicitly specify method
+                        headers: {
+                            'X-Session-ID': sessionId,
+                            'Accept': 'text/plain' // explicitly request text
+                        }
+                    }).catch(err => {
+                        Logger.error('Network error fetching source code', err);
+                        throw new Error('Network error: Failed to connect to server');
+                    });
+
+                    Logger.log('UI', `Source code response status: ${response.status}`);
+
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => 'Unknown error');
+                        Logger.error('Source code fetch failed', {
+                            status: response.status,
+                            statusText: response.statusText,
+                            error: errorText
+                        });
+                        throw new Error(`Failed to load source code (${response.status}): ${errorText}`);
+                    }
+
+                    const code = await response.text().catch(err => {
+                        Logger.error('Error reading response body', err);
+                        throw new Error('Failed to read server response');
+                    });
+
+                    Logger.log('UI', `Received code length: ${code ? code.length : 0} characters`);
+
+                    if (!code || code.trim().length === 0) {
+                        throw new Error('No source code available for the current synth.');
+                    }
+
+                    container.style.display = 'block';
+                    pre.innerHTML = ''; // Clear existing content
+                    button.textContent = 'Hide Source';
+
+                    // Split code into lines and create elements
+                    const lines = code.split('\n');
+                    const delay = 20; // ms between each line
+                    const chunkSize = 3; // number of lines to process in parallel
+
+                    // Process lines in chunks
+                    for (let i = 0; i < lines.length; i += chunkSize) {
+                        const chunk = lines.slice(i, i + chunkSize);
+                        await Promise.all(chunk.map((line, index) => {
+                            return new Promise(resolve => {
+                                setTimeout(() => {
+                                    const lineDiv = document.createElement('div');
+                                    lineDiv.className = 'line';
+                                    
+                                    // Syntax highlighting
+                                    const highlightedLine = line
+                                        .replace(/\/\/.*/g, match => `<span class="comment">${match}</span>`)
+                                        .replace(/\b(var|const|let|function|return|new|if|else|for|while)\b/g, 
+                                                match => `<span class="keyword">${match}</span>`)
+                                        .replace(/(['"])(.*?)\1/g, 
+                                                match => `<span class="string">${match}</span>`)
+                                        .replace(/\b(\d+(\.\d+)?)\b/g, 
+                                                match => `<span class="number">${match}</span>`);
+                                    
+                                    lineDiv.innerHTML = highlightedLine || '&nbsp;';
+                                    pre.appendChild(lineDiv);
+                                    
+                                    // Trigger reflow and add visible class
+                                    requestAnimationFrame(() => {
+                                        lineDiv.classList.add('visible');
+                                    });
+                                    
+                                    resolve();
+                                }, delay * (i + index));
+                            });
+                        }));
+                    }
+                } catch (error) {
+                    Logger.error('Failed to fetch source code', error);
+                    button.textContent = 'Show Source';
+                    alert('Failed to load source code. Please try again.');
+                } finally {
+                    button.disabled = false;
+                }
+            } else {
+                container.style.display = 'none';
+                button.textContent = 'Show Source';
+                pre.innerHTML = '';
+            }
+        }
+
+        // New function to fetch source code automatically
+        async function fetchSourceCode() {
+            const container = document.getElementById('source-container');
+            const pre = container.querySelector('pre');
+            
+            try {
+                Logger.log('UI', 'Fetching source code...');
+                const sessionId = SessionManager.getSessionId();
+                
+                const response = await fetch('/synth-code', {
+                    method: 'GET',
+                    headers: {
+                        'X-Session-ID': sessionId,
+                        'Accept': 'text/plain'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load source code (${response.status})`);
+                }
+
+                const code = await response.text();
+                if (!code || code.trim().length === 0) {
+                    throw new Error('No source code available for the current synth.');
+                }
+
+                container.style.display = 'block';
+                pre.innerHTML = ''; // Clear existing content
+
+                // Split code into lines for animated display
+                const lines = code.split('\n');
+                const delay = 20;
+                const chunkSize = 3;
+
+                // Create a code element for syntax highlighting
+                const codeElement = document.createElement('code');
+                codeElement.className = 'language-supercollider';
+                pre.appendChild(codeElement);
+
+                // Process lines in chunks with animation
+                for (let i = 0; i < lines.length; i += chunkSize) {
+                    const chunk = lines.slice(i, i + chunkSize);
+                    await Promise.all(chunk.map((line, index) => {
+                        return new Promise(resolve => {
+                            setTimeout(() => {
+                                // Add the line with a newline
+                                codeElement.textContent += (i + index > 0 ? '\n' : '') + line;
+                                
+                                // Apply syntax highlighting to the entire code block
+                                Prism.highlightElement(codeElement);
+                                
+                                // Add visible class for animation
+                                codeElement.classList.add('visible');
+                                
+                                resolve();
+                            }, delay * (i + index));
+                        });
+                    }));
+                }
+            } catch (error) {
+                Logger.error('Failed to fetch source code', error);
+                container.style.display = 'none';
             }
         }
     </script>
