@@ -7,6 +7,33 @@ networks:
     name: backend
 
 services:
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      target: ${NODE_ENV:-production}
+    networks:
+      - frontend
+      - backend
+    ports:
+      - "5173:5173"  # Vite dev server port
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - VITE_API_URL=http://localhost:8080
+      - DEBUG=vite:*
+      - VITE_DEBUG=true
+    command: sh -c 'if [ "$NODE_ENV" = "development" ]; then npm run dev:docker; else nginx -g "daemon off;"; fi'
+    depends_on:
+      - webrtc-server
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   webrtc-server:
     build:
       context: .
@@ -19,13 +46,11 @@ services:
       - ./server:/app/server
     environment:
       - AWESTRUCK_ENV=development
-      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
+      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_host_ip.sh)}
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
-      - TURN_MIN_PORT=${TURN_MIN_PORT}
-      - TURN_MAX_PORT=${TURN_MAX_PORT}
-      # MAYBE REMOVE?
-      - XDG_RUNTIME_DIR=/tmp/runtime-appuser
+      - TURN_MIN_PORT=${TURN_MIN_PORT:-49152}
+      - TURN_MAX_PORT=${TURN_MAX_PORT:-49252}
       # AUDIO SETTINGS
       - GST_DEBUG=2
       - GST_BUFFER_SIZE=4194304
@@ -41,10 +66,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWESTRUCK_API_KEY=${AWESTRUCK_API_KEY}
     ports:
-      - "8080:8080"
+      - "8080:8080"  # HTTP API
     depends_on:
       turn-server:
         condition: service_healthy
+
   turn-server:
     build:
       context: .
@@ -54,21 +80,17 @@ services:
     ports:
       - "3478:3478/udp"  # TURN UDP
       - "3479:3479/tcp"  # TURN control
-      - "${TURN_MIN_PORT}-${TURN_MAX_PORT}:${TURN_MIN_PORT}-${TURN_MAX_PORT}/udp"  # TURN relay ports
+      - "${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}/udp"  # TURN relay ports
     environment:
       - AWESTRUCK_ENV=development
-      - TURN_REALM=localhost
-      - PUBLIC_IP=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
+      - TURN_REALM=${HOST_IP:-localhost}  # Use host IP for realm
+      - PUBLIC_IP=${HOST_IP:-127.0.0.1}   # Use host IP for relay address
       - USERS=awestruck_user=verySecurePassword1234567890abcdefghijklmnop
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
-      - TURN_MIN_PORT=${TURN_MIN_PORT}
-      - TURN_MAX_PORT=${TURN_MAX_PORT}
+      - TURN_MIN_PORT=${TURN_MIN_PORT:-49152}
+      - TURN_MAX_PORT=${TURN_MAX_PORT:-49252}
       - HEALTH_PORT=3479
-    # why we need health checks:
-    # - ensures service is ready before use
-    # - matches aws health check behavior
-    # - enables local development testing
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "3479"]
       interval: 30s

@@ -28,7 +28,7 @@ up: export_host_ip
 	docker compose up
 
 upb: export_host_ip
-	docker compose up --build
+	NODE_ENV=development docker compose up --build
 
 down:
 	docker-compose down --remove-orphans
