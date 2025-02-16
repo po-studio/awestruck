@@ -151,7 +151,23 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 0,
           protocol: "-1",
           cidrBlocks: [vpc.cidrBlock],
-        }
+        },
+        {
+          fromPort: 5173,
+          toPort: 5173,
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
+        {
+          // why we need https access:
+          // - enables secure web access to frontend
+          // - required for production deployment
+          // - allows ssl termination at load balancer
+          fromPort: 443,
+          toPort: 443,
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"],
+        },
       ],
       egress: [
         {
@@ -353,9 +369,8 @@ class AwestruckInfrastructure extends TerraformStack {
 
     const webrtcListener = new LbListener(this, "webrtc-tcp-listener", {
       loadBalancerArn: webrtcNlb.arn,
-      port: 443,
-      protocol: "TLS",
-      certificateArn: sslCertificateArn,
+      port: 8080,
+      protocol: "TCP",
       defaultAction: [{
         type: "forward",
         targetGroupArn: webrtcTargetGroup.arn
@@ -633,6 +648,22 @@ class AwestruckInfrastructure extends TerraformStack {
               title: "Error Timeline",
               view: "table"
             },
+          },
+          {
+            type: "log",
+            x: 0,
+            y: 24,
+            width: 24,
+            height: 6,
+            properties: {
+              query: `SOURCE '${webrtcLogGroup.name}' | 
+                fields @timestamp, @message |
+                sort @timestamp desc |
+                limit 100`,
+              region: awsRegion,
+              title: "Frontend Application Logs",
+              view: "table"
+            },
           }
         ],
       }),
@@ -670,6 +701,100 @@ class AwestruckInfrastructure extends TerraformStack {
         }
       ],
       dependsOn: [webrtcListener, webrtcTargetGroup]
+    });
+
+    const clientLogGroup = new CloudwatchLogGroup(this, "client-log-group", {
+      name: `/ecs/client`,
+      retentionInDays: 30,
+    });
+
+    const clientTargetGroup = new LbTargetGroup(this, "awestruck-client-tg", {
+      name: "awestruck-client-tg",
+      port: 5173,
+      protocol: "TCP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        path: "/",
+        port: "5173",
+        protocol: "HTTP",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 5,
+        timeout: 2,
+        matcher: "200-299"
+      }
+    });
+
+    const clientListener = new LbListener(this, "client-https-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 443,
+      protocol: "TLS",
+      certificateArn: sslCertificateArn,
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: clientTargetGroup.arn
+      }]
+    });
+
+    const clientTaskDefinition = new EcsTaskDefinition(
+      this,
+      "awestruck-client-task-definition",
+      {
+        family: "client",
+        cpu: "512",
+        memory: "1024",
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        executionRoleArn: ecsTaskExecutionRole.arn,
+        taskRoleArn: ecsTaskRole.arn,
+        runtimePlatform: {
+          cpuArchitecture: "ARM64",
+          operatingSystemFamily: "LINUX",
+        },
+        containerDefinitions: JSON.stringify([
+          {
+            name: "client",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/client:latest`,
+            portMappings: [
+              { containerPort: 5173, hostPort: 5173, protocol: "tcp" }
+            ],
+            environment: [
+              { name: "NODE_ENV", value: "production" },
+              { name: "VITE_API_URL", value: "https://awestruck.io:8080" },
+            ],
+            logConfiguration: {
+              logDriver: "awslogs",
+              options: {
+                "awslogs-group": clientLogGroup.name,
+                "awslogs-region": awsRegion,
+                "awslogs-stream-prefix": "client",
+              },
+            }
+          }
+        ]),
+      }
+    );
+
+    new EcsService(this, "awestruck-client-service", {
+      name: "awestruck-client-service",
+      cluster: ecsCluster.arn,
+      taskDefinition: clientTaskDefinition.arn,
+      desiredCount: 1,
+      launchType: "FARGATE",
+      forceNewDeployment: true,
+      networkConfiguration: {
+        assignPublicIp: true,
+        subnets: [subnet.id],
+        securityGroups: [securityGroup.id],
+      },
+      loadBalancer: [{
+        targetGroupArn: clientTargetGroup.arn,
+        containerName: "client",
+        containerPort: 5173
+      }],
+      dependsOn: [clientListener, clientTargetGroup]
     });
   }
 }
