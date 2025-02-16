@@ -5,6 +5,7 @@ export class PlaybackControls extends HTMLElement {
   constructor() {
     super();
     this.setupComponent();
+    this.setupKeyboardControls();
   }
 
   private setupComponent(): void {
@@ -219,6 +220,30 @@ export class PlaybackControls extends HTMLElement {
 
   public setAudioManager(manager: any): void {
     this.audioManager = manager;
+  }
+
+  private setupKeyboardControls(): void {
+    // Handle spacebar press
+    document.addEventListener('keydown', (e) => {
+      // Only handle spacebar and prevent default space behavior
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        
+        // Don't trigger if user is typing in an input/textarea
+        if (e.target instanceof HTMLElement) {
+          const tag = e.target.tagName.toLowerCase();
+          if (tag === 'input' || tag === 'textarea') {
+            return;
+          }
+        }
+        
+        // Find and click the button
+        const button = this.shadowRoot?.querySelector('button');
+        if (button && !button.disabled) {
+          button.click();
+        }
+      }
+    });
   }
 }
 

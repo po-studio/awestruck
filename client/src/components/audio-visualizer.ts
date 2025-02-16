@@ -49,8 +49,8 @@ export class AudioVisualizer extends HTMLElement {
       :host {
         display: block;
         width: 100%;
-        height: 80px;  // reduced from 120px
-        min-height: 60px;  // reduced from 80px
+        height: 80px;
+        min-height: 60px;
         background-color: #1a1a1a;
         overflow: hidden;
       }
@@ -65,7 +65,8 @@ export class AudioVisualizer extends HTMLElement {
       
       @media (max-width: 640px) {
         :host {
-          height: 80px;
+          height: 60px;  // More compact on mobile
+          min-height: 40px;
         }
       }
     `;

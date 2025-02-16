@@ -122,9 +122,35 @@ export class CodeViewer extends HTMLElement {
 
       @media (max-width: 640px) {
         pre {
-          font-size: 0.8rem;
-          padding: 0.75rem;
+          font-size: 0.8rem !important;
+          padding: 0.75rem !important;
+          line-height: 1.4 !important;
         }
+
+        .code-line {
+          padding: 0.05rem 0;  // Slightly tighter spacing on mobile
+        }
+      }
+
+      /* Add horizontal scrolling with touch support */
+      pre {
+        -webkit-overflow-scrolling: touch !important;
+        scrollbar-width: thin !important;
+      }
+
+      /* Custom scrollbar styling */
+      pre::-webkit-scrollbar {
+        height: 4px !important;
+        width: 4px !important;
+      }
+
+      pre::-webkit-scrollbar-track {
+        background: #f0f0f0 !important;
+      }
+
+      pre::-webkit-scrollbar-thumb {
+        background: #999 !important;
+        border-radius: 2px !important;
       }
 
       .code-line {

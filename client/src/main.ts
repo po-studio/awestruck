@@ -79,12 +79,15 @@ updateConnectionStatus('disconnected');
 
 // Mobile optimization
 function setupMobileOptimizations() {
-  // Prevent bounce scrolling on iOS
-  document.body.addEventListener('touchmove', (e) => {
-    if (e.target instanceof HTMLElement && !e.target.closest('pre')) {
+  // Prevent double-tap zoom on buttons
+  document.querySelectorAll('button').forEach(button => {
+    button.addEventListener('touchend', (e) => {
       e.preventDefault();
-    }
-  }, { passive: false });
+    }, { passive: false });
+  });
+
+  // Prevent pull-to-refresh
+  document.body.style.overscrollBehavior = 'none';
 
   // Handle iOS audio context unlock
   document.addEventListener('touchstart', () => {
@@ -97,13 +100,15 @@ function setupMobileOptimizations() {
     }
   }, { once: true });
 
-  // Adjust viewport height for mobile browsers
-  const vh = window.innerHeight * 0.01;
-  document.documentElement.style.setProperty('--vh', `${vh}px`);
-  window.addEventListener('resize', () => {
+  // Adjust viewport height for mobile browsers (iOS Safari fix)
+  function updateViewportHeight() {
     const vh = window.innerHeight * 0.01;
     document.documentElement.style.setProperty('--vh', `${vh}px`);
-  });
+  }
+  
+  window.addEventListener('resize', updateViewportHeight);
+  window.addEventListener('orientationchange', updateViewportHeight);
+  updateViewportHeight();
 }
 
 setupMobileOptimizations(); 
