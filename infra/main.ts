@@ -288,27 +288,41 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need both A records:
-    // - elastic ip record for direct turn access
-    // - alias record for nlb-based web traffic
-    const turnDnsRecord = new Route53Record(this, "turn-dns-eip", {
-      zoneId: hostedZone.zoneId,
-      name: "turn.awestruck.io",
-      type: "A",
-      ttl: 60,
-      records: [turnElasticIp.publicIp],
-    });
-
-    new Route53Record(this, "awestruck-dns", {
-      zoneId: hostedZone.zoneId,
+    // why we need separate dns records:
+    // - clearly separates service endpoints
+    // - enables independent ssl certificates
+    // - simplifies service discovery
+    new Route53Record(this, "client-dns", {
+      zoneId: hostedZone.id,
       name: "awestruck.io",
       type: "A",
-      allowOverwrite: true,
       alias: {
         name: webrtcNlb.dnsName,
         zoneId: webrtcNlb.zoneId,
-        evaluateTargetHealth: true
-      }
+        evaluateTargetHealth: true,
+      },
+    });
+
+    new Route53Record(this, "webrtc-dns", {
+      zoneId: hostedZone.id,
+      name: "webrtc.awestruck.io",
+      type: "A",
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
+    });
+
+    new Route53Record(this, "turn-dns", {
+      zoneId: hostedZone.id,
+      name: "turn.awestruck.io",
+      type: "A",
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
     });
 
     // why we need both target groups:
@@ -413,11 +427,7 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_CAPTURE_PORTS", value: "2" },
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" },
-              // why we need turn server dns:
-              // - ensures clients connect through nlb
-              // - maintains stable addressing even if ip changes
-              // - matches dns record for turn service
-              { name: "TURN_SERVER_HOST", value: turnDnsRecord.name },
+              { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" },
               { name: "TURN_MIN_PORT", value: TURN_MIN_PORT.toString() },
               { name: "TURN_MAX_PORT", value: TURN_MAX_PORT.toString() },
               { name: "TURN_USERNAME", value: "awestruck_user" },
@@ -743,11 +753,7 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             environment: [
               { name: "NODE_ENV", value: "production" },
-              // why we need to point to internal dns:
-              // - allows service discovery within vpc
-              // - maintains security by not exposing internal endpoints
-              // - follows aws ecs best practices
-              { name: "VITE_API_URL", value: `https://${webrtcDnsRecord.name}:8080` },
+              { name: "VITE_API_URL", value: "https://webrtc.awestruck.io:8080" },
             ],
             logConfiguration: {
               logDriver: "awslogs",
