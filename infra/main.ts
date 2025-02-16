@@ -105,12 +105,14 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 8080,
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
+          description: "WebRTC server and health checks"
         },
         {
           fromPort: 443,
           toPort: 443,
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
+          description: "HTTPS for client application"
         },
         {
           // why we need turn control port:
@@ -151,6 +153,13 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 0,
           protocol: "-1",
           cidrBlocks: [vpc.cidrBlock],
+        },
+        {
+          fromPort: 5173,
+          toPort: 5173,
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"],
+          description: "Vite production server"
         }
       ],
       egress: [
@@ -274,32 +283,44 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need both A records:
-    // - elastic ip record for direct turn access
-    // - alias record for nlb-based web traffic
-    const turnDnsRecord = new Route53Record(this, "turn-dns-eip", {
-      zoneId: hostedZone.zoneId,
-      name: "turn.awestruck.io",
-      type: "A",
-      ttl: 60,
-      records: [turnElasticIp.publicIp],
-    });
-
-    new Route53Record(this, "awestruck-dns", {
-      zoneId: hostedZone.zoneId,
+    // why we need separate dns records:
+    // - clearly separates service endpoints
+    // - enables independent ssl certificates
+    // - simplifies service discovery
+    new Route53Record(this, "client-dns", {
+      zoneId: hostedZone.id,
       name: "awestruck.io",
       type: "A",
-      allowOverwrite: true,
       alias: {
         name: webrtcNlb.dnsName,
         zoneId: webrtcNlb.zoneId,
-        evaluateTargetHealth: true
-      }
+        evaluateTargetHealth: true,
+      },
     });
 
-    // why we need both target groups:
-    // - turn-tg handles stun/turn control traffic
-    // - webrtc-tg handles web service traffic
+    new Route53Record(this, "webrtc-dns", {
+      zoneId: hostedZone.id,
+      name: "webrtc.awestruck.io",
+      type: "A",
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
+    });
+
+    new Route53Record(this, "turn-dns", {
+      zoneId: hostedZone.id,
+      name: "turn.awestruck.io",
+      type: "A",
+      alias: {
+        name: webrtcNlb.dnsName,
+        zoneId: webrtcNlb.zoneId,
+        evaluateTargetHealth: true,
+      },
+    });
+
+    // First, organize all target groups together
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
       name: "awestruck-turn-tg",
       port: 3478,
@@ -327,20 +348,41 @@ class AwestruckInfrastructure extends TerraformStack {
       vpcId: vpc.id,
       healthCheck: {
         enabled: true,
-        path: "/",
+        path: "/health",
         port: "8080",
         protocol: "HTTP",
         healthyThreshold: 2,
         unhealthyThreshold: 3,
-        interval: 5,
-        timeout: 2,
+        interval: 10,
+        timeout: 5,
         matcher: "200-299"
       }
     });
 
-    // why we need both listeners:
-    // - udp listener for turn traffic
-    // - tcp listener for web traffic
+    const clientTargetGroup = new LbTargetGroup(this, "awestruck-client-tg", {
+      name: "awestruck-client-tg",
+      port: 5173,
+      protocol: "TCP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "5173",
+        protocol: "HTTP",
+        path: "/",
+        interval: 5,
+        timeout: 2,
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        matcher: "200-299"
+      }
+    });
+
+    // Then define listeners with correct protocols
+    // why we need separate listeners with specific protocols:
+    // - udp for turn (no ssl)
+    // - tcp for webrtc (no ssl)
+    // - tls for client (with ssl)
     const turnListener = new LbListener(this, "turn-udp-listener", {
       loadBalancerArn: webrtcNlb.arn,
       port: 3478,
@@ -353,12 +395,22 @@ class AwestruckInfrastructure extends TerraformStack {
 
     const webrtcListener = new LbListener(this, "webrtc-tcp-listener", {
       loadBalancerArn: webrtcNlb.arn,
+      port: 8080,
+      protocol: "TCP",  // Simple TCP, no SSL
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: webrtcTargetGroup.arn
+      }]
+    });
+
+    const clientListener = new LbListener(this, "client-https-listener", {
+      loadBalancerArn: webrtcNlb.arn,
       port: 443,
       protocol: "TLS",
       certificateArn: sslCertificateArn,
       defaultAction: [{
         type: "forward",
-        targetGroupArn: webrtcTargetGroup.arn
+        targetGroupArn: clientTargetGroup.arn
       }]
     });
 
@@ -386,7 +438,7 @@ class AwestruckInfrastructure extends TerraformStack {
             name: "server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
             portMappings: [
-              { containerPort: 8080, hostPort: 8080, protocol: "tcp" }
+              { containerPort: 8080, hostPort: 8080, protocol: "tcp", name: "webrtc-http" }
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
@@ -399,11 +451,7 @@ class AwestruckInfrastructure extends TerraformStack {
               { name: "JACK_CAPTURE_PORTS", value: "2" },
               { name: "OPENAI_API_KEY", value: "{{resolve:ssm:/awestruck/openai_api_key:1}}" },
               { name: "AWESTRUCK_API_KEY", value: "{{resolve:ssm:/awestruck/awestruck_api_key:1}}" },
-              // why we need turn server dns:
-              // - ensures clients connect through nlb
-              // - maintains stable addressing even if ip changes
-              // - matches dns record for turn service
-              { name: "TURN_SERVER_HOST", value: turnDnsRecord.name },
+              { name: "TURN_SERVER_HOST", value: "turn.awestruck.io" },
               { name: "TURN_MIN_PORT", value: TURN_MIN_PORT.toString() },
               { name: "TURN_MAX_PORT", value: TURN_MAX_PORT.toString() },
               { name: "TURN_USERNAME", value: "awestruck_user" },
@@ -421,6 +469,13 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "webrtc",
               },
+            },
+            healthCheck: {
+              command: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+              interval: 10,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 30
             }
           }
         ]),
@@ -657,10 +712,22 @@ class AwestruckInfrastructure extends TerraformStack {
       desiredCount: 1,
       launchType: "FARGATE",
       forceNewDeployment: true,
+      enableExecuteCommand: true,
       networkConfiguration: {
         assignPublicIp: true,
         subnets: [subnet.id],
         securityGroups: [securityGroup.id],
+      },
+      serviceConnectConfiguration: {
+        enabled: true,
+        namespace: "awestruck",
+        service: [{
+          portName: "webrtc-http",
+          discoveryName: "awestruck-webrtc-service",
+          clientAlias: {
+            port: 8080
+          }
+        }]
       },
       loadBalancer: [
         {
@@ -670,6 +737,94 @@ class AwestruckInfrastructure extends TerraformStack {
         }
       ],
       dependsOn: [webrtcListener, webrtcTargetGroup]
+    });
+
+    // why we need a client log group:
+    // - centralizes frontend application logs
+    // - enables monitoring of client-side errors
+    // - maintains consistent logging across services
+    const clientLogGroup = new CloudwatchLogGroup(this, "client-log-group", {
+      name: `/ecs/client`,
+      retentionInDays: 30,
+    });
+
+    // why we need a client task definition:
+    // - runs our vite/react frontend in production
+    // - configures environment for client container
+    // - connects to webrtc service for api calls
+    const clientTaskDefinition = new EcsTaskDefinition(
+      this,
+      "awestruck-client-task-definition",
+      {
+        family: "client",
+        cpu: "256",
+        memory: "512",
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        executionRoleArn: ecsTaskExecutionRole.arn,
+        taskRoleArn: ecsTaskRole.arn,
+        runtimePlatform: {
+          cpuArchitecture: "ARM64",
+          operatingSystemFamily: "LINUX",
+        },
+        containerDefinitions: JSON.stringify([
+          {
+            name: "client",
+            image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/client:latest`,
+            portMappings: [
+              { containerPort: 5173, hostPort: 5173, protocol: "tcp" }
+            ],
+            environment: [
+              { name: "NODE_ENV", value: "production" },
+              { name: "VITE_API_URL", value: "https://webrtc.awestruck.io" },
+              { name: "NGINX_API_URL", value: "http://awestruck-webrtc-service.awestruck:8080" },
+            ],
+            healthCheck: {
+              command: ["CMD-SHELL", "curl -f http://localhost:5173/ || exit 1"],
+              interval: 30,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 60
+            },
+            logConfiguration: {
+              logDriver: "awslogs",
+              options: {
+                "awslogs-group": clientLogGroup.name,
+                "awslogs-region": awsRegion,
+                "awslogs-stream-prefix": "client",
+              },
+            }
+          }
+        ]),
+      }
+    );
+
+    // why we need a client ecs service:
+    // - runs and manages client containers
+    // - connects to load balancer
+    // - ensures high availability
+    new EcsService(this, "awestruck-client-service", {
+      name: "awestruck-client-service",
+      cluster: ecsCluster.arn,
+      taskDefinition: clientTaskDefinition.arn,
+      desiredCount: 1,
+      launchType: "FARGATE",
+      forceNewDeployment: true,
+      serviceConnectConfiguration: {
+        enabled: true,
+        namespace: "awestruck"
+      },
+      networkConfiguration: {
+        assignPublicIp: true,
+        subnets: [subnet.id],
+        securityGroups: [securityGroup.id],
+      },
+      loadBalancer: [{
+        targetGroupArn: clientTargetGroup.arn,
+        containerName: "client",
+        containerPort: 5173
+      }],
+      dependsOn: [clientListener, clientTargetGroup]
     });
   }
 }

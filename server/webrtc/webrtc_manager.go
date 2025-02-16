@@ -82,7 +82,7 @@ func getICEServers() []webrtc.ICEServer {
 func HandleConfig(w http.ResponseWriter, r *http.Request) {
 	config := webrtc.Configuration{
 		ICEServers:         getICEServers(),
-		ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		ICETransportPolicy: webrtc.ICETransportPolicyRelay, // Force TURN relay
 	}
 
 	w.Header().Set("Content-Type", "application/json")

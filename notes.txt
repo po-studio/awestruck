@@ -1,5 +1,0 @@
-2025-01-13
-* in a commit early this evening, ~11pm, i successfully got sound to stream on ECS env without coturn (stun server used)
-* but it only streamed once. after stopping, i could not start again
-* the stun server seems to be dying without explanation, likely due to some interaction with the webrtc or scsynth being stopped or started again?
-* debugging this is hard...

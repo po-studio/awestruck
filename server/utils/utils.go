@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SCSynthDefDirectory = "/app/supercollider/synthdefs"
+	SCSynthDefDirectory = "/app/sc/synthdefs"
 )
 
 func GetRandomSynthDefName() (string, error) {

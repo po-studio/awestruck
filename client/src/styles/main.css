@@ -1,0 +1,76 @@
+/* 
+  base styles for the audio visualizer app
+  includes custom font imports and global styles
+*/
+@import url('https://fonts.googleapis.com/css2?family=Bungee+Shade&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply antialiased;
+    background-color: #f5f5f5;  /* subtle light grey */
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors;
+  }
+  
+  .btn-primary {
+    @apply bg-gray-800 text-white hover:bg-opacity-90;
+  }
+  
+  .panel {
+    @apply bg-gray-800 rounded-xl p-6 shadow-lg;
+  }
+
+  .canvas-container {
+    @apply w-full bg-gray-900 rounded-lg overflow-hidden relative;
+  }
+
+  .playstop-button {
+    @apply w-16 h-16 rounded-full border-2 border-gray-700 bg-gray-800 
+           text-gray-400 cursor-pointer transition-all duration-300
+           hover:bg-gray-700 hover:border-gray-600 hover:scale-105
+           active:scale-95 flex items-center justify-center;
+  }
+
+  .playstop-button[data-state="playing"] {
+    @apply bg-gray-900 border-gray-500 text-white;
+  }
+
+  .code-viewer {
+    @apply font-mono text-sm rounded-lg p-4 overflow-x-auto bg-[#f5f5f5];
+  }
+}
+
+/* Syntax highlighting */
+.token.comment { @apply text-gray-500; }
+.token.keyword { @apply text-purple-400; }
+.token.string { @apply text-green-400; }
+.token.number { @apply text-blue-400; }
+.token.function { @apply text-gray-400; }
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+} 
