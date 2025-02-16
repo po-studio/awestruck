@@ -9,7 +9,7 @@ networks:
 services:
   client:
     build:
-      context: ./client
+      context: client
       dockerfile: Dockerfile
       target: ${NODE_ENV:-production}
     networks:
@@ -36,7 +36,7 @@ services:
 
   webrtc-server:
     build:
-      context: .
+      context: server
       dockerfile: Dockerfile
     networks:
       - backend
@@ -46,7 +46,7 @@ services:
       - ./server:/app/server
     environment:
       - AWESTRUCK_ENV=development
-      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_host_ip.sh)}
+      - TURN_SERVER_HOST=${HOST_IP:-$(./scripts/get_dev_host_ip.sh)}
       - TURN_USERNAME=awestruck_user
       - TURN_PASSWORD=verySecurePassword1234567890abcdefghijklmnop
       - TURN_MIN_PORT=${TURN_MIN_PORT:-49152}
@@ -73,8 +73,8 @@ services:
 
   turn-server:
     build:
-      context: .
-      dockerfile: Dockerfile.turn
+      context: turn
+      dockerfile: Dockerfile
     networks:
       - backend
     ports:

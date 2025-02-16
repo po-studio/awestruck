@@ -386,7 +386,7 @@ func (s *SuperColliderSynth) GetSynthCode() (string, error) {
 	}
 
 	// Find the matching .scd file
-	srcDir := filepath.Join(cwd, "supercollider", "src")
+	srcDir := filepath.Join(cwd, "sc", "src")
 	var matchingFile string
 	err = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

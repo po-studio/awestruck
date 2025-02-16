@@ -14,7 +14,7 @@ SynthDef.new("%s", { |out=0, amp=0.5|
     var sound;
     %s
     Out.ar(out, sound * amp);
-}).writeDefFile("/app/supercollider/synthdefs");
+}).writeDefFile("/app/sc/synthdefs");
 `
 
 func SaveSynthDef(id, provider, model, coreLogic string) error {
@@ -55,7 +55,7 @@ func SaveSynthDef(id, provider, model, coreLogic string) error {
 	}
 
 	// Compile the synthdef using compile_synthdef.sh
-	scriptPath := filepath.Join(cwd, "supercollider", "compile_synthdef.sh")
+	scriptPath := filepath.Join(cwd, "sc", "compile_synthdef.sh")
 	cmd := exec.Command("bash", scriptPath, outputPath, synthdefDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("[SYNTHDEF][ERROR] Failed to compile synthdef: %v\nOutput: %s", err, output)

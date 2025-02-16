@@ -84,7 +84,7 @@ func generateWithOpenAI(userPrompt, model string) (string, error) {
 	SynthDef.new("name", { |out=0, amp=0.5|
 		// YOUR CODE HERE
 		Out.ar(out, sound * amp);
-	}).writeDefFile("/app/supercollider/synthdefs");
+	}).writeDefFile("/app/sc/synthdefs");
 	// SYNTHDEF TEMPLATE END
 	
 	Return ONLY the raw SuperCollider code that replaces // YOUR CODE HERE.

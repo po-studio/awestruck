@@ -77,7 +77,7 @@ build-turn:
 		--cache-from $(ECR_TURN_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-turn-new \
 		-t $(TURN_IMAGE_NAME):latest \
-		-f Dockerfile.turn \
+		-f turn/Dockerfile \
 		--load .
 	@rm -rf /tmp/.buildx-cache-turn
 	@mv /tmp/.buildx-cache-turn-new /tmp/.buildx-cache-turn
