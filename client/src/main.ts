@@ -62,12 +62,15 @@ window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
   updateConnectionStatus(connectionStatus);
   
   if (connectionStatus === 'connected') {
-    // Only set the analyser after connection is established
     const analyser = audioManager.getAnalyserNode();
     if (analyser) {
       visualizer.setAnalyser(analyser);
+      codeViewer.show();
+      codeViewer.loadCode();
     }
-    codeViewer.loadCode();
+  } else if (['disconnected', 'stopping'].includes(connectionStatus)) {
+    // Hide code viewer when stopping or disconnected
+    codeViewer.hide();
   }
 }) as EventListener);
 

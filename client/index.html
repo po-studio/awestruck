@@ -23,21 +23,42 @@
             color: #000000 !important;
         }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap" rel="stylesheet">
 </head>
 
 <body style="background: #f5f5f5; color: black;">
     <div style="max-width: 50%; margin: 0 auto; padding: 20px;">
-        <!-- Left Panel -->
         <div>
-            <header>
-                <h1>Awestruck</h1>
-                <p>Real-time, remote-control, generative audio synths</p>
+            <!-- Header with feature list -->
+            <header style="margin-bottom: 1.5rem;">
+                <h1 style="font-size: 1.5rem; font-weight: 500; margin: 0; letter-spacing: -0.01em;">
+                    Awestruck
+                </h1>
+                <p style="font-size: 1rem; color: #333333; margin: 0.25rem 0 0.75rem 0; font-weight: 500;">
+                    Generative Audio Synths
+                </p>
+                <!-- Feature list with separators -->
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.75rem; color: #666666; align-items: center;">
+                    <span style="display: flex; align-items: center;">
+                        <a href="https://webrtc.org/" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">Real</a><!--
+                        --><span>-</span><!--
+                        --><a href="https://supercollider.github.io/" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">time</a>
+                    </span>
+                    <span style="color: #999999; font-weight: 300;">/</span>
+                    <span style="display: flex; align-items: center;">
+                        <a href="https://mct-master.github.io/networked-music/2024/03/17/thomaseo-intro_to_OSC.html" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">Remote-control</a>
+                    </span>
+                    <span style="color: #999999; font-weight: 300;">/</span>
+                    <span style="display: flex; align-items: center;">
+                        <a href="https://github.com/po-studio/awestruck" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">Open-source</a>
+                    </span>
+                </div>
             </header>
 
-            <!-- Container for visualizer and code -->
-            <div style="border: 1px solid #1a1a1a; border-radius: 0.5rem; overflow: hidden;">
-                <!-- Controls section with dark background -->
-                <div style="background: #1a1a1a; padding: 1rem; display: flex; align-items: center; justify-content: space-between;">
+            <!-- Main container with integrated styling -->
+            <div style="border: 1px solid #1a1a1a; border-radius: 0.5rem; overflow: hidden; margin-bottom: 1rem;">
+                <!-- Controls section -->
+                <div style="background: #1a1a1a; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between;">
                     <div style="display: flex; align-items: center; gap: 1.5rem;">
                         <playback-controls></playback-controls>
                     </div>
@@ -48,7 +69,10 @@
                 <code-viewer></code-viewer>
             </div>
 
-            <footer>&copy; 2025 Aurafex Technologies</footer>
+            <!-- Subtle footer -->
+            <footer style="font-size: 0.75rem; color: #666666; text-align: right;">
+                &copy; 2025 Aurafex Technologies
+            </footer>
         </div>
     </div>
 

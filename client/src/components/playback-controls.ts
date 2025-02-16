@@ -1,11 +1,9 @@
 // handles play/stop button and volume controls
 export class PlaybackControls extends HTMLElement {
-  private button: HTMLButtonElement;
   private audioManager?: any; // Will be set via public method
   
   constructor() {
     super();
-    this.button = document.createElement('button');
     this.setupComponent();
   }
 
@@ -17,15 +15,27 @@ export class PlaybackControls extends HTMLElement {
       :host {
         display: flex;
         align-items: center;
-        gap: 1.5rem;
+        position: relative;
+      }
+
+      .container {
+        display: flex;
+        align-items: center;
+        gap: 0rem;
+      }
+
+      .button-container {
+        position: relative;
+        width: 24px;
+        height: 24px;
       }
 
       button {
+        position: absolute;
+        inset: 0;
         background: none;
         border: none;
         padding: 0;
-        width: 24px;
-        height: 24px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -35,8 +45,63 @@ export class PlaybackControls extends HTMLElement {
         transition: opacity 0.2s;
       }
 
-      button:hover {
+      button:not(:disabled):hover {
         opacity: 1;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      /* Initial pulse animation */
+      @keyframes pulse {
+        0% { transform: scale(1); opacity: 0.7; }
+        50% { transform: scale(1.1); opacity: 1; }
+        100% { transform: scale(1); opacity: 0.7; }
+      }
+
+      button.initial {
+        animation: pulse 2s infinite;
+      }
+
+      button.initial:hover {
+        animation: none;
+      }
+
+      /* Loading spinner */
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .spinner {
+        display: none;
+        position: absolute;
+        inset: 0;
+        border: 2px solid rgba(255,255,255,0.1);
+        border-top-color: rgba(255,255,255,0.7);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      :host([loading]) .spinner {
+        display: block;
+      }
+
+      :host([loading]) button {
+        opacity: 0;
+      }
+
+      /* Hint text */
+      .hint {
+        font-size: 0.75rem;
+        color: rgba(255,255,255,0.6);
+        transition: opacity 0.3s;
+        margin-left: 0.5rem;
+      }
+
+      .hint.hidden {
+        opacity: 0;
       }
 
       /* SVG icons */
@@ -62,36 +127,76 @@ export class PlaybackControls extends HTMLElement {
       }
     `;
     
-    this.button.setAttribute('data-state', 'stopped');
-    this.button.innerHTML = this.getPlayIcon();
-    
-    this.button.addEventListener('click', () => {
-      this.togglePlayback();
-    });
+    const template = document.createElement('template');
+    template.innerHTML = `
+      <div class="container">
+        <div class="button-container">
+          <button class="initial" aria-label="Play/Pause" data-state="stopped">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </button>
+          <div class="spinner"></div>
+        </div>
+        <div class="hint">Click play to begin</div>
+      </div>
+    `;
     
     shadow.appendChild(style);
-    shadow.appendChild(this.button);
+    shadow.appendChild(template.content.cloneNode(true));
+
+    const button = shadow.querySelector('button');
+    if (button) {
+      button.addEventListener('click', () => this.togglePlayback());
+    }
   }
 
   private async togglePlayback(): Promise<void> {
     if (!this.audioManager) return;
 
-    const isPlaying = this.button.getAttribute('data-state') === 'playing';
+    const button = this.shadowRoot?.querySelector('button');
+    const hint = this.shadowRoot?.querySelector('.hint');
     
-    try {
-      if (isPlaying) {
-        await this.audioManager.disconnect();
-        this.button.setAttribute('data-state', 'stopped');
-        this.button.innerHTML = this.getPlayIcon();
-      } else {
-        await this.audioManager.connect();
-        this.button.setAttribute('data-state', 'playing');
-        this.button.innerHTML = this.getStopIcon();
-      }
-    } catch (error) {
-      console.error('Playback toggle failed:', error);
-      this.button.setAttribute('data-state', 'stopped');
-      this.button.innerHTML = this.getPlayIcon();
+    if (!button) return;
+
+    const isPlaying = button.getAttribute('data-state') === 'playing';
+    
+    if (!isPlaying) {
+        // Remove initial pulse animation and hint
+        button.classList.remove('initial');
+        hint?.classList.add('hidden');
+        
+        // Disable button and show loading state
+        button.disabled = true;
+        this.setAttribute('loading', '');
+        
+        try {
+            await this.audioManager.connect();
+            button.setAttribute('data-state', 'playing');
+            button.innerHTML = this.getStopIcon();
+        } catch (error) {
+            console.error('Playback toggle failed:', error);
+            button.setAttribute('data-state', 'stopped');
+            button.innerHTML = this.getPlayIcon();
+        } finally {
+            // Re-enable button and hide loading state
+            button.disabled = false;
+            this.removeAttribute('loading');
+        }
+    } else {
+        button.disabled = true;
+        this.setAttribute('loading', '');
+        
+        try {
+            await this.audioManager.disconnect();
+            button.setAttribute('data-state', 'stopped');
+            button.innerHTML = this.getPlayIcon();
+        } catch (error) {
+            console.error('Playback toggle failed:', error);
+        } finally {
+            button.disabled = false;
+            this.removeAttribute('loading');
+        }
     }
   }
 
