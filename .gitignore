@@ -3,3 +3,50 @@
 /certs
 .env
 .envrc
+
+# why we need comprehensive node ignores:
+# - prevents dependency bloat
+# - avoids platform-specific issues
+# - keeps repo clean
+node_modules/
+dist/
+.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# why we need build output ignores:
+# - prevents binary bloat
+# - avoids platform conflicts
+# - maintains clean git history
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# why we need editor/OS ignores:
+# - prevents personal config leaks
+# - avoids team conflicts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# why we need infrastructure ignores:
+# - prevents credential leaks
+# - avoids state conflicts
+# - maintains security
+.terraform/
+*.tfstate
+*.tfstate.*
+cdktf.out/
+.gen/
