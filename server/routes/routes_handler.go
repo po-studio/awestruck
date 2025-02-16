@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gorilla/mux"
 
 	synth "github.com/po-studio/server/synth"
@@ -9,6 +11,11 @@ import (
 
 func NewRouter() *mux.Router {
 	router := mux.NewRouter()
+
+	// Add health check endpoint
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}).Methods("GET")
 
 	// gets webrtc config including ice credentials, host, etc.
 	router.HandleFunc("/config", webrtc.HandleConfig).Methods("GET")

@@ -347,13 +347,13 @@ class AwestruckInfrastructure extends TerraformStack {
       vpcId: vpc.id,
       healthCheck: {
         enabled: true,
-        path: "/",
+        path: "/health",
         port: "8080",
         protocol: "HTTP",
         healthyThreshold: 2,
         unhealthyThreshold: 3,
-        interval: 5,
-        timeout: 2,
+        interval: 10,
+        timeout: 5,
         matcher: "200-299"
       }
     });
