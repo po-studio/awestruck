@@ -777,7 +777,7 @@ class AwestruckInfrastructure extends TerraformStack {
             environment: [
               { name: "NODE_ENV", value: "production" },
               { name: "VITE_API_URL", value: "https://webrtc.awestruck.io" },
-              { name: "NGINX_API_URL", value: "http://awestruck-webrtc-service:8080" },
+              { name: "NGINX_API_URL", value: "http://awestruck-webrtc-service.awestruck:8080" },
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:5173/ || exit 1"],
@@ -810,6 +810,10 @@ class AwestruckInfrastructure extends TerraformStack {
       desiredCount: 1,
       launchType: "FARGATE",
       forceNewDeployment: true,
+      serviceConnectConfiguration: {
+        enabled: true,
+        namespace: "awestruck"
+      },
       networkConfiguration: {
         assignPublicIp: true,
         subnets: [subnet.id],
