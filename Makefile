@@ -14,8 +14,10 @@ ECR_WEBRTC_REPO = po-studio/awestruck/services/webrtc
 ECR_WEBRTC_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_WEBRTC_REPO)
 ECR_TURN_REPO = po-studio/awestruck/services/turn
 ECR_TURN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_TURN_REPO)
+ECR_CLIENT_REPO = po-studio/awestruck/services/client
+ECR_CLIENT_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_CLIENT_REPO)
 
-.PHONY: build build-turn up down test-generate-synth aws-login aws-push aws-push-turn deploy-all deploy-infra build-all
+.PHONY: build build-turn build-client up down test-generate-synth aws-login aws-push aws-push-turn aws-push-client deploy-all deploy-infra build-all
 
 # ---------------------------------------
 # local dev only
@@ -56,8 +58,8 @@ build:
 		--cache-from $(ECR_WEBRTC_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-new \
 		-t $(IMAGE_NAME):latest \
-		-f Dockerfile \
-		--load .
+		-f server/Dockerfile server \
+		--load
 	@rm -rf /tmp/.buildx-cache
 	@mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
@@ -77,15 +79,36 @@ build-turn:
 		--cache-from $(ECR_TURN_URL):latest \
 		--cache-to type=local,dest=/tmp/.buildx-cache-turn-new \
 		-t $(TURN_IMAGE_NAME):latest \
-		-f turn/Dockerfile \
-		--load .
+		-f turn/Dockerfile turn \
+		--load
 	@rm -rf /tmp/.buildx-cache-turn
 	@mv /tmp/.buildx-cache-turn-new /tmp/.buildx-cache-turn
+
+build-client:
+	@echo "Building client application..."
+	@if ! docker buildx inspect mybuilder > /dev/null 2>&1; then \
+		docker buildx create --use --name mybuilder; \
+	else \
+		docker buildx use mybuilder; \
+	fi
+	@docker buildx inspect --bootstrap
+	@docker pull $(ECR_CLIENT_URL):latest || true
+	@mkdir -p /tmp/.buildx-cache-client
+	@docker buildx build \
+		--platform $(PLATFORM) \
+		--cache-from type=local,src=/tmp/.buildx-cache-client \
+		--cache-from $(ECR_CLIENT_URL):latest \
+		--cache-to type=local,dest=/tmp/.buildx-cache-client-new \
+		-t client:latest \
+		-f client/Dockerfile client \
+		--load
+	@rm -rf /tmp/.buildx-cache-client
+	@mv /tmp/.buildx-cache-client-new /tmp/.buildx-cache-client
 
 aws-login:
 	@echo "Logging into AWS ECR..."
 	@aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
-	@for repo in $(ECR_WEBRTC_REPO) $(ECR_TURN_REPO); do \
+	@for repo in $(ECR_WEBRTC_REPO) $(ECR_TURN_REPO) $(ECR_CLIENT_REPO); do \
 		echo "Checking repository $$repo..."; \
 		aws ecr describe-repositories --repository-names $$repo || \
 		(echo "Creating repository $$repo..." && \
@@ -106,7 +129,14 @@ aws-push-turn: aws-login
 	# Push to ECR
 	docker push $(ECR_TURN_URL):latest
 
-deploy-all: build-all aws-push aws-push-turn deploy-infra
+aws-push-client: aws-login
+	@echo "Pushing client to ECR..."
+	# Tag the already built image
+	docker tag client:latest $(ECR_CLIENT_URL):latest
+	# Push to ECR
+	docker push $(ECR_CLIENT_URL):latest
+
+deploy-all: build-all aws-push aws-push-turn aws-push-client deploy-infra
 
 deploy-infra:
 	@echo "Deploying infrastructure..."
@@ -123,11 +153,11 @@ test-generate-synth:
 # - uses buildx for multi-platform support
 # - maintains local and remote cache
 # - ensures consistent image tags
-build-all: build build-turn
+build-all: build build-turn build-client
 	@echo "All services built successfully"
 
 # why we need optimized deployment:
 # - ensures all services are built before pushing
 # - maintains build cache across deployments
 # - deploys infrastructure after images are ready
-deploy-all: build-all aws-push aws-push-turn deploy-infra
+deploy-all: build-all aws-push aws-push-turn aws-push-client deploy-infra
