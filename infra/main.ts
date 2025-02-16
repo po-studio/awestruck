@@ -111,6 +111,7 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 443,
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
+          description: "HTTPS for client application"
         },
         {
           // why we need turn control port:
@@ -151,13 +152,6 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 0,
           protocol: "-1",
           cidrBlocks: [vpc.cidrBlock],
-        },
-        {
-          fromPort: 443,
-          toPort: 443,
-          protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
-          description: "HTTPS for client application"
         },
         {
           fromPort: 5173,
@@ -325,9 +319,7 @@ class AwestruckInfrastructure extends TerraformStack {
       },
     });
 
-    // why we need both target groups:
-    // - turn-tg handles stun/turn control traffic
-    // - webrtc-tg handles web service traffic
+    // First, organize all target groups together
     const turnTargetGroup = new LbTargetGroup(this, "awestruck-turn-tg", {
       name: "awestruck-turn-tg",
       port: 3478,
@@ -366,9 +358,30 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need both listeners:
-    // - udp listener for turn traffic
-    // - tcp listener for web traffic
+    const clientTargetGroup = new LbTargetGroup(this, "awestruck-client-tg", {
+      name: "awestruck-client-tg",
+      port: 5173,
+      protocol: "TCP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        port: "5173",
+        protocol: "HTTP",
+        path: "/",
+        interval: 5,
+        timeout: 2,
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        matcher: "200-299"
+      }
+    });
+
+    // Then define listeners with correct protocols
+    // why we need separate listeners with specific protocols:
+    // - udp for turn (no ssl)
+    // - tcp for webrtc (no ssl)
+    // - tls for client (with ssl)
     const turnListener = new LbListener(this, "turn-udp-listener", {
       loadBalancerArn: webrtcNlb.arn,
       port: 3478,
@@ -381,12 +394,22 @@ class AwestruckInfrastructure extends TerraformStack {
 
     const webrtcListener = new LbListener(this, "webrtc-tcp-listener", {
       loadBalancerArn: webrtcNlb.arn,
+      port: 8080,
+      protocol: "TCP",  // Simple TCP, no SSL
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: webrtcTargetGroup.arn
+      }]
+    });
+
+    const clientListener = new LbListener(this, "client-https-listener", {
+      loadBalancerArn: webrtcNlb.arn,
       port: 443,
       protocol: "TLS",
       certificateArn: sslCertificateArn,
       defaultAction: [{
         type: "forward",
-        targetGroupArn: webrtcTargetGroup.arn
+        targetGroupArn: clientTargetGroup.arn
       }]
     });
 
@@ -705,26 +728,6 @@ class AwestruckInfrastructure extends TerraformStack {
       retentionInDays: 30,
     });
 
-    // why we need a client target group:
-    // - routes traffic from load balancer to client containers
-    // - enables health checks for the frontend
-    // - separates client routing from api routing
-    const clientTargetGroup = new LbTargetGroup(this, "awestruck-client-tg", {
-      name: "awestruck-client-tg",
-      port: 5173,
-      protocol: "TCP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        port: "5173",
-        protocol: "TCP",
-        healthyThreshold: 2,
-        unhealthyThreshold: 2,
-        interval: 30
-      },
-    });
-
     // why we need a client task definition:
     // - runs our vite/react frontend in production
     // - configures environment for client container
@@ -767,21 +770,6 @@ class AwestruckInfrastructure extends TerraformStack {
         ]),
       }
     );
-
-    // why we need a client https listener:
-    // - terminates ssl for frontend traffic
-    // - routes to correct target group
-    // - separates client traffic from api traffic
-    const clientListener = new LbListener(this, "client-https-listener", {
-      loadBalancerArn: webrtcNlb.arn,
-      port: 443,
-      protocol: "TLS",
-      certificateArn: sslCertificateArn,
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: clientTargetGroup.arn
-      }]
-    });
 
     // why we need a client ecs service:
     // - runs and manages client containers
