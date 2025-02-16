@@ -756,8 +756,20 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             environment: [
               { name: "NODE_ENV", value: "production" },
-              { name: "VITE_API_URL", value: "https://webrtc.awestruck.io:8080" },
+              // why we need absolute urls:
+              // - ensures correct service discovery in production
+              // - prevents nginx upstream resolution issues
+              // - maintains consistent api endpoints
+              { name: "VITE_API_URL", value: "https://webrtc.awestruck.io" },
+              { name: "NGINX_API_URL", value: "https://webrtc.awestruck.io" }
             ],
+            healthCheck: {
+              command: ["CMD-SHELL", "curl -f http://localhost:5173/ || exit 1"],
+              interval: 30,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 60
+            },
             logConfiguration: {
               logDriver: "awslogs",
               options: {
