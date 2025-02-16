@@ -105,6 +105,7 @@ class AwestruckInfrastructure extends TerraformStack {
           toPort: 8080,
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
+          description: "WebRTC server and health checks"
         },
         {
           fromPort: 443,
@@ -437,7 +438,7 @@ class AwestruckInfrastructure extends TerraformStack {
             name: "server-arm64",
             image: `${awsAccountId}.dkr.ecr.${awsRegion}.amazonaws.com/po-studio/awestruck/services/webrtc:latest`,
             portMappings: [
-              { containerPort: 8080, hostPort: 8080, protocol: "tcp" }
+              { containerPort: 8080, hostPort: 8080, protocol: "tcp", name: "webrtc-http" }
             ],
             environment: [
               { name: "DEPLOYMENT_TIMESTAMP", value: new Date().toISOString() },
@@ -468,6 +469,13 @@ class AwestruckInfrastructure extends TerraformStack {
                 "awslogs-region": awsRegion,
                 "awslogs-stream-prefix": "webrtc",
               },
+            },
+            healthCheck: {
+              command: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+              interval: 10,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 30
             }
           }
         ]),
@@ -704,10 +712,22 @@ class AwestruckInfrastructure extends TerraformStack {
       desiredCount: 1,
       launchType: "FARGATE",
       forceNewDeployment: true,
+      enableExecuteCommand: true,
       networkConfiguration: {
         assignPublicIp: true,
         subnets: [subnet.id],
         securityGroups: [securityGroup.id],
+      },
+      serviceConnectConfiguration: {
+        enabled: true,
+        namespace: "awestruck",
+        service: [{
+          portName: "webrtc-http",
+          discoveryName: "awestruck-webrtc-service",
+          clientAlias: {
+            port: 8080
+          }
+        }]
       },
       loadBalancer: [
         {
@@ -756,12 +776,8 @@ class AwestruckInfrastructure extends TerraformStack {
             ],
             environment: [
               { name: "NODE_ENV", value: "production" },
-              // why we need absolute urls:
-              // - ensures correct service discovery in production
-              // - prevents nginx upstream resolution issues
-              // - maintains consistent api endpoints
               { name: "VITE_API_URL", value: "https://webrtc.awestruck.io" },
-              { name: "NGINX_API_URL", value: "https://webrtc.awestruck.io" }
+              { name: "NGINX_API_URL", value: "http://awestruck-webrtc-service:8080" },
             ],
             healthCheck: {
               command: ["CMD-SHELL", "curl -f http://localhost:5173/ || exit 1"],
