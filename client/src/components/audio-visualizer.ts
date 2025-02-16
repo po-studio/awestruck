@@ -1,10 +1,11 @@
-// handles real-time waveform visualization of audio data
+// handles real-time frequency bar visualization of audio data
 export class AudioVisualizer extends HTMLElement {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private resizeObserver: ResizeObserver;
   private animationFrame?: number;
   private analyser?: AnalyserNode;
+  private dpr: number;
 
   constructor() {
     super();
@@ -12,6 +13,7 @@ export class AudioVisualizer extends HTMLElement {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('Could not get canvas context');
     this.ctx = ctx;
+    this.dpr = window.devicePixelRatio || 1;
     
     this.setupCanvas();
     this.attachShadow({ mode: 'open' });
@@ -28,15 +30,17 @@ export class AudioVisualizer extends HTMLElement {
 
   private updateCanvasSize(): void {
     const rect = this.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
     
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
+    // Set canvas size accounting for device pixel ratio
+    this.canvas.width = rect.width * this.dpr;
+    this.canvas.height = rect.height * this.dpr;
     
+    // Set display size
     this.canvas.style.width = `${rect.width}px`;
     this.canvas.style.height = `${rect.height}px`;
     
-    this.ctx.scale(dpr, dpr);
+    // Scale context for retina display
+    this.ctx.scale(this.dpr, this.dpr);
   }
 
   private setupStyles(): void {
@@ -45,21 +49,23 @@ export class AudioVisualizer extends HTMLElement {
       :host {
         display: block;
         width: 100%;
-        height: 80px;
-        min-height: 60px;
-        max-height: 120px;
+        height: 80px;  // reduced from 120px
+        min-height: 60px;  // reduced from 80px
+        background-color: #1a1a1a;
+        overflow: hidden;
       }
       
       canvas {
         width: 100%;
         height: 100%;
-        background: #111;
-        border-radius: 0.5rem;
+        background-color: #1a1a1a;
+        border: none;  // remove border
+        border-radius: 0.5rem 0.5rem 0 0;  // round top corners only
       }
       
       @media (max-width: 640px) {
         :host {
-          height: 60px;
+          height: 80px;
         }
       }
     `;
@@ -68,50 +74,47 @@ export class AudioVisualizer extends HTMLElement {
     this.shadowRoot?.appendChild(this.canvas);
   }
 
-  public setAnalyser(analyser: AnalyserNode): void {
-    this.analyser = analyser;
-    this.startVisualization();
-  }
-
-  private startVisualization(): void {
+  private draw(): void {
     if (!this.analyser) return;
-
+    this.animationFrame = requestAnimationFrame(this.draw.bind(this));
+    
+    const width = this.canvas.width / this.dpr;
+    const height = this.canvas.height / this.dpr;
     const bufferLength = this.analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
 
-    const draw = () => {
-      this.animationFrame = requestAnimationFrame(draw);
+    this.ctx.save();
+    this.ctx.scale(this.dpr, this.dpr);
+    
+    // Clear background
+    this.ctx.fillStyle = '#1a1a1a';
+    this.ctx.fillRect(0, 0, width, height);
+    
+    // Draw frequency bars
+    this.analyser.getByteFrequencyData(dataArray);
+    const barWidth = width / bufferLength * 2.5;
+    let x = 0;
+    
+    // Create gradient for bars
+    for (let i = 0; i < bufferLength; i++) {
+        const barHeight = (dataArray[i] / 255) * height;
+        
+        // Create vertical gradient for each bar
+        const gradient = this.ctx.createLinearGradient(0, height - barHeight, 0, height);
+        gradient.addColorStop(0, '#ffffff');   // white at top
+        gradient.addColorStop(1, '#cccccc');   // light grey at bottom
+        
+        this.ctx.fillStyle = gradient;
+        this.ctx.fillRect(x, height - barHeight, barWidth, barHeight);
+        x += barWidth + 1;
+    }
 
-      this.analyser!.getByteTimeDomainData(dataArray);
+    this.ctx.restore();
+  }
 
-      this.ctx.fillStyle = '#111';
-      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-      this.ctx.lineWidth = 2;
-      this.ctx.strokeStyle = '#FF0080';
-      this.ctx.beginPath();
-
-      const sliceWidth = this.canvas.width / bufferLength;
-      let x = 0;
-
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = (v * this.canvas.height) / 2;
-
-        if (i === 0) {
-          this.ctx.moveTo(x, y);
-        } else {
-          this.ctx.lineTo(x, y);
-        }
-
-        x += sliceWidth;
-      }
-
-      this.ctx.lineTo(this.canvas.width, this.canvas.height / 2);
-      this.ctx.stroke();
-    };
-
-    draw();
+  public setAnalyser(analyser: AnalyserNode): void {
+    this.analyser = analyser;
+    this.draw();
   }
 
   disconnectedCallback(): void {

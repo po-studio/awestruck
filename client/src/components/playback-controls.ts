@@ -15,42 +15,50 @@ export class PlaybackControls extends HTMLElement {
     
     style.textContent = `
       :host {
-        display: block;
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
       }
-      
+
       button {
-        width: 4rem;
-        height: 4rem;
-        border-radius: 50%;
-        border: 2px solid #333;
-        background: #222;
-        color: #fff;
-        cursor: pointer;
-        transition: all 0.2s ease;
+        background: none;
+        border: none;
+        padding: 0;
+        width: 24px;
+        height: 24px;
         display: flex;
         align-items: center;
         justify-content: center;
+        cursor: pointer;
+        color: #ffffff;
+        opacity: 0.7;
+        transition: opacity 0.2s;
       }
-      
+
       button:hover {
-        background: #333;
-        transform: scale(1.05);
+        opacity: 1;
       }
-      
-      button:active {
-        transform: scale(0.95);
+
+      /* SVG icons */
+      .icon {
+        width: 24px;
+        height: 24px;
+        fill: currentColor;
       }
-      
-      button[data-state="playing"] {
-        background: #111;
-        border-color: #FF0080;
+
+      .play-icon {
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 8px 0 8px 12px;
+        border-color: transparent transparent transparent currentColor;
       }
-      
-      @media (max-width: 640px) {
-        button {
-          width: 3rem;
-          height: 3rem;
-        }
+
+      .pause-icon {
+        width: 12px;
+        height: 14px;
+        border-left: 3px solid currentColor;
+        border-right: 3px solid currentColor;
       }
     `;
     

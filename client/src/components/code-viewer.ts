@@ -22,43 +22,40 @@ export class CodeViewer extends HTMLElement {
     
     style.textContent = `
       :host {
-        display: block;
-        width: 100%;
-        height: 100%;
-        min-height: 200px;
+        display: block !important;
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 200px !important;
+        background-color: #ffffff !important;  // white background
       }
       
       pre {
-        margin: 0;
-        padding: 1rem;
-        height: 100%;
-        background: #1a1a1a;
-        border-radius: 0.5rem;
-        overflow: auto;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.9rem;
-        line-height: 1.5;
+        margin: 0 !important;
+        padding: 1rem !important;
+        height: 100% !important;
+        background-color: #ffffff !important;  // white background
+        color: #000000 !important;  // black text
+        border: none !important;  // remove border
+        border-radius: 0 0 0.5rem 0.5rem !important;
+        overflow: auto !important;
+        font-family: monospace !important;
+        font-size: 0.9rem !important;
+        line-height: 1.5 !important;
       }
       
       code {
-        display: block;
-        opacity: 0;
-        transform: translateY(10px);
-        transition: opacity 0.3s ease, transform 0.3s ease;
+        display: block !important;
+        background-color: #ffffff !important;
+        color: #000000 !important;
       }
-      
-      code.visible {
-        opacity: 1;
-        transform: translateY(0);
-      }
-      
-      /* Syntax highlighting */
-      .token.comment { color: #666; }
-      .token.keyword { color: #c678dd; }
-      .token.string { color: #98c379; }
-      .token.number { color: #d19a66; }
-      .token.function { color: #61afef; }
-      .token.operator { color: #56b6c2; }
+
+      /* Syntax highlighting in dark greys */
+      .token.comment { color: #666666 !important; }
+      .token.keyword { color: #000000 !important; }
+      .token.string { color: #333333 !important; }
+      .token.number { color: #222222 !important; }
+      .token.function { color: #111111 !important; }
+      .token.operator { color: #444444 !important; }
       
       @media (max-width: 640px) {
         pre {

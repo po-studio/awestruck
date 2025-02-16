@@ -4,45 +4,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
     <title>Awestruck</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" href="/favicon.png">
-    <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Bungee+Shade&family=Space+Grotesk:wght@300;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <!-- Prism.js -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet" />
+    <!-- Temporarily commenting out fonts -->
+    <!-- <link href="https://fonts.googleapis.com/css2?family=Bungee+Shade&family=Space+Grotesk:wght@300;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"> -->
+    <!-- Temporarily commenting out Prism.js styling -->
+    <!-- <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet" /> -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-supercollider.min.js"></script>
+    <!-- Temporarily commenting out styles -->
+    <!-- <link rel="stylesheet" href="/src/styles/main.css"> -->
+    <style>
+        pre[class*="language-"],
+        code[class*="language-"] {
+            background: #f5f5f5 !important;
+            color: #000000 !important;
+        }
+    </style>
 </head>
 
-<body class="h-full bg-gray-900 text-white">
-    <div class="flex h-full">
+<body style="background: #f5f5f5; color: black;">
+    <div style="max-width: 50%; margin: 0 auto; padding: 20px;">
         <!-- Left Panel -->
-        <div class="flex-1 bg-neon-pink text-black p-8 flex flex-col gap-8">
+        <div>
             <header>
-                <h1 class="font-bungee text-5xl md:text-7xl tracking-wider uppercase mb-4">
-                    Awestruck
-                </h1>
-                <p class="font-space text-xl md:text-2xl font-bold leading-relaxed">
-                    Design Sound, in the Moment
-                </p>
+                <h1>Awestruck</h1>
+                <p>Real-time, remote-control, generative audio synths</p>
             </header>
 
-            <div class="flex-1">
-                <code-viewer class="w-full h-full"></code-viewer>
+            <!-- Container for visualizer and code -->
+            <div style="border: 1px solid #1a1a1a; border-radius: 0.5rem; overflow: hidden;">
+                <!-- Controls section with dark background -->
+                <div style="background: #1a1a1a; padding: 1rem; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 1.5rem;">
+                        <playback-controls></playback-controls>
+                    </div>
+                    <div class="connection-status" style="color: rgba(255,255,255,0.6); font-size: 0.875rem; letter-spacing: 0.025em;"></div>
+                </div>
+                
+                <audio-visualizer></audio-visualizer>
+                <code-viewer></code-viewer>
             </div>
 
-            <footer class="text-sm opacity-75">
-                &copy; 2025 Aurafex Technologies
-            </footer>
-        </div>
-
-        <!-- Right Panel -->
-        <div class="flex-1 bg-gray-900 p-8 border-l-4 border-neon-pink flex flex-col gap-8">
-            <audio-visualizer class="w-full h-24"></audio-visualizer>
-            <div class="flex justify-center">
-                <playback-controls></playback-controls>
-            </div>
+            <footer>&copy; 2025 Aurafex Technologies</footer>
         </div>
     </div>
 

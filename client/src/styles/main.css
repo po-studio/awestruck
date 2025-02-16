@@ -15,6 +15,7 @@
   
   body {
     @apply antialiased;
+    background-color: #f5f5f5;  /* subtle light grey */
   }
 }
 
@@ -24,7 +25,7 @@
   }
   
   .btn-primary {
-    @apply bg-neon-pink text-white hover:bg-opacity-90;
+    @apply bg-gray-800 text-white hover:bg-opacity-90;
   }
   
   .panel {
@@ -47,7 +48,7 @@
   }
 
   .code-viewer {
-    @apply font-mono text-sm bg-gray-900 rounded-lg p-4 overflow-x-auto;
+    @apply font-mono text-sm rounded-lg p-4 overflow-x-auto bg-[#f5f5f5];
   }
 }
 
@@ -56,7 +57,7 @@
 .token.keyword { @apply text-purple-400; }
 .token.string { @apply text-green-400; }
 .token.number { @apply text-blue-400; }
-.token.function { @apply text-neon-pink; }
+.token.function { @apply text-gray-400; }
 
 /* Animations */
 @keyframes fadeIn {

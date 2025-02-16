@@ -1,4 +1,4 @@
-// Import styles first
+// Temporarily commenting out styles
 import './styles/main.css';
 
 // Import managers and types
@@ -28,8 +28,9 @@ const sessionManager = SessionManager.getInstance();
 const visualizer = document.querySelector('audio-visualizer') as AudioVisualizer;
 const controls = document.querySelector('playback-controls') as PlaybackControls;
 const codeViewer = document.querySelector('code-viewer') as CodeViewer;
+const statusElement = document.querySelector('.connection-status') as HTMLDivElement;
 
-if (!visualizer || !controls || !codeViewer) {
+if (!visualizer || !controls || !codeViewer || !statusElement) {
   throw new Error('Required components not found');
 }
 
@@ -37,9 +38,28 @@ if (!visualizer || !controls || !codeViewer) {
 controls.setAudioManager(audioManager);
 codeViewer.setSessionManager(sessionManager);
 
+// Update connection status display
+function updateConnectionStatus(status: string) {
+  const statusMap: Record<string, { text: string }> = {
+    'disconnected': { text: 'offline' },
+    'connecting': { text: 'connecting' },
+    'connected': { text: 'live' },
+    'stopping': { text: 'stopping' }
+  };
+
+  const { text } = statusMap[status] || statusMap['disconnected'];
+  statusElement.textContent = text;
+  
+  // Remove any existing status classes
+  statusElement.classList.remove('status-disconnected', 'status-connecting', 'status-connected', 'status-stopping');
+  // Add new status class
+  statusElement.classList.add(`status-${status}`);
+}
+
 // Listen for audio state changes
 window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
   const { connectionStatus } = event.detail;
+  updateConnectionStatus(connectionStatus);
   
   if (connectionStatus === 'connected') {
     // Only set the analyser after connection is established
@@ -50,6 +70,9 @@ window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
     codeViewer.loadCode();
   }
 }) as EventListener);
+
+// Set initial status
+updateConnectionStatus('disconnected');
 
 // Mobile optimization
 function setupMobileOptimizations() {
