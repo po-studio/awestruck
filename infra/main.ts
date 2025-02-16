@@ -158,16 +158,6 @@ class AwestruckInfrastructure extends TerraformStack {
           protocol: "tcp",
           cidrBlocks: ["0.0.0.0/0"],
         },
-        {
-          // why we need https access:
-          // - enables secure web access to frontend
-          // - required for production deployment
-          // - allows ssl termination at load balancer
-          fromPort: 443,
-          toPort: 443,
-          protocol: "tcp",
-          cidrBlocks: ["0.0.0.0/0"],
-        },
       ],
       egress: [
         {
@@ -354,9 +344,29 @@ class AwestruckInfrastructure extends TerraformStack {
       }
     });
 
-    // why we need both listeners:
-    // - udp listener for turn traffic
-    // - tcp listener for web traffic
+    const clientTargetGroup = new LbTargetGroup(this, "awestruck-client-tg", {
+      name: "awestruck-client-tg",
+      port: 5173,
+      protocol: "TCP",
+      targetType: "ip",
+      vpcId: vpc.id,
+      healthCheck: {
+        enabled: true,
+        path: "/",
+        port: "5173",
+        protocol: "HTTP",
+        healthyThreshold: 2,
+        unhealthyThreshold: 3,
+        interval: 5,
+        timeout: 2,
+        matcher: "200-299"
+      }
+    });
+
+    // why we need separate listeners for each service:
+    // - client app serves https traffic on 443
+    // - webrtc server handles websocket on 8080
+    // - prevents port conflicts and protocol mismatches
     const turnListener = new LbListener(this, "turn-udp-listener", {
       loadBalancerArn: webrtcNlb.arn,
       port: 3478,
@@ -374,6 +384,17 @@ class AwestruckInfrastructure extends TerraformStack {
       defaultAction: [{
         type: "forward",
         targetGroupArn: webrtcTargetGroup.arn
+      }]
+    });
+
+    const clientListener = new LbListener(this, "client-https-listener", {
+      loadBalancerArn: webrtcNlb.arn,
+      port: 443,
+      protocol: "TLS",
+      certificateArn: sslCertificateArn,
+      defaultAction: [{
+        type: "forward",
+        targetGroupArn: clientTargetGroup.arn
       }]
     });
 
@@ -706,36 +727,6 @@ class AwestruckInfrastructure extends TerraformStack {
     const clientLogGroup = new CloudwatchLogGroup(this, "client-log-group", {
       name: `/ecs/client`,
       retentionInDays: 30,
-    });
-
-    const clientTargetGroup = new LbTargetGroup(this, "awestruck-client-tg", {
-      name: "awestruck-client-tg",
-      port: 5173,
-      protocol: "TCP",
-      targetType: "ip",
-      vpcId: vpc.id,
-      healthCheck: {
-        enabled: true,
-        path: "/",
-        port: "5173",
-        protocol: "HTTP",
-        healthyThreshold: 2,
-        unhealthyThreshold: 3,
-        interval: 5,
-        timeout: 2,
-        matcher: "200-299"
-      }
-    });
-
-    const clientListener = new LbListener(this, "client-https-listener", {
-      loadBalancerArn: webrtcNlb.arn,
-      port: 443,
-      protocol: "TLS",
-      certificateArn: sslCertificateArn,
-      defaultAction: [{
-        type: "forward",
-        targetGroupArn: clientTargetGroup.arn
-      }]
     });
 
     const clientTaskDefinition = new EcsTaskDefinition(
