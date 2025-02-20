@@ -12,7 +12,7 @@ import (
 
 const (
 	// SCSynthDefDirectory = "/app/sc/synthdefs"
-	SCSynthDefDirectory = "/app/sc/synthdefs_ai"
+	SCSynthDefDirectory = "/app/sc/synthdefs"
 )
 
 func GetRandomSynthDefName() (string, error) {
