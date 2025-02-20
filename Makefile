@@ -17,7 +17,7 @@ ECR_TURN_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_TURN_
 ECR_CLIENT_REPO = po-studio/awestruck/services/client
 ECR_CLIENT_URL = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_CLIENT_REPO)
 
-.PHONY: build build-turn build-client up down test-generate-synth aws-login aws-push aws-push-turn aws-push-client deploy-all deploy-infra build-all
+.PHONY: build build-turn build-client up down test-generate-synth aws-login aws-push aws-push-turn aws-push-client deploy-all deploy-infra build-all compile-synth
 
 # ---------------------------------------
 # local dev only
@@ -161,3 +161,19 @@ build-all: build build-turn build-client
 # - maintains build cache across deployments
 # - deploys infrastructure after images are ready
 deploy-all: build-all aws-push aws-push-turn aws-push-client deploy-infra
+
+# ---------------------------------------
+# SuperCollider synth compilation
+# ---------------------------------------
+SC_OUTPUT_DIR ?= server/sc/synthdefs
+
+compile-synth:
+	@if [ -z "$(SYNTH)" ]; then \
+		echo "Error: SYNTH parameter is required. Usage: make compile-synth SYNTH=path/to/synth.scd"; \
+		exit 1; \
+	fi
+	@mkdir -p $(SC_OUTPUT_DIR)
+	@VERBOSE=1 ./server/sc/compile_synthdef.sh $(SYNTH) $(SC_OUTPUT_DIR)
+
+# Example usage:
+# make compile-synth SYNTH=server/sc/src/human/liljedahl/liljedahl_abio_e.scd
