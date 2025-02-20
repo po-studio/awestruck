@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	SCSynthDefDirectory = "/app/sc/synthdefs"
+	// SCSynthDefDirectory = "/app/sc/synthdefs"
+	SCSynthDefDirectory = "/app/sc/synthdefs_ai"
 )
 
 func GetRandomSynthDefName() (string, error) {
