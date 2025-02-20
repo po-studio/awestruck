@@ -44,23 +44,37 @@ function updateConnectionStatus(status: string) {
     'disconnected': { text: 'offline' },
     'connecting': { text: 'connecting' },
     'connected': { text: 'live' },
-    'stopping': { text: 'stopping' }
+    'disconnecting': { text: 'disconnecting' }
   };
 
   const { text } = statusMap[status] || statusMap['disconnected'];
   statusElement.textContent = text;
-  
+
   // Remove any existing status classes
-  statusElement.classList.remove('status-disconnected', 'status-connecting', 'status-connected', 'status-stopping');
+  statusElement.classList.remove(
+    'status-disconnected',
+    'status-connecting',
+    'status-connected',
+    'status-disconnecting'
+  );
+
   // Add new status class
   statusElement.classList.add(`status-${status}`);
+
+  // Add green color only when connected/live
+  if (status === 'connected') {
+    statusElement.style.color = '#4ade80';
+  } else {
+    statusElement.style.color = 'rgba(255,255,255,0.6)';
+  }
 }
 
 // Listen for audio state changes
 window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
   const { connectionStatus } = event.detail;
+  console.log('[Status] Updating status to:', connectionStatus);
   updateConnectionStatus(connectionStatus);
-  
+
   if (connectionStatus === 'connected') {
     const analyser = audioManager.getAnalyserNode();
     if (analyser) {
@@ -68,9 +82,11 @@ window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
       codeViewer.show();
       codeViewer.loadCode();
     }
-  } else if (['disconnected', 'stopping'].includes(connectionStatus)) {
-    // Hide code viewer when stopping or disconnected
-    codeViewer.hide();
+  } else if (['disconnected', 'disconnecting'].includes(connectionStatus)) {
+    // Keep code viewer visible during stopping/disconnecting states
+    if (connectionStatus === 'disconnected') {
+      codeViewer.hide();
+    }
   }
 }) as EventListener);
 
@@ -105,7 +121,7 @@ function setupMobileOptimizations() {
     const vh = window.innerHeight * 0.01;
     document.documentElement.style.setProperty('--vh', `${vh}px`);
   }
-  
+
   window.addEventListener('resize', updateViewportHeight);
   window.addEventListener('orientationchange', updateViewportHeight);
   updateViewportHeight();

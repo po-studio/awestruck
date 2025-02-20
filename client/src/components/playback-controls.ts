@@ -1,7 +1,7 @@
 // handles play/stop button and volume controls
 export class PlaybackControls extends HTMLElement {
   private audioManager?: any; // Will be set via public method
-  
+
   constructor() {
     super();
     this.setupComponent();
@@ -11,7 +11,7 @@ export class PlaybackControls extends HTMLElement {
   private setupComponent(): void {
     const shadow = this.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    
+
     style.textContent = `
       :host {
         display: flex;
@@ -127,7 +127,7 @@ export class PlaybackControls extends HTMLElement {
         border-right: 3px solid currentColor;
       }
     `;
-    
+
     const template = document.createElement('template');
     template.innerHTML = `
       <div class="container">
@@ -142,7 +142,7 @@ export class PlaybackControls extends HTMLElement {
         <div class="hint">Click play to begin</div>
       </div>
     `;
-    
+
     shadow.appendChild(style);
     shadow.appendChild(template.content.cloneNode(true));
 
@@ -157,47 +157,47 @@ export class PlaybackControls extends HTMLElement {
 
     const button = this.shadowRoot?.querySelector('button');
     const hint = this.shadowRoot?.querySelector('.hint');
-    
+
     if (!button) return;
 
     const isPlaying = button.getAttribute('data-state') === 'playing';
-    
+
     if (!isPlaying) {
-        // Remove initial pulse animation and hint
-        button.classList.remove('initial');
-        hint?.classList.add('hidden');
-        
-        // Disable button and show loading state
-        button.disabled = true;
-        this.setAttribute('loading', '');
-        
-        try {
-            await this.audioManager.connect();
-            button.setAttribute('data-state', 'playing');
-            button.innerHTML = this.getStopIcon();
-        } catch (error) {
-            console.error('Playback toggle failed:', error);
-            button.setAttribute('data-state', 'stopped');
-            button.innerHTML = this.getPlayIcon();
-        } finally {
-            // Re-enable button and hide loading state
-            button.disabled = false;
-            this.removeAttribute('loading');
-        }
+      // Remove initial pulse animation and hint
+      button.classList.remove('initial');
+      hint?.classList.add('hidden');
+
+      // Disable button and show loading state
+      button.disabled = true;
+      this.setAttribute('loading', '');
+
+      try {
+        await this.audioManager.connect();
+        button.setAttribute('data-state', 'playing');
+        button.innerHTML = this.getStopIcon();
+      } catch (error) {
+        console.error('Playback toggle failed:', error);
+        button.setAttribute('data-state', 'stopped');
+        button.innerHTML = this.getPlayIcon();
+      } finally {
+        // Re-enable button and hide loading state
+        button.disabled = false;
+        this.removeAttribute('loading');
+      }
     } else {
-        button.disabled = true;
-        this.setAttribute('loading', '');
-        
-        try {
-            await this.audioManager.disconnect();
-            button.setAttribute('data-state', 'stopped');
-            button.innerHTML = this.getPlayIcon();
-        } catch (error) {
-            console.error('Playback toggle failed:', error);
-        } finally {
-            button.disabled = false;
-            this.removeAttribute('loading');
-        }
+      button.disabled = true;
+      this.setAttribute('loading', '');
+
+      try {
+        await this.audioManager.disconnect();
+        button.setAttribute('data-state', 'stopped');
+        button.innerHTML = this.getPlayIcon();
+      } catch (error) {
+        console.error('Playback toggle failed:', error);
+      } finally {
+        button.disabled = false;
+        this.removeAttribute('loading');
+      }
     }
   }
 
@@ -228,7 +228,7 @@ export class PlaybackControls extends HTMLElement {
       // Only handle spacebar and prevent default space behavior
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
-        
+
         // Don't trigger if user is typing in an input/textarea
         if (e.target instanceof HTMLElement) {
           const tag = e.target.tagName.toLowerCase();
@@ -236,7 +236,7 @@ export class PlaybackControls extends HTMLElement {
             return;
           }
         }
-        
+
         // Find and click the button
         const button = this.shadowRoot?.querySelector('button');
         if (button && !button.disabled) {

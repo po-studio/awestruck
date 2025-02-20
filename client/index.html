@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#1a1a1a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    
+
     <title>Awestruck</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" href="/favicon.png">
@@ -25,8 +25,39 @@
             background: #f5f5f5 !important;
             color: #000000 !important;
         }
+
+        /* Override any reveal animations */
+        code-viewer,
+        code-viewer *,
+        code-viewer::before,
+        code-viewer::after,
+        code-viewer pre,
+        code-viewer code {
+            animation: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+            transition: none !important;
+            clip-path: none !important;
+            -webkit-clip-path: none !important;
+            visibility: visible !important;
+            width: auto !important;
+            max-width: none !important;
+            overflow: visible !important;
+            position: static !important;
+            left: auto !important;
+            right: auto !important;
+        }
+
+        /* Ensure code blocks maintain formatting */
+        code-viewer pre {
+            white-space: pre !important;
+            tab-size: 4 !important;
+            -moz-tab-size: 4 !important;
+        }
     </style>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap"
+        rel="stylesheet">
 </head>
 
 <body style="background: #f5f5f5; color: black;">
@@ -34,47 +65,60 @@
         <div>
             <!-- Header with feature list -->
             <header style="margin-bottom: 1.5rem;">
-                <h1 style="font-size: clamp(1.25rem, 5vw, 1.5rem); font-weight: 500; margin: 0; letter-spacing: -0.01em;">
+                <h1
+                    style="font-size: clamp(1.25rem, 5vw, 1.5rem); font-weight: 500; margin: 0; letter-spacing: -0.01em;">
                     Awestruck
                 </h1>
-                <p style="font-size: clamp(0.875rem, 4vw, 1rem); color: #333333; margin: 0.25rem 0 0.75rem 0; font-weight: 500;">
+                <p
+                    style="font-size: clamp(0.875rem, 4vw, 1rem); color: #333333; margin: 0.25rem 0 0.75rem 0; font-weight: 500;">
                     Generative Audio Synths
                 </p>
                 <!-- Feature list with better mobile spacing -->
-                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: clamp(0.7rem, 3vw, 0.75rem); color: #666666; align-items: center;">
-                    <span style="display: flex; align-items: center;">
-                        <a href="https://webrtc.org/" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">Real</a><!--
-                        --><span>-</span><!--
-                        --><a href="https://supercollider.github.io/" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">time</a>
+                <div
+                    style="display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: clamp(0.7rem, 3vw, 0.75rem); color: #666666; align-items: center;">
+                    <span>
+                        AI-driven audio synthesis with real-time WebRTC streaming
                     </span>
-                    <span style="color: #999999; font-weight: 300;">/</span>
-                    <span style="display: flex; align-items: center;">
-                        <a href="https://mct-master.github.io/networked-music/2024/03/17/thomaseo-intro_to_OSC.html" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">Remote-control</a>
-                    </span>
-                    <span style="color: #999999; font-weight: 300;">/</span>
-                    <span style="display: flex; align-items: center;">
-                        <a href="https://github.com/po-studio/awestruck" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #666666;">Open-source</a>
-                    </span>
+                </div>
+                <!-- Coming soon features -->
+                <div style="margin-top: 0.75rem; font-size: clamp(0.7rem, 3vw, 0.75rem); color: #888888;">
+                    <div style="font-style: italic; margin-bottom: 0.25rem;">Coming soon:</div>
+                    <div style="display: flex; flex-direction: column; gap: 0.25rem; padding-left: 0.75rem;">
+                        <span>• Networked OSC control for real-time synth updates</span>
+                        <span>• Text-to-synth prompting for bespoke synths</span>
+                        <span>• APIs and SDKs for developer integrations</span>
+                    </div>
                 </div>
             </header>
 
             <!-- Main container with integrated styling -->
-            <div style="border: 1px solid #1a1a1a; border-radius: 0.5rem; overflow: hidden; margin-bottom: 1rem;">
+            <div
+                style="border: 1px solid #1a1a1a; border-radius: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
                 <!-- Controls section -->
-                <div style="background: #1a1a1a; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between;">
+                <div
+                    style="background: #1a1a1a; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between;">
                     <div style="display: flex; align-items: center; gap: 1.5rem;">
                         <playback-controls></playback-controls>
                     </div>
-                    <div class="connection-status" style="color: rgba(255,255,255,0.6); font-size: 0.875rem; letter-spacing: 0.025em;"></div>
+                    <div class="connection-status"
+                        style="color: rgba(255,255,255,0.6); font-size: 0.875rem; letter-spacing: 0.025em;"></div>
                 </div>
-                
-                <audio-visualizer></audio-visualizer>
-                <code-viewer></code-viewer>
+
+                <audio-visualizer style="display: block; margin: 0; padding: 0;"></audio-visualizer>
+
+                <!-- Code viewer container -->
+                <div style="overflow-y: auto; display: none; background: #ffffff; transition: all 0.3s ease-out;"
+                    id="code-container">
+                    <code-viewer
+                        style="display: block; white-space: pre; font-family: 'IBM Plex Mono', monospace; margin: 0; padding: 0;"></code-viewer>
+                </div>
             </div>
 
-            <!-- Subtle footer -->
-            <footer style="font-size: 0.75rem; color: #666666; text-align: right;">
-                &copy; 2025 Aurafex Technologies
+            <!-- Footer now has more space -->
+            <footer
+                style="font-size: 0.75rem; color: #666666; text-align: right; padding: 0.5rem 0; display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #888888;">po at po dot studio</span>
+                <span>&copy; 2025 Aurafex Technologies</span>
             </footer>
         </div>
     </div>

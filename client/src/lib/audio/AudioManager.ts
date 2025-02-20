@@ -23,7 +23,7 @@ export class AudioManager {
   constructor(options?: Partial<AudioVisualizerOptions>) {
     log('constructor', 'Initializing AudioManager');
     this.sessionManager = SessionManager.getInstance();
-    
+
     this.options = {
       fftSize: 2048,
       smoothingTimeConstant: 0.85,
@@ -43,7 +43,7 @@ export class AudioManager {
 
   private setupAudioElement(track: MediaStreamTrack): void {
     log('setupAudioElement', 'Setting up audio element');
-    
+
     const stream = new MediaStream([track]);
     this.audioElement = new Audio();
     this.audioElement.autoplay = true;
@@ -51,16 +51,16 @@ export class AudioManager {
     this.audioElement.style.display = 'none';
     this.audioElement.volume = 1.0;
     document.body.appendChild(this.audioElement);
-    
+
     // Add error handling and state monitoring
     this.audioElement.addEventListener('error', (e) => {
       log('audioElement', 'Playback error', (e.target as HTMLAudioElement).error);
     });
-    
+
     this.audioElement.addEventListener('play', () => {
       log('audioElement', 'Playback started');
     });
-    
+
     this.audioElement.addEventListener('canplay', () => {
       log('audioElement', 'Can start playing');
       if (this.context?.state === 'suspended') {
@@ -69,9 +69,9 @@ export class AudioManager {
         });
       }
     });
-    
+
     this.audioElement.srcObject = stream;
-    
+
     // Start playback
     this.audioElement.play().catch(err => {
       log('audioElement', 'Playback failed', err);
@@ -95,7 +95,7 @@ export class AudioManager {
 
       const checkState = () => {
         if (!this.peerConnection) return;
-        
+
         const state = this.peerConnection.iceConnectionState;
         if (state === 'connected' || state === 'completed') {
           clearTimeout(timer);
@@ -141,7 +141,7 @@ export class AudioManager {
       log('connect', 'Starting connection process');
       await this.initializeAudioContext();
       this.setState({ connectionStatus: 'connecting' });
-      
+
       log('connect', 'Fetching WebRTC configuration');
       const configResponse = await fetch('/config');
       if (!configResponse.ok) {
@@ -154,10 +154,10 @@ export class AudioManager {
       config.iceTransportPolicy = 'all';
 
       await this.setupWebRTC(config);
-      
+
       // Wait for ICE connection
       await this.waitForICEConnection();
-      
+
       this.setState({ connectionStatus: 'connected' });
       log('connect', 'Connection established successfully');
     } catch (error) {
@@ -169,9 +169,9 @@ export class AudioManager {
 
   private async setupWebRTC(config: WebRTCConfig): Promise<void> {
     log('setupWebRTC', 'Setting up WebRTC connection', config);
-    
+
     this.peerConnection = new RTCPeerConnection(config);
-    
+
     // Add audio transceiver
     const transceiver = this.peerConnection.addTransceiver('audio', { direction: 'recvonly' });
     log('setupWebRTC', 'Added audio transceiver', {
@@ -186,11 +186,11 @@ export class AudioManager {
         id: event.track.id,
         label: event.track.label
       });
-      
+
       if (event.track.kind === 'audio' && this.context && this.gainNode) {
         // Set up both Audio element and AudioContext
         this.setupAudioElement(event.track);
-        
+
         const source = this.context.createMediaStreamSource(
           new MediaStream([event.track])
         );
@@ -332,6 +332,13 @@ export class AudioManager {
   public async disconnect(): Promise<void> {
     try {
       log('disconnect', 'Starting disconnect process');
+
+      // Set disconnecting state
+      this.setState({
+        isPlaying: false,
+        connectionStatus: 'disconnecting'
+      });
+
       await fetch('/stop', {
         method: 'POST',
         headers: {
@@ -353,13 +360,11 @@ export class AudioManager {
         this.audioElement = undefined;
       }
 
-      this.setState({ 
-        isPlaying: false,
-        connectionStatus: 'disconnected' 
-      });
+      this.setState({ connectionStatus: 'disconnected' });
       log('disconnect', 'Disconnect completed successfully');
     } catch (error) {
       log('disconnect', 'Error during disconnect', error);
+      this.setState({ connectionStatus: 'disconnected' });
       throw error;
     }
   }

@@ -1,7 +1,7 @@
 export interface AudioState {
   isPlaying: boolean;
   volume: number;
-  connectionStatus: 'disconnected' | 'connecting' | 'connected';
+  connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'disconnecting';
 }
 
 export interface AudioVisualizerOptions {
