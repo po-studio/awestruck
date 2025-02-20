@@ -1,20 +1,22 @@
 (
 // Create a SynthDef instead of using play
 SynthDef("abio_derivation_7", { |out=0, dcy=4, bd=1, sd=1|
-//////////////////////////////////////////////////////////////////////////
-// ALL VARIABLES AT THE TOP
-//////////////////////////////////////////////////////////////////////////
-var time, silenceGate, buildupGate, dropGate,
-chordArray, chordSeq, chordIndex, chord,
-buildPad, dropPad, localIn, feedback, pit,
-leadGate, leadNotes, leadFreq, leadEnv, lead,
-// multiple drum layers for the "progressive" build
-t0, t1, t2, t3,
-drumsPhase1, drumsPhase2, drumsPhase3, drumsPhase4, buildDrums,
-dropDrums, subBass, hiHat, drums,
-sparkleFreq, sparkleEnv, sparkles,
-clap, fillTrig, fillRing, fill,
-mix, bassSeq, bassFreq, bassEnv;
+
+    //////////////////////////////////////////////////////////////////////////
+    // ALL VARIABLES AT THE TOP
+    //////////////////////////////////////////////////////////////////////////
+
+    var time, silenceGate, buildupGate, dropGate,
+    chordArray, chordSeq, chordIndex, chord,
+    buildPad, dropPad, localIn, feedback, pit,
+    leadGate, leadNotes, leadFreq, leadEnv, lead,
+    // multiple drum layers for the "progressive" build
+    t0, t1, t2, t3,
+    drumsPhase1, drumsPhase2, drumsPhase3, drumsPhase4, buildDrums,
+    dropDrums, subBass, hiHat, drums,
+    sparkleFreq, sparkleEnv, sparkles,
+    clap, fillTrig, fillRing, fill,
+    mix, bassSeq, bassFreq, bassEnv;
 
     //////////////////////////////////////////////////////////////////////////
     // 1) TIMING & GATES

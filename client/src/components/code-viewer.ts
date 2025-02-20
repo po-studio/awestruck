@@ -6,7 +6,7 @@ export class CodeViewer extends HTMLElement {
   private pre: HTMLPreElement;
   private code: HTMLElement;
   private sessionManager: any; // Will be set via public method
-  
+
   constructor() {
     super();
     this.pre = document.createElement('pre');
@@ -19,42 +19,51 @@ export class CodeViewer extends HTMLElement {
   private setupComponent(): void {
     const shadow = this.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    
+
     style.textContent = `
       :host {
         display: block !important;
         width: 100% !important;
-        height: 0 !important;  // Start with 0 height
-        min-height: 0 !important;  // Start with 0 min-height
-        opacity: 0;  // Start hidden
-        transition: all 0.3s ease-out;  // Smooth transition
-      }
-
-      :host(.active) {
         height: 100% !important;
-        min-height: 200px !important;
-        opacity: 1;
+        opacity: 1 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 0 !important;
+        background: transparent !important;
+        overflow: visible !important;
       }
       
       pre {
         margin: 0 !important;
-        padding: 1rem !important;
-        height: 100% !important;
-        background-color: #ffffff !important;  // white background
-        color: #000000 !important;  // black text
-        border: none !important;  // remove border
-        border-radius: 0 0 0.5rem 0.5rem !important;
-        overflow: auto !important;
+        padding: 0 1rem !important;
+        min-height: 100% !important;
+        background: transparent !important;
+        color: #000000 !important;
+        border: none !important;
+        border-radius: 0 !important;
+        overflow-y: auto !important;
+        overflow-x: auto !important;
         font-family: 'IBM Plex Mono', monospace !important;
         font-size: 0.9rem !important;
         font-weight: 400 !important;
         line-height: 1.5 !important;
+        display: block !important;
+        scroll-behavior: smooth !important;
+        border-top: 1px solid rgba(0,0,0,0.1) !important; /* Add subtle border */
       }
       
       code {
         display: block !important;
-        background-color: #ffffff !important;
+        background: transparent !important;
         color: #000000 !important;
+        white-space: pre !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      :host(.active) pre,
+      :host(.active) code {
+        background-color: #ffffff !important;
       }
 
       /* Greyscale syntax highlighting with typography */
@@ -163,7 +172,7 @@ export class CodeViewer extends HTMLElement {
         opacity: 1;
       }
     `;
-    
+
     shadow.appendChild(style);
     shadow.appendChild(this.pre);
   }
@@ -195,82 +204,13 @@ export class CodeViewer extends HTMLElement {
     // Clear previous content
     this.code.textContent = '';
     this.code.textContent = content;
-    
+
     // Highlight with Prism
     // @ts-ignore: Prism is loaded globally
     Prism.highlightElement(this.code);
-    
-    // Get the highlighted HTML content and wrap each line
-    const wrappedContent = this.code.innerHTML
-      .split('\n')
-      .filter(line => line.trim())  // Remove empty lines
-      .map(line => `<span class="code-line">${line}</span>`)
-      .join('');  // Remove the \n in join()
-    
-    // Update the content with our wrapped version
-    this.code.innerHTML = wrappedContent;
 
-    // Add streaming animation styles
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes streamText {
-        from { 
-          clip-path: inset(0 100% 0 0);
-          opacity: 0;
-        }
-        to { 
-          clip-path: inset(0 0 0 0);
-          opacity: 1;
-        }
-      }
-
-      .code-line {
-        display: block;
-        width: 100%;
-        animation: streamText 0.5s linear forwards;
-        white-space: pre;
-        position: relative;
-        line-height: 1.2;  // Tighter line height
-        margin: 0;         // Remove margins
-        padding: 0;        // Remove padding
-      }
-
-      /* Greyscale syntax highlighting */
-      .token.comment { color: #888888 !important; }
-      .token.keyword { color: #222222 !important; }
-      .token.string { color: #444444 !important; }
-      .token.number { color: #333333 !important; }
-      .token.function { color: #111111 !important; }
-      .token.operator { color: #555555 !important; }
-      .token.punctuation { color: #666666 !important; }
-      .token.parameter { color: #777777 !important; }
-    `;
-    
-    // Remove any previous animation styles
-    this.shadowRoot?.querySelectorAll('style').forEach(s => {
-      if (s.textContent?.includes('@keyframes streamText')) {
-        s.remove();
-      }
-    });
-    
-    this.shadowRoot?.appendChild(style);
-
-    // Wait for syntax highlighting to complete
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    // Animate each line
-    const codeLines = this.code.querySelectorAll('.code-line');
-    const duration = 500; // Animation duration in ms
-    
-    codeLines.forEach((line, i) => {
-      (line as HTMLElement).style.animationDelay = `${50}ms`;
-      (line as HTMLElement).style.animationDuration = `${duration}ms`;
-    });
-
-    // Add visible class after animation
-    setTimeout(() => {
-      this.code.classList.add('visible');
-    }, duration + 100);
+    // Set the highlighted content directly without wrapping or animation
+    this.code.classList.add('visible');
   }
 
   public setSessionManager(manager: any): void {
@@ -280,11 +220,96 @@ export class CodeViewer extends HTMLElement {
   // Add method to show the code viewer
   public show(): void {
     this.classList.add('active');
+    const container = document.getElementById('code-container');
+    const mainContainer = container?.parentElement;
+
+    if (container && mainContainer) {
+      // First make it visible with 0 height
+      container.style.display = 'block';
+
+      // Force a reflow before setting initial transition values
+      container.offsetHeight; // Force reflow
+
+      // Set initial state for transition
+      container.style.height = '0';
+      container.style.opacity = '0';
+
+      // Add one-time transition listener
+      const onTransitionStart = () => {
+        // Start scrolling as soon as the transition begins
+        const duration = 300;
+        const startTime = performance.now();
+        const startScroll = container.scrollTop;
+        const endScroll = container.scrollHeight;
+
+        const animateScroll = (currentTime: number) => {
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+
+          const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+          const currentProgress = easeOut(progress);
+
+          container.scrollTop = startScroll + (endScroll - startScroll) * currentProgress;
+          if (this.pre) {
+            this.pre.scrollTop = container.scrollTop;
+          }
+
+          if (progress < 1) {
+            requestAnimationFrame(animateScroll);
+          }
+        };
+
+        requestAnimationFrame(animateScroll);
+      };
+
+      container.addEventListener('transitionstart', onTransitionStart, { once: true });
+
+      // Use double requestAnimationFrame to ensure styles are applied
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const viewportHeight = window.innerHeight;
+          const headerHeight = 200;
+          const footerHeight = 60;
+          const visualizerHeight = 80;
+          const controlsHeight = 52;
+
+          // Add some padding to ensure footer is comfortably visible
+          const bottomPadding = 20;
+
+          // Calculate max container height with padding
+          const maxContainerHeight = viewportHeight - headerHeight - footerHeight - bottomPadding;
+          const maxCodeHeight = maxContainerHeight - visualizerHeight - controlsHeight;
+
+          // Trigger transition
+          container.style.height = `${maxCodeHeight}px`;
+          container.style.maxHeight = `${maxCodeHeight}px`;
+          container.style.opacity = '1';
+        });
+      });
+    }
   }
 
   // Add hide method alongside show
   public hide(): void {
     this.classList.remove('active');
+    const container = document.getElementById('code-container');
+    const mainContainer = container?.parentElement;
+
+    if (container && mainContainer) {
+      // Trigger transition to 0 height
+      container.style.height = '0';
+      container.style.opacity = '0';
+
+      // Wait for transition to complete before hiding and resetting scroll
+      setTimeout(() => {
+        container.style.display = 'none';
+        // Reset scroll position after container is hidden
+        container.scrollTop = 0;
+        if (this.pre) {
+          this.pre.scrollTop = 0;
+        }
+      }, 300); // Match transition duration
+    }
   }
 }
 

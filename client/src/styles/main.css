@@ -2,7 +2,7 @@
   base styles for the audio visualizer app
   includes custom font imports and global styles
 */
-@import url('https://fonts.googleapis.com/css2?family=Bungee+Shade&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Bungee+Shade&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -10,12 +10,12 @@
 
 @layer base {
   html {
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: "Space Grotesk", system-ui, sans-serif;
   }
-  
+
   body {
     @apply antialiased;
-    background-color: #f5f5f5;  /* subtle light grey */
+    background-color: #f5f5f5; /* subtle light grey */
   }
 }
 
@@ -23,11 +23,11 @@
   .btn {
     @apply px-4 py-2 rounded-lg font-medium transition-colors;
   }
-  
+
   .btn-primary {
     @apply bg-gray-800 text-white hover:bg-opacity-90;
   }
-  
+
   .panel {
     @apply bg-gray-800 rounded-xl p-6 shadow-lg;
   }
@@ -49,28 +49,59 @@
 
   .code-viewer {
     @apply font-mono text-sm rounded-lg p-4 overflow-x-auto bg-[#f5f5f5];
+    white-space: pre !important;
+    tab-size: 4 !important;
+    -moz-tab-size: 4 !important;
+  }
+
+  /* Override any reveal animations for code-viewer */
+  code-viewer,
+  code-viewer *,
+  code-viewer::before,
+  code-viewer::after,
+  code-viewer pre,
+  code-viewer code,
+  .reveal,
+  .reveal-text,
+  .typewriter,
+  .code-reveal,
+  [class*="reveal"],
+  [class*="animate"],
+  [class*="transition"] {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+    clip-path: none !important;
+    -webkit-clip-path: none !important;
+    visibility: visible !important;
+    width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    text-indent: 0 !important;
+    letter-spacing: normal !important;
   }
 }
 
 /* Syntax highlighting */
-.token.comment { @apply text-gray-500; }
-.token.keyword { @apply text-purple-400; }
-.token.string { @apply text-green-400; }
-.token.number { @apply text-blue-400; }
-.token.function { @apply text-gray-400; }
-
-/* Animations */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.token.comment {
+  @apply text-gray-500;
+}
+.token.keyword {
+  @apply text-purple-400;
+}
+.token.string {
+  @apply text-green-400;
+}
+.token.number {
+  @apply text-blue-400;
+}
+.token.function {
+  @apply text-gray-400;
 }
 
-.fade-in {
-  animation: fadeIn 0.3s ease-out forwards;
-} 
+/* Animations */
+/* Remove the fadeIn animation and fade-in class since we don't want animations for code */
