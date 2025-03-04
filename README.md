@@ -1,87 +1,301 @@
-![brandmark](https://github.com/po-studio/awestruck/assets/1250151/84795f2f-31de-4db3-b653-becab5dc06b9)
+![brandmark](client/public/BrandSquare.png)
 
 # Awestruck
 
 > [!WARNING]  
-> Protect your ears! Before streaming audio, please turn the volume on your machine DOWN, especially if you're using headphones. While I've tried to ensure the examples play at a reasonable volume, this software gets close to audio hardware and rare glitches such as amplitude spikes can occur.
+> Protect your ears! Before streaming audio, please turn the volume on your machine DOWN, especially if you're using headphones. While we've tried to ensure the examples play at a reasonable volume, this software gets close to audio hardware and rare glitches such as amplitude spikes can occur.
 
-## Real-Time Audio Synthesis, Streaming, & Manipulation
+## Overview
 
-Awestruck aims to provide a framework for real-time, server-driven audio synthesis, streaming, and control over the Internet. It uses SuperCollider, a powerful language for audio programming, but other synthesis engines could be supported.
+Awestruck is a framework for real-time, server-driven audio synthesis, streaming, and control over the Internet. It enables complex audio processing and algorithmic composition through SuperCollider while streaming the results to web clients via WebRTC.
 
-### Tech Stack
+## Technical Architecture
 
-Awestruck uses:
+### Server-Side Components
 
-- [SuperCollider](https://supercollider.github.io/) for real-time sound synthesis
-- [JACK](https://jackaudio.org/) as a sound server API for low-latency connections
-- [GStreamer](https://gstreamer.freedesktop.org/documentation/?gi-language=c) for creating audio pipelines
-- [Pion/WebRTC](https://github.com/pion/webrtc) for streaming captured audio over the web
+1. **SuperCollider Server (scsynth)**
 
-## Why?
+   - Real-time audio synthesis engine
+   - Runs headlessly in server environment
+   - Processes audio at microsecond precision
+   - Controlled via OSC (Open Sound Control)
 
-There are client-side audio frameworks such as [Tone.js](https://tonejs.github.io/), which are powerful in their own right. However, server-driven audio synthesis allows for using tools like SuperCollider, which offer more flexibility, complex audio processing, and algorithmic composition. It also paves the way for AI-powered audio synthesis and speech models, which are limited in client environments.
+2. **JACK Audio Connection Kit**
 
-While this repo doesn't currently include methods for controlling the synth from client requests, this is possible with [OpenSoundControl](https://ccrma.stanford.edu/groups/osc/index.html) and old-fashioned JSON payloads. Protobufs could offer more efficiency in size/speed for high-frequency, low-latency needs.
+   - Low-latency audio routing
+   - Connects SuperCollider to GStreamer
+   - Professional-grade audio server
+   - Sample-accurate timing
 
-The video demo below demonstrates a deployed instance of Awestruck that is controlled via remote requests.
+3. **GStreamer Pipeline**
 
-## Demo
+   - Audio capture from JACK
+   - Format conversion and encoding
+   - Buffer management
+   - Pipeline: `jackaudiosrc -> audioconvert -> opusenc -> webrtcbin`
 
-https://www.youtube.com/watch?v=iEC6-pBFj2Q
+4. **WebRTC Stack (Pion)**
+   - Peer connection management
+   - ICE/STUN/TURN handling
+   - Audio streaming
+   - Connection negotiation
 
-## Contents
+### Connection Flow
 
-This repository contains a Makefile and Docker configuration for building and running a demo that provides a browser interface for starting the synth. Starting the synth does the following:
+```
+title Awestruck Connection & Streaming Flow
 
-- Forms a Pion/WebRTC connection to the running server via handshakes
-- Creates a GStreamer pipeline with JACK audio
-- Headlessly starts SuperCollider with a random, hard-coded [.scd](https://sctweets.tumblr.com/) file
-- Pipes SuperCollider output audio through GStreamer via JACK
-- Uses Pion/WebRTC to stream the audio to the browser
+Browser->Server:1. Request WebRTC connection
+note over Server:2. Create GStreamer pipeline
+Server->Browser:3. Send SDP offer
+Browser->Server:4. Return SDP answer
+note over Server,Browser:5. ICE candidate exchange
+Server->SuperCollider:6. Start synth
+SuperCollider->JACK:7. Audio output
+JACK->GStreamer:8. Route audio
+GStreamer->Browser:9. Stream via WebRTC
+note over Browser:10. Audio playback
+```
 
-## Prerequisites
+[View on SequenceDiagram.org ↗](https://sequencediagram.org/index.html#initialData=C4S2BsFMAIEEHdIGdgCcCuBjA1tAwgPYB2Rkmox0AZNAMpqQCGAtiEQObQBi4B8AUPwBCqPkkioAtAD5aEgG4SAXAEYAdNABKkAI7pkwaAHVIAI00AVPNEzFS5EMX5ECwGAUWo6C5QCYNeKhMbtAA4vRBLBLQAA4gMZDgbJD8cqieMiJiygDMGnJEACZ0ACIACtAEAGZVEsKi8OJSsj6oSgAsGtrA6KhEpRWMREiIqM6u7p7e6RIANFmNygCsGgCSeACiNkOFIIWMIZAAHpgAFkPsKWkZsugJqITgSYXKAGz5wIyohkgAnkTAU6pO4SR7PCQyABSsDwAGklAB2DSwdC7AiVdDAGKY-jQuEycIMKJtAAcXQImJgjFRjn4hMizAh0gWTSUAE4PgzoPIQIxjGZLHhxiEPNEWcoVAAGZE09ExcCMX6mRg4IA)
 
-> [!NOTE]
-> Docker Desktop does not easily allow for enabling IPv6, which is needed for STUN connections. One fix is to use [OrbStack](https://orbstack.dev/), which lets you easily enable IPv6.
+### Client-Server Interaction
 
-- Docker
+```
+title Client Control & Audio Flow
+
+Client->Server:1. Send synthesis parameters
+Server->SuperCollider:2. Translate to OSC commands
+SuperCollider->SuperCollider:3. Process audio
+SuperCollider->JACK:4. Output audio
+JACK->GStreamer:5. Capture audio
+GStreamer->WebRTC:6. Encode & stream
+WebRTC->Client:7. Deliver audio
+note over Client:8. Playback in browser
+```
+
+[View on SequenceDiagram.org ↗](https://sequencediagram.org/index.html#initialData=C4S2BsFMAIGFxJAdsOB7FAnN5oDJoBBAVwBMQ1oAxcNAdwCgH5EUBaAPgGVJMA3XgC4AjADpoPJKWgBnAJ4oAFpBkgZ0AA4BDTFoC2kYLxkMe-Xpy7ENvWDgSkhAJnEAVXUhngtR6MEoA8lyw0ADGaHp6WlImVjaYduAOFtzWtvYgjpiCAMziAArYoSrqWmQUpmkJGVmcAFKEsADSggAs4gHEwBpd0GXkaAwNzZwA4lzAmJD6QgCs4rBaGsDEU33lg+OT0waYnADqkABGAEqusIIAbOIAokjhjviy2-oMh6fnnCzIwIIA7OIACKQBACTDrAYMJBoXxoMFwBA-QQADgK3jkRy0oQA1tAQEhoEdsHQZLwgA)
+
+## Future Directions
+
+### LLM-Driven Synthesis
+
+```
+title LLM-Based Synth Generation
+
+User->Server:1. "Create a ambient space music"
+Server->LLM:2. Translate to musical intent
+LLM->Server:3. Generate SuperCollider code
+note over Server:4. Validate code safety
+Server->SuperCollider:5. Load & compile
+SuperCollider->Client:6. Stream result
+Client->Server:7. Feedback/adjustments
+```
+
+[View on SequenceDiagram.org ↗](https://sequencediagram.org/index.html#initialData=C4S2BsFMAIBlYLIFoBCBDAzpAJtAygJ4B2wAFtAOKRGQBOaoA9kQFAsCqWtSAfHnQDc6ALgCMAOmgAiAMK1IDGGmhoAtgCMQ1YNAwAHNAGMYqgK4YQhqS360h3HvATCATJIAq9IhnCLowRmgzC0M0cGgQEm0WJ15be2EAZkkqGnpgGDxTPToZRnBwEGw6aENGYpYiRgzoRnt8QREAFkkANTCivzLi3TQAM0hgAhtGhyyc2jyCopEAVklYRjRcADJSxlU9ECgbbNz8wuKHGULtYQA2STxgeTVoeQxTcGAWE60SONHhAHZJADFIDh1EYANYAemWACtzMBVNoMEA)
+
+### Asynchronous Composition Workflow
+
+```
+title Background Synthesis Generation
+
+User->Server:1. Submit composition request
+Server->Queue:2. Add to processing queue
+note over Server:3. Process in background
+Queue->LLM:4. Generate variations
+LLM->SuperCollider:5. Test & validate
+SuperCollider->Storage:6. Save successful results
+Server->User:7. Notify completion
+User->Server:8. Request playback
+```
+
+[View on SequenceDiagram.org ↗](https://sequencediagram.org/index.html#initialData=C4S2BsFMAICEEMDGBrA5gJwPYFcB2ATaAZQE9dgALSAZxGugHFJdJ15RNcAoLgVWtYBaAHxFWAN1YAuAIwA6YtgBGAWzDREmFQAdMtDrmjpIAR2w1gXMeknoRARXPmpAJgUBBfIWCZo2rIg0tLio0GaQ5ly4mMAwmLbEEtIAzAoACgFB0CCGSkhoWHj4XI4RkCIAMhUAslIALApMLGyx0OLw6CDsIJzUXFXVIkTY2qwAwpjg4CD40gCsCgAqFtAAZG3w0-jskFYj45NbQqI+bKiQUgBsCkTwktDU2IiB1NQAZtjgRjSfwH3WthE-GkAHYFAA5GIgN4kDRabRQAx8AR2URJdBSAAcCgASqZzNRgH5wPASHkUEA)
 
 ## Getting Started
 
-### Build & Run
+### Prerequisites
 
-To start using this repository, clone it to your local machine and navigate into the directory:
+> [OrbStack](https://orbstack.dev/) is recommended for Docker development.
+
+- Docker / Docker Compose
+
+### Quick Start
 
 ```bash
+# Build the containers
 make build
+
+# Start the service
 make up
+
+# Visit localhost:8080 in your browser
 ```
 
-This should boot up the server and open a browser window. If you do not see a browser window, go to:
-
-- localhost:8080
-- Click "Start Random Synth" – view the browser console logs and you'll see the connection take place
-- View the server logs to see the handshakes occur, the connection to succeed, and SuperCollider to start
-- You should then hear audio
-
 ### Graceful Shutdown
-
-To gracefully stop all processes:
 
 ```bash
 make down
 ```
 
-## Thoughts
+## Deployments
 
-The synth examples in the `supercollider` directory are taken from simple [SC tweets](https://sctweets.tumblr.com) under 140 characters in length, and are highly minimal. That's not to say these nano-compositions aren't interesting, just that they were written by various artists within tight constraints. However, SuperCollider can be used to create larger-scale music.
+Awestruck uses [CDK for Terraform](https://developer.hashicorp.com/terraform/cdktf) (CDKTF) to define and deploy its infrastructure as code.
 
-For example, Jonatan Liljedahl wrote this [track](https://open.spotify.com/track/4VecDB1uhp44posWgt85yN?si=b226049745f14d82) in ~100 lines of SC code. Imagine complex "applications" which represent pieces of music on the scale of symphonies or concertos. This is possible with SuperCollider.
+### Infrastructure Components
 
-### Future Directions
+1. **Container Services**
 
-I'm currently interested applications/integrations with AIs. This could include:
+   - ECS Fargate clusters for WebRTC, TURN, and client services
+   - Auto-scaling based on CPU/memory utilization
+   - Task definitions with resource limits and health checks
 
-- Streaming of LLM-powered [text-to-speech audio](https://github.com/suno-ai/bark) that calls for server-side origins.
-- LLM-driven algorithmic composition. In an ideal scenario, given a prompt for a style of music, the LLM could write the .scd code before streaming it, with rapid feedback for the listener/co-composer. Unfortunately, there is little SuperCollider code out there for AIs to train on, and even if there were, a higher-level system like [Devin](https://www.cognition-labs.com/introducing-devin) with knowledge of musical structure and aesthetics would be necessary in order to produce anything worth listening to. This may change.
+2. **Networking**
+
+   - VPC with public and private subnets
+   - Application Load Balancer for client traffic
+   - Network Load Balancer for WebRTC/TURN traffic
+   - Security groups for service isolation
+
+3. **DNS & TLS**
+   - Route53 for DNS management
+   - ACM certificates for TLS termination
+   - Automatic certificate renewal
+
+### Domain Configuration
+
+> [!IMPORTANT]
+> Before deploying, you must:
+>
+> 1. Own a domain and have it registered in AWS Route53
+> 2. Store the domain in AWS Secrets Manager as `AWESTRUCK_DOMAIN`
+> 3. TODO: the main.ts infra code does not yet implement this, so replace any "\*.awestruck.io"
+> 4. Update the following DNS records in your domain:
+>    - `app.$YOUR_DOMAIN` -> Client application
+>    - `webrtc.$YOUR_DOMAIN` -> WebRTC server
+>    - `turn.$YOUR_DOMAIN` -> TURN server
+
+Example domain configuration in Secrets Manager:
+
+```json
+{
+  "AWESTRUCK_DOMAIN": "yourdomain.com"
+}
+```
+
+### Deployment Commands
+
+```bash
+# First-time setup
+cd infra
+npm install
+cdktf get
+
+# Deploy all services
+make deploy-all
+
+# Force redeploy (if services aren't updating)
+make force-deploy-infra
+
+# Destroy infrastructure
+cd infra && npm run destroy
+```
+
+### Environment Variables
+
+Copy `.env.sample` to `.env` and configure the following variables:
+
+```bash
+# Environment
+export AWESTRUCK_ENV=development  # or production, w/e
+
+# API Keys
+export OPENAI_API_KEY=<your-openai-api-key>  # Required for LLM features, TBD
+export AWESTRUCK_API_KEY=<some-secret-key>   # Your API key for auth
+
+# TURN Server Configuration
+export TURN_MIN_PORT=49152
+export TURN_MAX_PORT=49252
+
+# Note: HOST_IP is automatically set by the development scripts
+```
+
+### Infrastructure Costs
+
+The deployment includes:
+
+- ECS Fargate tasks
+- Load Balancers (ALB & NLB)
+- Route53 hosted zones
+- ACM certificates
+- CloudWatch logs
+
+Estimated monthly cost: $50-100 USD (varies by region and usage)
+
+## Development Roadmap
+
+1. **Core Infrastructure**
+
+   - Production deployment hardening
+   - Error recovery mechanisms
+   - Performance optimization
+   - Connection stability improvements
+   - Datastores...totally missing
+
+2. **API Development**
+
+   - RESTful endpoints for control
+   - WebSocket real-time interface
+   - Comprehensive API documentation
+   - Client SDKs
+
+3. **AI Integration**
+
+   - LLM-powered synth generation
+   - Text-to-speech streaming
+   - Real-time audio manipulation
+   - Collaborative composition tools
+
+4. **Enterprise Features**
+
+   - User authentication
+   - Role-based access control
+   - Usage analytics
+   - Custom deployment options
+
+5. **Music Quality**
+   - Proabably the most important challenge
+   - Would love ideas from the community!
+
+## Contributing
+
+Contributions are welcome! Please read our contributing guidelines and code of conduct before submitting pull requests.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+```
+Copyright (C) 2024 Po Studio
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
+
+The GPL-3.0 license ensures that:
+
+- The software remains free and open source
+- Any modifications or derivative works must also be released under GPL-3.0
+- Users have the freedom to run, study, share, and modify the software
+- Source code must be made available when distributing the software
+
+For the full license text, see the [GNU GPL v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html).
