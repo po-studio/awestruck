@@ -51,28 +51,38 @@ const logContainer = document.getElementById('log-container');
 function activateTab(tabName: string) {
   if (!tabSource || !tabApi || !tabLogs || !contentSource || !contentApi || !contentLogs) return;
 
-  // Deactivate all tabs
+  // First, hide all content and deactivate all tabs
   [tabSource, tabApi, tabLogs].forEach(tab => tab.classList.remove('active'));
   [contentSource, contentApi, contentLogs].forEach(content => {
-    if (content) content.classList.add('hidden');
+    content.classList.add('hidden');
+    content.style.display = 'none'; // Ensure complete hiding
   });
 
-  // Activate the selected tab
+  // Then activate the selected tab and show its content
   switch (tabName) {
     case 'source':
       tabSource.classList.add('active');
       contentSource.classList.remove('hidden');
+      contentSource.style.display = 'block';
       break;
     case 'api':
       tabApi.classList.add('active');
       contentApi.classList.remove('hidden');
+      contentApi.style.display = 'block';
       break;
     case 'logs':
       tabLogs.classList.add('active');
       contentLogs.classList.remove('hidden');
+      contentLogs.style.display = 'block';
       // When showing logs tab, ensure we have some logs displayed
-      if (logContainer && logContainer.childElementCount === 0) {
-        addLogEntry('WebRTC logs will appear here as you use the synth', 'info');
+      if (logContainer) {
+        if (logContainer.childElementCount === 0) {
+          addLogEntry('WebRTC logs will appear here as you use the synth', 'info');
+        }
+        // Always scroll to bottom when logs tab is activated
+        requestAnimationFrame(() => {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        });
       }
       break;
   }
@@ -93,6 +103,9 @@ function addLogEntry(message: string, type: 'info' | 'warning' | 'error' | 'netw
   logEntry.appendChild(timeElement);
   logEntry.appendChild(document.createTextNode(' ' + message));
 
+  // Check if user has scrolled up before adding new entry
+  const isScrolledToBottom = logContainer.scrollHeight - logContainer.clientHeight <= logContainer.scrollTop + 1;
+
   logContainer.appendChild(logEntry);
 
   // Limit to 50 entries to prevent memory issues
@@ -100,8 +113,10 @@ function addLogEntry(message: string, type: 'info' | 'warning' | 'error' | 'netw
     logContainer.removeChild(logContainer.firstChild as Node);
   }
 
-  // Auto-scroll to bottom
-  logContainer.scrollTop = logContainer.scrollHeight;
+  // Only auto-scroll if user was already at the bottom
+  if (isScrolledToBottom) {
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
 }
 
 // Override console functions to capture WebRTC and audio logs
@@ -335,12 +350,17 @@ function setupUIInteractions() {
     document.body.classList.remove('overflow-hidden');
   };
 
-  // Ensure info button is always enabled by removing any disabled state
-  infoButton.classList.remove('disabled');
+  // Initially disable the settings button
+  settingsButton.classList.add('disabled');
 
   // Toggle code container directly when clicking the settings button
   settingsButton.addEventListener('click', (e) => {
     e.stopPropagation();
+
+    // Don't do anything if the button is disabled
+    if (settingsButton.classList.contains('disabled')) {
+      return;
+    }
 
     // Hide info popup if visible
     if (infoPopup && infoPopup.classList.contains('show')) {
@@ -352,12 +372,15 @@ function setupUIInteractions() {
       infoPanel.style.display = 'none';
     }
 
-    // Always show code container when clicking the developer icon
-    codeContainer.style.display = 'block';
-    codeViewer.show();
-
-    // Make sure the Source tab is active
-    activateTab('source');
+    // Toggle code container visibility
+    if (codeContainer.style.display === 'block') {
+      codeViewer.hide();
+    } else {
+      codeContainer.style.display = 'block';
+      codeViewer.show();
+      // Make sure the Source tab is active
+      activateTab('source');
+    }
   });
 
   // Toggle info popup
@@ -394,6 +417,21 @@ function setupUIInteractions() {
       e.stopPropagation();
     });
   }
+
+  // Listen for audio state changes to enable/disable the settings button
+  window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
+    const { connectionStatus } = event.detail;
+
+    if (connectionStatus === 'connected') {
+      settingsButton.classList.remove('disabled');
+    } else {
+      settingsButton.classList.add('disabled');
+      // Also hide the code container if it's visible
+      if (codeContainer.style.display === 'block') {
+        codeViewer.hide();
+      }
+    }
+  }) as EventListener);
 }
 
 // Mobile optimization

@@ -171,61 +171,22 @@ export class CodeViewer extends HTMLElement {
       container.style.display = 'block';
 
       // Force a reflow before setting initial transition values
-      container.offsetHeight; // Force reflow
+      container.offsetHeight;
 
       // Set initial state for transition
       container.style.height = '0';
       container.style.opacity = '0';
 
-      // Add one-time transition listener
-      const onTransitionStart = () => {
-        // Start scrolling as soon as the transition begins
-        const duration = 300;
-        const startTime = performance.now();
-        const startScroll = container.scrollTop;
-        const endScroll = container.scrollHeight;
-
-        const animateScroll = (currentTime: number) => {
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-
-          const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
-          const currentProgress = easeOut(progress);
-
-          container.scrollTop = startScroll + (endScroll - startScroll) * currentProgress;
-          if (this.pre) {
-            this.pre.scrollTop = container.scrollTop;
-          }
-
-          if (progress < 1) {
-            requestAnimationFrame(animateScroll);
-          }
-        };
-
-        requestAnimationFrame(animateScroll);
-      };
-
-      container.addEventListener('transitionstart', onTransitionStart, { once: true });
-
       // Use double requestAnimationFrame to ensure styles are applied
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const viewportHeight = window.innerHeight;
-          const headerHeight = 200;
-          const footerHeight = 60;
-          const visualizerHeight = 80;
-          const controlsHeight = 52;
 
-          // Add some padding to ensure footer is comfortably visible
-          const bottomPadding = 20;
-
-          // Calculate max container height with padding
-          const maxContainerHeight = viewportHeight - headerHeight - footerHeight - bottomPadding;
-          const maxCodeHeight = maxContainerHeight - visualizerHeight - controlsHeight;
+          // Use 60% of viewport height
+          const targetHeight = Math.min(viewportHeight * 0.6, 600);
 
           // Trigger transition
-          container.style.height = `${maxCodeHeight}px`;
-          container.style.maxHeight = `${maxCodeHeight}px`;
+          container.style.height = `${targetHeight}px`;
           container.style.opacity = '1';
         });
       });

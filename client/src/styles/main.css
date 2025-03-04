@@ -152,6 +152,8 @@
   .code-container {
     background-color: var(--color-panel);
     border-top: 1px solid var(--color-panel-border);
+    display: flex;
+    flex-direction: column;
   }
 
   /* Override any reveal animations for code-viewer */
@@ -614,6 +616,8 @@ code-viewer pre {
   background-color: var(--color-code-bg);
   height: 300px; /* Fixed height for scrollable content */
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Light mode styling for code container */
@@ -643,16 +647,23 @@ code-viewer pre {
   overflow-y: auto;
   background-color: var(--color-code-bg);
   color: var(--color-code-text);
-  padding: 1rem;
+  padding: 1.5rem;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
   line-height: 1.5;
+  scroll-behavior: smooth; /* Smooth scrolling when auto-scrolling to bottom */
+  flex: 1;
 }
 
 .log-entry {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem; /* Slightly increase spacing between entries */
   border-left: 3px solid transparent;
-  padding-left: 0.5rem;
+  padding-left: 0.75rem;
+}
+
+/* Last log entry should not have bottom margin to avoid extra space */
+.log-entry:last-child {
+  margin-bottom: 0.5rem;
 }
 
 .log-info {
@@ -695,4 +706,62 @@ code-viewer pre {
 
 .dark .log-time {
   color: #666;
+}
+
+/* Content padding for non-log tabs */
+#content-source,
+#content-api {
+  padding: 1.5rem;
+}
+
+main {
+  display: block;
+  padding: 2rem 0;
+}
+
+/* Container for the audio player */
+main > div {
+  margin: 2rem auto; /* Reduce top margin to move player up slightly */
+  position: relative; /* Add this to establish positioning context */
+}
+
+/* Code container styling */
+.code-container {
+  position: relative; /* Change from absolute to relative */
+  background-color: var(--color-panel);
+  border-top: 1px solid var(--color-panel-border);
+  max-height: calc(60vh); /* Limit height to 60% of viewport height */
+  overflow: hidden;
+  transition: height 0.3s ease, opacity 0.3s ease;
+}
+
+.code-tab-content {
+  background-color: var(--color-code-bg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%; /* Take full height of container */
+  padding: 0;
+}
+
+/* Content padding for specific tabs */
+#content-source code-viewer,
+#content-api > div {
+  padding: 1.5rem;
+}
+
+#log-container {
+  padding: 1.5rem;
+}
+
+/* Ensure the code viewer takes full height */
+code-viewer {
+  height: 100%;
+  overflow: auto;
+}
+
+/* Dark mode specific adjustments */
+.dark .code-container {
+  background-color: #080808;
+  border-color: rgba(255, 255, 255, 0.03);
 }
