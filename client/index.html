@@ -19,109 +19,151 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-supercollider.min.js"></script>
     <!-- Temporarily commenting out styles -->
     <!-- <link rel="stylesheet" href="/src/styles/main.css"> -->
-    <style>
-        pre[class*="language-"],
-        code[class*="language-"] {
-            background: #f5f5f5 !important;
-            color: #000000 !important;
-        }
-
-        /* Override any reveal animations */
-        code-viewer,
-        code-viewer *,
-        code-viewer::before,
-        code-viewer::after,
-        code-viewer pre,
-        code-viewer code {
-            animation: none !important;
-            opacity: 1 !important;
-            transform: none !important;
-            transition: none !important;
-            clip-path: none !important;
-            -webkit-clip-path: none !important;
-            visibility: visible !important;
-            width: auto !important;
-            max-width: none !important;
-            overflow: visible !important;
-            position: static !important;
-            left: auto !important;
-            right: auto !important;
-        }
-
-        /* Ensure code blocks maintain formatting */
-        code-viewer pre {
-            white-space: pre !important;
-            tab-size: 4 !important;
-            -moz-tab-size: 4 !important;
-        }
-    </style>
+    <link rel="stylesheet" href="/src/styles/main.css">
     <link
         href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap"
         rel="stylesheet">
 </head>
 
-<body style="background: #f5f5f5; color: black;">
-    <div style="max-width: min(90%, 600px); margin: 0 auto; padding: 12px;">
-        <div>
-            <!-- Header with feature list -->
-            <header style="margin-bottom: 1.5rem;">
-                <h1
-                    style="font-size: clamp(1.25rem, 5vw, 1.5rem); font-weight: 500; margin: 0; letter-spacing: -0.01em;">
-                    Awestruck
-                </h1>
-                <p
-                    style="font-size: clamp(0.875rem, 4vw, 1rem); color: #333333; margin: 0.25rem 0 0.75rem 0; font-weight: 500;">
-                    Generative Audio Synths
-                </p>
-                <!-- Feature list with better mobile spacing -->
-                <div
-                    style="display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: clamp(0.7rem, 3vw, 0.75rem); color: #666666; align-items: center;">
-                    <span>
-                        AI-driven audio synthesis with real-time WebRTC streaming
-                    </span>
-                </div>
-                <!-- Coming soon features -->
-                <div style="margin-top: 0.75rem; font-size: clamp(0.7rem, 3vw, 0.75rem); color: #888888;">
-                    <div style="font-style: italic; margin-bottom: 0.25rem;">Coming soon:</div>
-                    <div style="display: flex; flex-direction: column; gap: 0.25rem; padding-left: 0.75rem;">
-                        <span>• Networked OSC control for real-time synth updates</span>
-                        <span>• Text-to-synth prompting for bespoke synths</span>
-                        <span>• APIs and SDKs for developer integrations</span>
+<body class="flex flex-col min-h-screen">
+    <!-- Mobile menu backdrop -->
+    <div id="menu-backdrop" class="fixed inset-0 bg-black bg-opacity-50 z-10 hidden"></div>
+
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="flex items-center">
+            <a href="/" class="flex items-center">
+                <img src="/BrandSquare.svg" alt="Awestruck Logo" class="w-7 h-7 mr-3" />
+                <span class="text-xl font-medium">Awestruck</span>
+            </a>
+        </div>
+        <div class="flex items-center space-x-4">
+            <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode">
+                <!-- Sun icon for dark mode -->
+                <svg id="sun-icon" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <!-- Moon icon for light mode -->
+                <svg id="moon-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+            </button>
+            <div class="flex items-center relative">
+                <button id="info-button" class="p-2 rounded-full transition-colors" aria-label="Information">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <circle cx="12" cy="8" r="0.5"></circle>
+                    </svg>
+                </button>
+                <!-- Info popup -->
+                <div id="info-popup" class="popup-menu hidden z-20">
+                    <div class="p-4">
+                        <button class="close-button" aria-label="Close">
+                            <svg viewBox="0 0 24 24">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                        <h2>Deployable Synths</h2>
+                        <p>Awestruck offers on-demand, streamable synths for developer integrations.</p>
+                        <h3>Coming soon:</h3>
+                        <ul>
+                            <li>Networked OSC for real-time synth modulation</li>
+                            <li>Text-to-audio prompting for custom synths</li>
+                            <li>APIs and SDKs for developer integrations</li>
+                        </ul>
                     </div>
-                </div>
-            </header>
-
-            <!-- Main container with integrated styling -->
-            <div
-                style="border: 1px solid #1a1a1a; border-radius: 0.5rem; overflow: hidden; display: flex; flex-direction: column;">
-                <!-- Controls section -->
-                <div
-                    style="background: #1a1a1a; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between;">
-                    <div style="display: flex; align-items: center; gap: 1.5rem;">
-                        <playback-controls></playback-controls>
-                    </div>
-                    <div class="connection-status"
-                        style="color: rgba(255,255,255,0.6); font-size: 0.875rem; letter-spacing: 0.025em;"></div>
-                </div>
-
-                <audio-visualizer style="display: block; margin: 0; padding: 0;"></audio-visualizer>
-
-                <!-- Code viewer container -->
-                <div style="overflow-y: auto; display: none; background: #ffffff; transition: all 0.3s ease-out;"
-                    id="code-container">
-                    <code-viewer
-                        style="display: block; white-space: pre; font-family: 'IBM Plex Mono', monospace; margin: 0; padding: 0;"></code-viewer>
                 </div>
             </div>
-
-            <!-- Footer now has more space -->
-            <footer
-                style="font-size: 0.75rem; color: #666666; text-align: right; padding: 0.5rem 0; display: flex; justify-content: space-between; align-items: center;">
-                <span style="color: #888888;">po at po dot studio</span>
-                <span>&copy; 2025 Aurafex Technologies</span>
-            </footer>
         </div>
-    </div>
+    </nav>
+
+    <main class="flex-grow">
+        <div class="max-w-[90%] w-[600px] mx-auto p-4">
+            <div class="border border-solid rounded-lg overflow-hidden flex flex-col relative">
+                <!-- Controls section with gear icon on right -->
+                <div class="p-3 flex items-center justify-between player-top-bar">
+                    <div class="connection-status text-sm opacity-90"></div>
+                    <div class="flex items-center relative">
+                        <button id="settings-button" class="p-2 rounded-full transition-colors"
+                            aria-label="View Source Code">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="1.5">
+                                <polyline points="16 18 22 12 16 6"></polyline>
+                                <polyline points="8 6 2 12 8 18"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="relative">
+                    <audio-visualizer class="block m-0 p-0"></audio-visualizer>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <playback-controls></playback-controls>
+                    </div>
+                </div>
+
+                <!-- Code viewer container -->
+                <div id="code-container" class="overflow-y-auto hidden code-container">
+                    <!-- Tabs navigation -->
+                    <div class="code-tabs flex border-b border-solid">
+                        <button id="tab-source" class="code-tab-button active py-2 px-4 border-b-2">Source Code</button>
+                        <button id="tab-api" class="code-tab-button py-2 px-4 border-b-2">Synth API</button>
+                        <button id="tab-logs" class="code-tab-button py-2 px-4 border-b-2">Logs</button>
+                    </div>
+
+                    <!-- Tab content -->
+                    <div id="content-source" class="code-tab-content">
+                        <code-viewer class="block whitespace-pre m-0 p-0 font-mono"></code-viewer>
+                    </div>
+
+                    <div id="content-api" class="code-tab-content hidden">
+                        <div class="p-4">
+                            <h3 class="text-lg font-medium mb-2">Synth API Documentation</h3>
+                            <p class="mb-4">Coming Soon: API for real-time modulation control of this synth via its
+                                exposed parameters.</p>
+
+                            <div class="mt-6 p-3 border rounded-md bg-opacity-10 bg-gray-200">
+                                <p class="text-sm opacity-70">This feature is under active development. Check back soon!
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="content-logs" class="code-tab-content hidden">
+                        <div id="log-container" class="font-mono text-sm p-3 overflow-x-auto whitespace-pre">
+                            <!-- Logs will be added here dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Info panel container - kept for backward compatibility but hidden -->
+                <div id="info-panel" class="hidden">
+                    <!-- Content moved to popup -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="py-4 px-6 border-t mt-auto">
+        <div class="max-w-[90%] w-[600px] mx-auto flex flex-col md:flex-row justify-between items-center">
+            <a href="https://po.studio" class="text-sm opacity-60 hover:opacity-100 transition-opacity">po.studio</a>
+            <span class="text-sm opacity-60">&copy; 2025 Aurafex Technologies</span>
+        </div>
+    </footer>
 
     <script type="module" src="/src/main.ts"></script>
 </body>

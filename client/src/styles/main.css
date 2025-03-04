@@ -8,6 +8,62 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Light mode variables */
+  --color-bg: #f5f5f5;
+  --color-text: #111111;
+  --color-panel: #ffffff;
+  --color-panel-border: rgba(0, 0, 0, 0.1);
+  --color-primary: #1a1a1a;
+  --color-secondary: #333333;
+  --color-accent: #4a4a4a;
+  --color-button-text: #ffffff;
+  --color-code-bg: #f5f5f5;
+  --color-code-text: #000000;
+  --color-muted: #999999;
+  --color-player-top: #333333;
+  --is-dark-mode: 0;
+}
+
+/* Status styling */
+.status-text,
+.connection-status {
+  color: var(--color-muted);
+  font-weight: 400;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.status-text.live,
+.connection-status.live {
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.dark .status-text.live,
+.dark .connection-status.live {
+  color: #00e676;
+  font-weight: 500;
+}
+
+/* Dark mode color scheme */
+.dark {
+  /* Updated dark mode colors with better contrast */
+  --color-bg: #121212; /* Body background */
+  --color-text: #f5f5f5;
+  --color-panel: #0a0a0a; /* Darker panel background */
+  --color-panel-border: rgba(255, 255, 255, 0.03);
+  --color-primary: #f5f5f5;
+  --color-secondary: #d1d1d1;
+  --color-accent: #a1a1a1;
+  --color-button-text: #111111;
+  --color-code-bg: #080808; /* Darkest background for code */
+  --color-code-text: #e1e1e1; /* Light text for code */
+  --color-muted: #777777;
+  --color-player-top: #1e1e1e; /* Lighter grey for player header */
+  --is-dark-mode: 1;
+}
+
 @layer base {
   html {
     font-family: "Space Grotesk", system-ui, sans-serif;
@@ -15,43 +71,111 @@
 
   body {
     @apply antialiased;
-    background-color: #f5f5f5; /* subtle light grey */
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* For when popups are open on mobile */
+  body.overflow-hidden {
+    overflow: hidden; /* prevent background scrolling - direct CSS instead of @apply */
   }
 }
 
 @layer components {
+  .navbar {
+    @apply fixed top-0 left-0 right-0 z-50 flex items-center justify-between p-4 border-b backdrop-blur-sm;
+    background-color: rgba(var(--color-panel-rgb), 0.95);
+    border-color: var(--color-panel-border);
+    height: 4rem; /* Fixed height to prevent content shifts */
+  }
+
+  .theme-toggle {
+    @apply p-2 transition-colors;
+    color: var(--color-text);
+    background: none;
+  }
+
   .btn {
     @apply px-4 py-2 rounded-lg font-medium transition-colors;
   }
 
   .btn-primary {
-    @apply bg-gray-800 text-white hover:bg-opacity-90;
+    background-color: var(--color-primary);
+    color: var(--color-button-text);
+    @apply hover:bg-opacity-90;
   }
 
   .panel {
-    @apply bg-gray-800 rounded-xl p-6 shadow-lg;
+    background-color: var(--color-panel);
+    @apply rounded-xl p-6 shadow-lg;
   }
 
   .canvas-container {
-    @apply w-full bg-gray-900 rounded-lg overflow-hidden relative;
+    @apply w-full rounded-lg overflow-hidden relative;
+    background-color: var(--color-secondary);
   }
 
   .playstop-button {
-    @apply w-16 h-16 rounded-full border-2 border-gray-700 bg-gray-800 
-           text-gray-400 cursor-pointer transition-all duration-300
-           hover:bg-gray-700 hover:border-gray-600 hover:scale-105
-           active:scale-95 flex items-center justify-center;
+    @apply w-16 h-16 rounded-full border-2 cursor-pointer transition-all duration-300
+           hover:scale-105 active:scale-95 flex items-center justify-center;
+    background-color: var(--color-panel);
+    border-color: var(--color-accent);
+    color: var(--color-text);
+  }
+
+  .playstop-button svg {
+    stroke-width: 2px;
+    stroke: currentColor;
+    fill: none;
+  }
+
+  /* Ensure play button triangle is visible against dark background */
+  .playstop-button path {
+    stroke: currentColor;
+    fill: currentColor;
+  }
+
+  /* Make the play button more visible in light mode against the dark player background */
+  :root:not(.dark) .playstop-button {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  /* Make the play button more visible in dark mode */
+  .dark .playstop-button {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: rgba(255, 255, 255, 0.95);
   }
 
   .playstop-button[data-state="playing"] {
-    @apply bg-gray-900 border-gray-500 text-white;
+    @apply border-opacity-80;
+    background-color: var(--color-secondary);
   }
 
   .code-viewer {
-    @apply font-mono text-sm rounded-lg p-4 overflow-x-auto bg-[#f5f5f5];
-    white-space: pre !important;
-    tab-size: 4 !important;
-    -moz-tab-size: 4 !important;
+    @apply font-mono text-sm rounded-lg p-4 overflow-x-auto;
+    background-color: var(--color-code-bg);
+    color: var(--color-code-text);
+    white-space: pre;
+    tab-size: 4;
+    -moz-tab-size: 4;
+  }
+
+  /* Player controls top bar */
+  .player-top-bar {
+    background-color: var(--color-player-top);
+    border-bottom: 1px solid var(--color-panel-border);
+  }
+
+  /* Code container */
+  .code-container {
+    background-color: var(--color-panel);
+    border-top: 1px solid var(--color-panel-border);
+    display: flex;
+    flex-direction: column;
   }
 
   /* Override any reveal animations for code-viewer */
@@ -68,40 +192,798 @@
   [class*="reveal"],
   [class*="animate"],
   [class*="transition"] {
-    animation: none !important;
-    opacity: 1 !important;
-    transform: none !important;
-    transition: none !important;
-    clip-path: none !important;
-    -webkit-clip-path: none !important;
-    visibility: visible !important;
-    width: auto !important;
-    max-width: none !important;
-    overflow: visible !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    text-indent: 0 !important;
-    letter-spacing: normal !important;
+    animation: none;
+    opacity: 1;
+    transform: none;
+    transition: none;
+    clip-path: none;
+    -webkit-clip-path: none;
+    visibility: visible;
+    width: auto;
+    max-width: none;
+    overflow: visible;
+    position: static;
+    left: auto;
+    right: auto;
+    text-indent: 0;
+    letter-spacing: normal;
   }
+}
+
+/* Prism.js syntax highlighting */
+pre[class*="language-"],
+code[class*="language-"] {
+  background-color: var(--color-code-bg);
+  color: var(--color-code-text);
+}
+
+/* Code viewer formatting */
+code-viewer pre {
+  white-space: pre;
+  tab-size: 4;
+  -moz-tab-size: 4;
+}
+
+/* Popup Menu Styling (for both info popup and options menu) */
+.popup-menu {
+  position: fixed;
+  top: 4rem; /* Account for navbar height */
+  right: 1rem;
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-panel-border);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  display: none;
+  z-index: 40;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.popup-menu.active,
+.popup-menu.show {
+  display: block;
+}
+
+/* Options menu items */
+.popup-menu > div {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+  color: var(--color-text);
+}
+
+.popup-menu > div:hover {
+  background-color: var(--color-panel-border);
+}
+
+/* Info popup styling */
+#info-popup {
+  position: fixed;
+  top: 4rem;
+  right: 1rem;
+  width: 260px;
+  background-color: var(--color-panel);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 40;
+  display: none; /* Hidden by default */
+}
+
+#info-popup.show {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header section - no padding, full width */
+#info-popup .header {
+  background-color: var(--color-player-top);
+  width: 100%;
+  padding: 1.25rem;
+  position: relative;
+}
+
+#info-popup h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+/* Content section */
+#info-popup .content {
+  padding: 1.25rem;
+  flex: 1;
+}
+
+#info-popup p {
+  margin: 0 0 1.5rem 0;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+#info-popup ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#info-popup li {
+  font-size: 0.9rem;
+  color: var(--color-muted);
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+  position: relative;
+  line-height: 1.4;
+}
+
+#info-popup li:last-child {
+  margin-bottom: 0;
+}
+
+#info-popup li::before {
+  content: "~";
+  position: absolute;
+  left: 0;
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+#info-popup .close-button {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--color-text);
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+#info-popup .close-button:hover {
+  opacity: 1;
+}
+
+#info-popup .close-button svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+@media (min-width: 768px) {
+  #info-popup {
+    width: 320px;
+  }
+}
+
+/* Mobile optimizations for info popup */
+@media (max-width: 640px) {
+  #info-popup {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-height: 80vh;
+    border-radius: 0.75rem 0.75rem 0 0;
+  }
+}
+
+/* Coming soon tooltip */
+.coming-soon {
+  position: relative;
+  color: var(--color-muted);
+  pointer-events: none;
+  opacity: 0.7;
+  cursor: default;
+}
+
+.coming-soon::after {
+  content: "Coming Soon";
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.7rem;
+  background-color: var(--color-panel-border);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  opacity: 0.9;
+}
+
+/* Info panel styling - kept for backward compatibility */
+#info-panel {
+  transition: all 0.3s ease-out;
+}
+
+#info-panel h2,
+#info-popup h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+#info-panel p,
+#info-popup p {
+  margin: 0 0 1rem 0;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+#info-panel ul,
+#info-popup ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+#info-panel li,
+#info-popup li {
+  font-size: 0.9rem;
+  color: var(--color-muted);
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+  padding-left: 1.5rem;
+  position: relative;
+}
+
+#info-panel li::before,
+#info-popup li::before {
+  content: "~";
+  position: absolute;
+  left: 0;
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+/* Settings button disabled state */
+#settings-button.disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
 }
 
 /* Syntax highlighting */
 .token.comment {
   @apply text-gray-500;
 }
-.token.keyword {
-  @apply text-purple-400;
-}
-.token.string {
-  @apply text-green-400;
-}
-.token.number {
-  @apply text-blue-400;
-}
-.token.function {
-  @apply text-gray-400;
+
+.dark .token.comment {
+  color: #6a9955; /* Brighter green for comments */
 }
 
-/* Animations */
-/* Remove the fadeIn animation and fade-in class since we don't want animations for code */
+.token.keyword {
+  @apply text-purple-600;
+}
+
+.dark .token.keyword {
+  color: #c586c0; /* Brighter purple for keywords */
+}
+
+.token.string {
+  @apply text-green-600;
+}
+
+.dark .token.string {
+  color: #ce9178; /* Orange-coral for strings */
+}
+
+.token.number {
+  @apply text-blue-600;
+}
+
+.dark .token.number {
+  color: #b5cea8; /* Light green for numbers */
+}
+
+.token.function {
+  @apply text-gray-700;
+}
+
+.dark .token.function {
+  color: #dcdcaa; /* Light yellow for functions */
+}
+
+/* Additional syntax token types for better highlighting */
+.dark .token.property,
+.dark .token.tag,
+.dark .token.constant,
+.dark .token.symbol {
+  color: #4fc1ff; /* Light blue for properties and constants */
+}
+
+.dark .token.operator,
+.dark .token.entity,
+.dark .token.url {
+  color: #d4d4d4; /* Light grey for operators */
+}
+
+.dark .token.punctuation {
+  color: #d4d4d4; /* Light grey for punctuation */
+}
+
+.dark .token.boolean,
+.dark .token.class-name {
+  color: #4ec9b0; /* Teal for classes and booleans */
+}
+
+/* Remove all old status styles */
+.status-text.online,
+.status-text.offline,
+.status-text.online.playing {
+  color: var(--color-muted);
+}
+
+/* Light mode code background fix */
+:root:not(.dark) code[class*="language-"],
+:root:not(.dark) pre[class*="language-"],
+:root:not(.dark) .code-container,
+:root:not(.dark) .code-tab-content,
+:root:not(.dark) code-viewer {
+  background: none;
+}
+
+/* Light mode code viewer and syntax colors */
+:root:not(.dark) {
+  --color-code-bg: #f8f8f8;
+  --color-code-text: #24292e;
+  --color-code-comment: #6a737d;
+  --color-code-keyword: #d73a49;
+  --color-code-string: #032f62;
+  --color-code-number: #005cc5;
+  --color-code-function: #6f42c1;
+}
+
+/* Code container light mode */
+:root:not(.dark) .code-container {
+  background-color: var(--color-code-bg);
+}
+
+:root:not(.dark) .code-tab-content {
+  background-color: var(--color-code-bg);
+}
+
+/* Code viewer light mode background */
+:root:not(.dark) code-viewer,
+:root:not(.dark) pre[class*="language-"],
+:root:not(.dark) code[class*="language-"] {
+  background-color: var(--color-code-bg);
+  color: var(--color-code-text);
+}
+
+/* Player top bar in light mode */
+:root:not(.dark) .player-top-bar {
+  background-color: var(--color-player-top);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+:root:not(.dark) .player-top-bar svg {
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+/* Add specific styles for the main player container and footer in dark mode */
+.dark main .border {
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+.dark footer.border-t {
+  border-top-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Specifically target the border class on the player container */
+.dark .border.border-solid {
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Target the footer's border-t class */
+.dark .border-t {
+  border-top-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Also update the border for the player top bar in dark mode */
+.dark .player-top-bar {
+  border-bottom-color: rgba(255, 255, 255, 0.03);
+}
+
+/* And for the code container */
+.dark .code-container {
+  border-top-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Update specific element styles for the new color scheme */
+.dark audio-visualizer {
+  background-color: #080808; /* Darkest background for audio visualizer */
+}
+
+/* Ensure the play button stands out against the darker background */
+.dark .playstop-button {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* Ensure code is readable on the darker background */
+.dark .code-viewer,
+.dark pre[class*="language-"],
+.dark code[class*="language-"] {
+  background-color: var(--color-code-bg);
+  color: var(--color-code-text);
+}
+
+/* Make sure the connection status is visible on the darker player header */
+.dark .connection-status {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Make sure the settings icon is visible */
+.dark #settings-button svg {
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+/* Make sure the code container background is correct in dark mode */
+.dark #code-container {
+  background-color: #080808;
+}
+
+/* Ensure the code-viewer has the correct background in dark mode */
+.dark code-viewer {
+  background-color: #080808 !important;
+  color: #e1e1e1;
+}
+
+/* Fix the audio visualizer background in dark mode */
+.dark audio-visualizer {
+  background-color: #000000; /* Pure black for audio visualizer */
+}
+
+/* Additional fixes for code background */
+.dark pre[class*="language-"],
+.dark code[class*="language-"] {
+  background-color: #080808 !important;
+  color: #e1e1e1;
+}
+
+/* Override any remaining white backgrounds in the code display */
+.dark pre,
+.dark code {
+  background-color: #080808 !important;
+  color: #e1e1e1;
+}
+
+/* Ensure the canvas background is black in dark mode */
+.dark .canvas-container {
+  background-color: #000000;
+}
+
+/* Make borders more subtle */
+.dark .border {
+  border-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* Improve contrast for the status text */
+.dark .connection-status {
+  color: var(--color-muted);
+}
+
+/* Style the code viewer more specifically for dark mode */
+.dark .code-viewer,
+.dark code-viewer {
+  color-scheme: dark;
+}
+
+/* Target both normal selectors and shadow DOM content */
+:root.dark {
+  color-scheme: dark;
+}
+
+/* Add custom property to communicate dark mode to shadow DOM */
+:root {
+  --is-dark-mode: 0;
+}
+
+:root.dark {
+  --is-dark-mode: 1;
+}
+
+/* Target Prism.js specific elements in dark mode */
+.dark .token.keyword,
+.dark .token.function,
+.dark .token.string,
+.dark .token.number,
+.dark .token.operator,
+.dark .token.comment {
+  background-color: transparent !important;
+}
+
+/* Ensure all pre elements in dark mode have correct styling */
+.dark pre {
+  background-color: #080808 !important;
+  color: #e1e1e1 !important;
+}
+
+/* Custom style for the code container to match the target example */
+.dark #code-container {
+  background-color: #080808 !important;
+  border-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* Make the live status text more vibrant green to match the target example */
+.dark .connection-status.live {
+  color: #00e676;
+  font-weight: 500;
+}
+
+/* Tabs styling */
+.code-tabs {
+  background-color: var(--color-panel);
+  border-color: var(--color-panel-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.code-tab-button {
+  color: var(--color-muted);
+  transition: all 0.2s ease;
+  position: relative;
+  border-bottom-color: transparent;
+}
+
+.code-tab-button:hover {
+  color: var(--color-text);
+}
+
+.code-tab-button.active {
+  color: var(--color-text);
+  border-bottom-color: #888; /* Grey underline instead of green */
+}
+
+.dark .code-tab-button.active {
+  border-bottom-color: #888; /* Grey underline in dark mode too */
+}
+
+.code-tab-content {
+  background-color: var(--color-code-bg);
+  height: 300px; /* Fixed height for scrollable content */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Light mode styling for code container */
+:root:not(.dark) .code-container {
+  background-color: #f5f5f5; /* Light grey background */
+}
+
+:root:not(.dark) .code-tab-content {
+  background-color: #f5f5f5; /* Light grey background */
+}
+
+/* Improved settings button (code icon) */
+#settings-button {
+  transition: all 0.2s ease;
+}
+
+#settings-button.disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Logs styling */
+#log-container {
+  min-height: 300px;
+  max-height: 500px;
+  overflow-y: auto;
+  background-color: var(--color-code-bg);
+  color: var(--color-code-text);
+  padding: 1.5rem;
+  padding-bottom: 3rem; /* Increase bottom padding significantly */
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  scroll-behavior: smooth;
+  flex: 1;
+}
+
+.log-entry {
+  margin-bottom: 0.75rem;
+  border-left: 3px solid transparent;
+  padding-left: 0.75rem;
+  padding-bottom: 0.1rem; /* Add a small padding to prevent text clipping */
+}
+
+/* Last log entry should have proper spacing */
+.log-entry:last-child {
+  margin-bottom: 0;
+  margin-bottom: 0.5rem;
+}
+
+.log-info {
+  border-color: #4caf50;
+}
+
+.log-warning {
+  border-color: #ff9800;
+}
+
+.log-error {
+  border-color: #f44336;
+}
+
+.log-network {
+  border-color: #2196f3;
+}
+
+.log-audio {
+  border-color: #9c27b0;
+}
+
+.log-time {
+  color: var(--color-muted);
+  font-size: 0.8em;
+  margin-right: 0.5rem;
+}
+
+/* Dark mode specific tab styling */
+.dark .code-tabs {
+  background-color: #0a0a0a;
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+.dark #log-container {
+  background-color: #080808;
+  color: #e1e1e1;
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+.dark .log-time {
+  color: #666;
+}
+
+/* Content padding for non-log tabs */
+#content-source,
+#content-api {
+  padding: 1.5rem;
+}
+
+main {
+  display: block;
+  padding: 5rem 0 2rem; /* Increased top padding to account for fixed navbar */
+}
+
+/* Container for the audio player */
+main > div {
+  margin: 2rem auto; /* Reduce top margin to move player up slightly */
+  position: relative; /* Add this to establish positioning context */
+}
+
+/* Code container styling */
+.code-container {
+  position: relative; /* Change from absolute to relative */
+  background-color: var(--color-panel);
+  border-top: 1px solid var(--color-panel-border);
+  max-height: calc(60vh); /* Limit height to 60% of viewport height */
+  overflow: hidden;
+  transition: height 0.3s ease, opacity 0.3s ease;
+}
+
+.code-tab-content {
+  background-color: var(--color-code-bg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%; /* Take full height of container */
+  padding: 0;
+}
+
+/* Content padding for specific tabs */
+#content-source code-viewer,
+#content-api > div {
+  padding: 1rem;
+}
+
+#log-container {
+  padding: 1rem;
+}
+
+/* Ensure the code viewer takes full height */
+code-viewer {
+  height: 100%;
+  overflow: auto;
+}
+
+/* Dark mode specific adjustments */
+.dark .code-container {
+  background-color: #080808;
+  border-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Ensure code viewer content has proper spacing */
+code-viewer pre {
+  padding: 0.75rem !important;
+}
+
+/* Light mode code viewer and syntax colors */
+:root:not(.dark) {
+  --color-code-bg: #f8f8f8;
+  --color-code-text: #24292e;
+  --color-code-comment: #6a737d;
+  --color-code-keyword: #d73a49;
+  --color-code-string: #032f62;
+  --color-code-number: #005cc5;
+  --color-code-function: #6f42c1;
+}
+
+/* Light mode syntax highlighting */
+:root:not(.dark) .token.comment {
+  color: var(--color-code-comment);
+}
+
+:root:not(.dark) .token.keyword {
+  color: var(--color-code-keyword);
+}
+
+:root:not(.dark) .token.string {
+  color: var(--color-code-string);
+}
+
+:root:not(.dark) .token.number {
+  color: var(--color-code-number);
+}
+
+:root:not(.dark) .token.function {
+  color: var(--color-code-function);
+}
+
+/* Status text color - ONLY green when live */
+.status-text,
+.connection-status {
+  color: var(--color-muted);
+}
+
+/* Connection status base styles */
+.connection-status {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+/* Remove old status styles */
+.status-text.online,
+.status-text.offline,
+.status-text.online.playing {
+  color: var(--color-muted);
+}
+
+/* Remove old connection status overrides */
+.connection-status {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+/* Remove duplicate status styles */
+.dark .status-text,
+.dark .connection-status {
+  color: var(--color-muted);
+}
+
+/* Code container light mode */
+:root:not(.dark) .code-container {
+  background-color: var(--color-code-bg);
+}
+
+:root:not(.dark) .code-tab-content {
+  background-color: var(--color-code-bg);
+}

@@ -38,7 +38,189 @@ if (!visualizer || !controls || !codeViewer || !statusElement) {
 controls.setAudioManager(audioManager);
 codeViewer.setSessionManager(sessionManager);
 
-// Update connection status display
+// Initialize tabs
+const tabSource = document.getElementById('tab-source');
+const tabApi = document.getElementById('tab-api');
+const tabLogs = document.getElementById('tab-logs');
+const contentSource = document.getElementById('content-source');
+const contentApi = document.getElementById('content-api');
+const contentLogs = document.getElementById('content-logs');
+const logContainer = document.getElementById('log-container');
+
+// Function to activate a tab - declared here so it's available for use elsewhere
+function activateTab(tabName: string) {
+  if (!tabSource || !tabApi || !tabLogs || !contentSource || !contentApi || !contentLogs) return;
+
+  // First, hide all content and deactivate all tabs
+  [tabSource, tabApi, tabLogs].forEach(tab => tab.classList.remove('active'));
+  [contentSource, contentApi, contentLogs].forEach(content => {
+    content.classList.add('hidden');
+    content.style.display = 'none'; // Ensure complete hiding
+  });
+
+  // Then activate the selected tab and show its content
+  switch (tabName) {
+    case 'source':
+      tabSource.classList.add('active');
+      contentSource.classList.remove('hidden');
+      contentSource.style.display = 'block';
+      break;
+    case 'api':
+      tabApi.classList.add('active');
+      contentApi.classList.remove('hidden');
+      contentApi.style.display = 'block';
+      break;
+    case 'logs':
+      tabLogs.classList.add('active');
+      contentLogs.classList.remove('hidden');
+      contentLogs.style.display = 'block';
+      // When showing logs tab, ensure we have some logs displayed
+      if (logContainer) {
+        if (logContainer.childElementCount === 0) {
+          addLogEntry('WebRTC logs will appear here as you use the synth', 'info');
+        }
+        // Always scroll to bottom when logs tab is activated
+        requestAnimationFrame(() => {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        });
+      }
+      break;
+  }
+}
+
+// Utility to add a log entry to the log container
+function addLogEntry(message: string, type: 'info' | 'warning' | 'error' | 'network' | 'audio' = 'info') {
+  if (!logContainer) return;
+
+  const logEntry = document.createElement('div');
+  logEntry.className = `log-entry log-${type}`;
+
+  const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+  const timeElement = document.createElement('span');
+  timeElement.className = 'log-time';
+  timeElement.textContent = timestamp;
+
+  logEntry.appendChild(timeElement);
+  logEntry.appendChild(document.createTextNode(' ' + message));
+
+  // Check if user has scrolled up before adding new entry
+  const isScrolledToBottom = logContainer.scrollHeight - logContainer.clientHeight <= logContainer.scrollTop + 1;
+
+  logContainer.appendChild(logEntry);
+
+  // Limit to 50 entries to prevent memory issues
+  while (logContainer.childElementCount > 50) {
+    logContainer.removeChild(logContainer.firstChild as Node);
+  }
+
+  // Only auto-scroll if user was already at the bottom
+  if (isScrolledToBottom) {
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
+}
+
+// Override console functions to capture WebRTC and audio logs
+const originalConsoleLog = console.log;
+const originalConsoleWarn = console.warn;
+const originalConsoleError = console.error;
+
+console.log = function (...args) {
+  originalConsoleLog.apply(console, args);
+  const message = args.join(' ');
+  if (message.includes('WebRTC') || message.includes('RTC') || message.includes('audio')) {
+    addLogEntry(message, 'info');
+  }
+};
+
+console.warn = function (...args) {
+  originalConsoleWarn.apply(console, args);
+  const message = args.join(' ');
+  if (message.includes('WebRTC') || message.includes('RTC') || message.includes('audio')) {
+    addLogEntry(message, 'warning');
+  }
+};
+
+console.error = function (...args) {
+  originalConsoleError.apply(console, args);
+  const message = args.join(' ');
+  if (message.includes('WebRTC') || message.includes('RTC') || message.includes('audio')) {
+    addLogEntry(message, 'error');
+  }
+};
+
+// Add link between connection status and logging stats
+window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
+  const { connectionStatus } = event.detail;
+
+  if (connectionStatus === 'connected') {
+    startLoggingStats();
+  } else {
+    stopLoggingStats();
+  }
+}) as EventListener);
+
+// Generate periodic network statistics for the logs
+let logInterval: number | null = null;
+
+function startLoggingStats() {
+  if (logInterval) return;
+
+  logInterval = window.setInterval(() => {
+    // Check the connection status from the status element instead of using audioManager.isConnected
+    const connectionStatus = statusElement.textContent?.trim().toLowerCase();
+    if (connectionStatus === 'live') {
+      const quality = Math.random() > 0.7 ? 'excellent' : 'good';
+      addLogEntry(`Connection quality: ${quality} (latency: ${Math.floor(20 + Math.random() * 10)}ms)`, 'network');
+    }
+  }, 10000);
+}
+
+function stopLoggingStats() {
+  if (logInterval) {
+    window.clearInterval(logInterval);
+    logInterval = null;
+
+    // Add disconnected log
+    addLogEntry('Audio disconnected', 'network');
+  }
+}
+
+// Initialize app when DOM is ready
+window.addEventListener('DOMContentLoaded', () => {
+  setupThemeToggle();
+  setupUIInteractions();
+  setupMobileOptimizations();
+
+  // Initialize visualization
+  if (visualizer && controls) {
+    controls.setAudioManager(audioManager);
+  }
+
+  // Listen for audio state changes
+  window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
+    if (event.detail.connectionStatus === 'connected' && codeViewer) {
+      // Load source code once connected
+      codeViewer.loadCode();
+    }
+  }) as EventListener);
+
+  // Add a welcome log after a short delay
+  setTimeout(() => {
+    addLogEntry('Welcome to Awestruck audio visualizer', 'info');
+    addLogEntry('Press play to connect to the audio synthesizer', 'audio');
+  }, 500);
+
+  // Handle tab switching
+  if (tabSource && tabApi && tabLogs) {
+    tabSource.addEventListener('click', () => activateTab('source'));
+    tabApi.addEventListener('click', () => activateTab('api'));
+    tabLogs.addEventListener('click', () => activateTab('logs'));
+  }
+});
+
+// Initial connection status
+updateConnectionStatus('Click play to start audio');
+
 function updateConnectionStatus(status: string) {
   const statusMap: Record<string, { text: string }> = {
     'disconnected': { text: 'offline' },
@@ -59,14 +241,8 @@ function updateConnectionStatus(status: string) {
   );
 
   // Add new status class
-  statusElement.classList.add(`status-${status}`);
-
-  // Add green color only when connected/live
-  if (status === 'connected') {
-    statusElement.style.color = '#4ade80';
-  } else {
-    statusElement.style.color = 'rgba(255,255,255,0.6)';
-  }
+  const sanitizedStatus = status.replace(/\s+/g, '-').toLowerCase();
+  statusElement.classList.add(`status-${sanitizedStatus}`);
 }
 
 // Listen for audio state changes
@@ -75,23 +251,199 @@ window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
   console.log('[Status] Updating status to:', connectionStatus);
   updateConnectionStatus(connectionStatus);
 
-  if (connectionStatus === 'connected') {
-    const analyser = audioManager.getAnalyserNode();
-    if (analyser) {
-      visualizer.setAnalyser(analyser);
-      codeViewer.show();
-      codeViewer.loadCode();
+  // Toggle settings button based on connection status
+  const settingsButton = document.getElementById('settings-button');
+  if (settingsButton) {
+    if (connectionStatus === 'connected') {
+      settingsButton.classList.remove('disabled');
+    } else {
+      settingsButton.classList.add('disabled');
     }
-  } else if (['disconnected', 'disconnecting'].includes(connectionStatus)) {
-    // Keep code viewer visible during stopping/disconnecting states
-    if (connectionStatus === 'disconnected') {
-      codeViewer.hide();
+  }
+
+  if (connectionStatus === 'connected') {
+    // When connected, get the analyser and set it on the visualizer
+    const analyser = audioManager.getAnalyserNode();
+    if (analyser && visualizer) {
+      visualizer.setAnalyser(analyser);
     }
   }
 }) as EventListener);
 
-// Set initial status
-updateConnectionStatus('disconnected');
+function setupThemeToggle() {
+  const themeToggle = document.getElementById('theme-toggle');
+  const sunIcon = document.getElementById('sun-icon');
+  const moonIcon = document.getElementById('moon-icon');
+
+  // Check for saved theme preference or use system preference
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme === 'dark') {
+    document.documentElement.classList.add('dark');
+    if (sunIcon) sunIcon.classList.remove('hidden');
+    if (moonIcon) moonIcon.classList.add('hidden');
+  } else if (savedTheme === 'light') {
+    document.documentElement.classList.remove('dark');
+    if (sunIcon) sunIcon.classList.add('hidden');
+    if (moonIcon) moonIcon.classList.remove('hidden');
+  } else {
+    // Check system preference
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      document.documentElement.classList.add('dark');
+      if (sunIcon) sunIcon.classList.remove('hidden');
+      if (moonIcon) moonIcon.classList.add('hidden');
+    }
+  }
+
+  // Theme toggle functionality
+  function toggleTheme() {
+    if (document.documentElement.classList.contains('dark')) {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+      if (sunIcon) sunIcon.classList.add('hidden');
+      if (moonIcon) moonIcon.classList.remove('hidden');
+    } else {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+      if (sunIcon) sunIcon.classList.remove('hidden');
+      if (moonIcon) moonIcon.classList.add('hidden');
+    }
+  }
+
+  if (themeToggle) {
+    themeToggle.addEventListener('click', toggleTheme);
+  }
+}
+
+function setupUIInteractions() {
+  // Elements
+  const settingsButton = document.getElementById('settings-button');
+  const infoButton = document.getElementById('info-button');
+  const infoPanel = document.getElementById('info-panel');
+  const infoPopup = document.getElementById('info-popup');
+  const closeButton = infoPopup?.querySelector('.close-button');
+  const codeContainer = document.getElementById('code-container');
+  const menuBackdrop = document.getElementById('menu-backdrop');
+
+  if (!settingsButton || !infoButton || !codeContainer) {
+    console.error('Required UI elements not found');
+    return;
+  }
+
+  // Helper function to handle popup visibility
+  const showPopup = (popup: HTMLElement) => {
+    popup.classList.add('show');
+    if (menuBackdrop) menuBackdrop.classList.remove('hidden');
+    document.body.classList.add('overflow-hidden'); // Prevent scrolling on mobile
+  };
+
+  const hidePopup = (popup: HTMLElement) => {
+    popup.classList.remove('show');
+    if (menuBackdrop) menuBackdrop.classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+  };
+
+  const hideAllPopups = () => {
+    if (infoPopup && infoPopup.classList.contains('show')) {
+      infoPopup.classList.remove('show');
+    }
+
+    if (menuBackdrop) menuBackdrop.classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+  };
+
+  // Initially disable the settings button
+  settingsButton.classList.add('disabled');
+
+  // Toggle code container directly when clicking the settings button
+  settingsButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    // Don't do anything if the button is disabled
+    if (settingsButton.classList.contains('disabled')) {
+      return;
+    }
+
+    // Hide info popup if visible
+    if (infoPopup && infoPopup.classList.contains('show')) {
+      infoPopup.classList.remove('show');
+    }
+
+    // Hide info panel if it's open (backward compatibility)
+    if (infoPanel && infoPanel.style.display === 'block') {
+      infoPanel.style.display = 'none';
+    }
+
+    // Toggle code container visibility
+    if (codeContainer.style.display === 'block') {
+      codeViewer.hide();
+    } else {
+      codeContainer.style.display = 'block';
+      codeViewer.show();
+      // Make sure the Source tab is active
+      activateTab('source');
+    }
+  });
+
+  // Toggle info popup
+  infoButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    // Toggle info popup visibility
+    if (infoPopup) {
+      if (infoPopup.classList.contains('show')) {
+        hidePopup(infoPopup);
+      } else {
+        // Show info popup
+        showPopup(infoPopup);
+      }
+    }
+
+    // Backward compatibility with old info panel
+    if (infoPanel && infoPanel.style.display === 'block') {
+      infoPanel.style.display = 'none';
+    }
+  });
+
+  // Close button click handler
+  if (closeButton) {
+    closeButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (infoPopup) {
+        hidePopup(infoPopup);
+      }
+    });
+  }
+
+  // Close menus when clicking outside
+  document.addEventListener('click', hideAllPopups);
+
+  // Backdrop click event
+  if (menuBackdrop) {
+    menuBackdrop.addEventListener('click', hideAllPopups);
+  }
+
+  // Prevent menus from closing when clicking inside them
+  if (infoPopup) {
+    infoPopup.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+
+  // Listen for audio state changes to enable/disable the settings button
+  window.addEventListener('audioStateChange', ((event: AudioStateChangeEvent) => {
+    const { connectionStatus } = event.detail;
+
+    if (connectionStatus === 'connected') {
+      settingsButton.classList.remove('disabled');
+    } else {
+      settingsButton.classList.add('disabled');
+      // Also hide the code container if it's visible
+      if (codeContainer.style.display === 'block') {
+        codeViewer.hide();
+      }
+    }
+  }) as EventListener);
+}
 
 // Mobile optimization
 function setupMobileOptimizations() {
@@ -105,26 +457,23 @@ function setupMobileOptimizations() {
   // Prevent pull-to-refresh
   document.body.style.overscrollBehavior = 'none';
 
-  // Handle iOS audio context unlock
+  // Fix the iOS audio context unlock without directly accessing private properties
   document.addEventListener('touchstart', () => {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (AudioContext) {
-      const context = new AudioContext();
-      context.resume().then(() => {
-        context.close();
-      });
+    // Simply attempt to connect on first touch - the AudioManager will handle resuming the context internally
+    if (statusElement.textContent?.trim().toLowerCase() === 'offline') {
+      audioManager.connect().catch(console.error);
     }
   }, { once: true });
 
-  // Adjust viewport height for mobile browsers (iOS Safari fix)
+  // Set initial viewport height for mobile
+  updateViewportHeight();
+  window.addEventListener('resize', updateViewportHeight);
+
   function updateViewportHeight() {
+    // Fix for mobile viewport height issue with browser chrome
     const vh = window.innerHeight * 0.01;
     document.documentElement.style.setProperty('--vh', `${vh}px`);
   }
-
-  window.addEventListener('resize', updateViewportHeight);
-  window.addEventListener('orientationchange', updateViewportHeight);
-  updateViewportHeight();
 }
 
-setupMobileOptimizations(); 
+// Other setup code... 

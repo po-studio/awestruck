@@ -17,6 +17,7 @@ export class PlaybackControls extends HTMLElement {
         display: flex;
         align-items: center;
         position: relative;
+        z-index: 10;
       }
 
       .container {
@@ -27,27 +28,31 @@ export class PlaybackControls extends HTMLElement {
 
       .button-container {
         position: relative;
-        width: 24px;
-        height: 24px;
+        width: 42px;
+        height: 42px;
       }
 
       button {
         position: absolute;
         inset: 0;
-        background: none;
+        background: rgba(40, 40, 40, 0.5);
         border: none;
+        border-radius: 10px;
         padding: 0;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
         color: #ffffff;
-        opacity: 0.7;
-        transition: opacity 0.2s;
+        opacity: 0.9;
+        transition: all 0.2s ease;
+        backdrop-filter: blur(4px);
       }
 
       button:not(:disabled):hover {
         opacity: 1;
+        transform: scale(1.02);
+        background: rgba(60, 60, 60, 0.55);
       }
 
       button:disabled {
@@ -55,19 +60,19 @@ export class PlaybackControls extends HTMLElement {
         cursor: default;
       }
 
-      /* Initial pulse animation */
+      /* Improved pulse animation */
       @keyframes pulse {
-        0% { transform: scale(1); opacity: 0.7; }
-        50% { transform: scale(1.1); opacity: 1; }
-        100% { transform: scale(1); opacity: 0.7; }
+        0% { transform: scale(1); opacity: 0.9; }
+        50% { transform: scale(1.03); opacity: 1; }
+        100% { transform: scale(1); opacity: 0.9; }
       }
 
       button.initial {
-        animation: pulse 2s infinite;
+        animation: pulse 2.5s infinite cubic-bezier(0.25, 0.46, 0.45, 0.94);
       }
 
       button.initial:hover {
-        animation: none;
+        animation-play-state: paused;
       }
 
       /* Loading spinner */
@@ -79,7 +84,7 @@ export class PlaybackControls extends HTMLElement {
         display: none;
         position: absolute;
         inset: 0;
-        border: 2px solid rgba(255,255,255,0.1);
+        border: 1.5px solid rgba(255,255,255,0.1);
         border-top-color: rgba(255,255,255,0.7);
         border-radius: 50%;
         animation: spin 1s linear infinite;
@@ -93,38 +98,13 @@ export class PlaybackControls extends HTMLElement {
         opacity: 0;
       }
 
-      /* Hint text */
-      .hint {
-        font-size: 0.75rem;
-        color: rgba(255,255,255,0.6);
-        transition: opacity 0.3s;
-        margin-left: 0.5rem;
-      }
-
-      .hint.hidden {
-        opacity: 0;
-      }
-
       /* SVG icons */
-      .icon {
-        width: 24px;
-        height: 24px;
-        fill: currentColor;
-      }
-
-      .play-icon {
-        width: 0;
-        height: 0;
-        border-style: solid;
-        border-width: 8px 0 8px 12px;
-        border-color: transparent transparent transparent currentColor;
-      }
-
-      .pause-icon {
-        width: 12px;
-        height: 14px;
-        border-left: 3px solid currentColor;
-        border-right: 3px solid currentColor;
+      svg {
+        width: 20px;
+        height: 20px;
+        stroke: currentColor;
+        stroke-width: 1.25;
+        fill: none;
       }
     `;
 
@@ -133,13 +113,12 @@ export class PlaybackControls extends HTMLElement {
       <div class="container">
         <div class="button-container">
           <button class="initial" aria-label="Play/Pause" data-state="stopped">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            <svg viewBox="0 0 24 24">
+              <polygon points="7 4 21 12 7 20 7 4"></polygon>
             </svg>
           </button>
           <div class="spinner"></div>
         </div>
-        <div class="hint">Click play to begin</div>
       </div>
     `;
 
@@ -156,16 +135,14 @@ export class PlaybackControls extends HTMLElement {
     if (!this.audioManager) return;
 
     const button = this.shadowRoot?.querySelector('button');
-    const hint = this.shadowRoot?.querySelector('.hint');
 
     if (!button) return;
 
     const isPlaying = button.getAttribute('data-state') === 'playing';
 
     if (!isPlaying) {
-      // Remove initial pulse animation and hint
+      // Remove initial pulse animation
       button.classList.remove('initial');
-      hint?.classList.add('hidden');
 
       // Disable button and show loading state
       button.disabled = true;
@@ -192,6 +169,8 @@ export class PlaybackControls extends HTMLElement {
         await this.audioManager.disconnect();
         button.setAttribute('data-state', 'stopped');
         button.innerHTML = this.getPlayIcon();
+        // Add initial pulse animation back when stopped
+        button.classList.add('initial');
       } catch (error) {
         console.error('Playback toggle failed:', error);
       } finally {
@@ -203,17 +182,17 @@ export class PlaybackControls extends HTMLElement {
 
   private getPlayIcon(): string {
     return `
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+      <svg viewBox="0 0 24 24">
+        <polygon points="7 4 21 12 7 20 7 4"></polygon>
       </svg>
     `;
   }
 
   private getStopIcon(): string {
     return `
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <rect x="6" y="4" width="4" height="16"></rect>
-        <rect x="14" y="4" width="4" height="16"></rect>
+      <svg viewBox="0 0 24 24">
+        <line x1="9" y1="6" x2="9" y2="18"></line>
+        <line x1="15" y1="6" x2="15" y2="18"></line>
       </svg>
     `;
   }

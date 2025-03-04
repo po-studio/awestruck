@@ -6,6 +6,7 @@ export class CodeViewer extends HTMLElement {
   private pre: HTMLPreElement;
   private code: HTMLElement;
   private sessionManager: any; // Will be set via public method
+  private observer: MutationObserver;
 
   constructor() {
     super();
@@ -14,6 +15,7 @@ export class CodeViewer extends HTMLElement {
     this.code.className = 'language-supercollider';
     this.pre.appendChild(this.code);
     this.setupComponent();
+    this.observeDarkMode();
   }
 
   private setupComponent(): void {
@@ -38,143 +40,84 @@ export class CodeViewer extends HTMLElement {
         padding: 0 1rem !important;
         min-height: 100% !important;
         background: transparent !important;
-        color: #000000 !important;
-        border: none !important;
-        border-radius: 0 !important;
-        overflow-y: auto !important;
-        overflow-x: auto !important;
-        font-family: 'IBM Plex Mono', monospace !important;
-        font-size: 0.9rem !important;
-        font-weight: 400 !important;
-        line-height: 1.5 !important;
-        display: block !important;
-        scroll-behavior: smooth !important;
-        border-top: 1px solid rgba(0,0,0,0.1) !important; /* Add subtle border */
+        color: inherit !important;
       }
       
       code {
-        display: block !important;
-        background: transparent !important;
-        color: #000000 !important;
-        white-space: pre !important;
-        margin: 0 !important;
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-size: 14px !important;
+        line-height: 1.5 !important;
         padding: 0 !important;
+        background: transparent !important;
+        color: inherit !important;
       }
-
-      :host(.active) pre,
-      :host(.active) code {
-        background-color: #ffffff !important;
+      
+      /* Dark mode styles within shadow DOM */
+      :host-context(.dark) pre,
+      :host-context(.dark) code {
+        background-color: #080808 !important;
+        color: #e1e1e1 !important;
       }
-
-      /* Greyscale syntax highlighting with typography */
-      .token {
-        color: #222222 !important;  /* default color */
-        font-weight: 400 !important;
+      
+      :host-context(.dark) .token.comment {
+        color: #6a9955 !important;
       }
-
-      .token.comment { 
-        color: #888888 !important;
-        font-style: italic !important;
-        font-weight: 300 !important;
+      
+      :host-context(.dark) .token.keyword {
+        color: #c586c0 !important;
       }
-
-      .token.keyword { 
-        color: #111111 !important;
-        font-weight: 700 !important;
+      
+      :host-context(.dark) .token.string {
+        color: #ce9178 !important;
       }
-
-      .token.function { 
-        color: #222222 !important;
-        font-weight: 600 !important;
+      
+      :host-context(.dark) .token.number {
+        color: #b5cea8 !important;
       }
-
-      .token.string { 
-        color: #444444 !important;
-        font-style: italic !important;
+      
+      :host-context(.dark) .token.function {
+        color: #dcdcaa !important;
       }
-
-      .token.number { 
-        color: #333333 !important;
-        font-weight: 500 !important;
-      }
-
-      .token.operator { 
-        color: #666666 !important;
-        font-weight: 400 !important;
-      }
-
-      .token.punctuation { 
-        color: #777777 !important;
-        font-weight: 300 !important;
-      }
-
-      .token.parameter { 
-        color: #555555 !important;
-        font-style: italic !important;
-      }
-
-      /* Special SuperCollider tokens */
-      .token.class-name {
-        color: #222222 !important;
-        font-weight: 700 !important;
-      }
-
-      .token.method {
-        color: #333333 !important;
-        font-weight: 600 !important;
-      }
-
-      .token.variable {
-        color: #444444 !important;
-        font-style: italic !important;
-      }
-
-      @media (max-width: 640px) {
-        pre {
-          font-size: 0.8rem !important;
-          padding: 0.75rem !important;
-          line-height: 1.4 !important;
+      
+      /* Check CSS custom property as fallback */
+      @media (prefers-color-scheme: dark) {
+        pre, code {
+          background-color: #080808 !important;
+          color: #e1e1e1 !important;
         }
-
-        .code-line {
-          padding: 0.05rem 0;  // Slightly tighter spacing on mobile
-        }
-      }
-
-      /* Add horizontal scrolling with touch support */
-      pre {
-        -webkit-overflow-scrolling: touch !important;
-        scrollbar-width: thin !important;
-      }
-
-      /* Custom scrollbar styling */
-      pre::-webkit-scrollbar {
-        height: 4px !important;
-        width: 4px !important;
-      }
-
-      pre::-webkit-scrollbar-track {
-        background: #f0f0f0 !important;
-      }
-
-      pre::-webkit-scrollbar-thumb {
-        background: #999 !important;
-        border-radius: 2px !important;
-      }
-
-      .code-line {
-        display: inline-block;
-        width: 100%;
-        opacity: 0;
-      }
-
-      .code-line.animate {
-        opacity: 1;
       }
     `;
 
     shadow.appendChild(style);
     shadow.appendChild(this.pre);
+  }
+
+  private observeDarkMode(): void {
+    // Apply dark mode initially
+    this.updateTheme();
+
+    // Watch for changes to the dark mode class on html element
+    this.observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === 'class') {
+          this.updateTheme();
+        }
+      });
+    });
+
+    this.observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+  }
+
+  private updateTheme(): void {
+    const isDarkMode = document.documentElement.classList.contains('dark');
+    if (isDarkMode) {
+      this.setAttribute('theme', 'dark');
+    } else {
+      this.removeAttribute('theme');
+    }
   }
 
   public async loadCode(): Promise<void> {
@@ -228,61 +171,22 @@ export class CodeViewer extends HTMLElement {
       container.style.display = 'block';
 
       // Force a reflow before setting initial transition values
-      container.offsetHeight; // Force reflow
+      container.offsetHeight;
 
       // Set initial state for transition
       container.style.height = '0';
       container.style.opacity = '0';
 
-      // Add one-time transition listener
-      const onTransitionStart = () => {
-        // Start scrolling as soon as the transition begins
-        const duration = 300;
-        const startTime = performance.now();
-        const startScroll = container.scrollTop;
-        const endScroll = container.scrollHeight;
-
-        const animateScroll = (currentTime: number) => {
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-
-          const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
-          const currentProgress = easeOut(progress);
-
-          container.scrollTop = startScroll + (endScroll - startScroll) * currentProgress;
-          if (this.pre) {
-            this.pre.scrollTop = container.scrollTop;
-          }
-
-          if (progress < 1) {
-            requestAnimationFrame(animateScroll);
-          }
-        };
-
-        requestAnimationFrame(animateScroll);
-      };
-
-      container.addEventListener('transitionstart', onTransitionStart, { once: true });
-
       // Use double requestAnimationFrame to ensure styles are applied
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const viewportHeight = window.innerHeight;
-          const headerHeight = 200;
-          const footerHeight = 60;
-          const visualizerHeight = 80;
-          const controlsHeight = 52;
 
-          // Add some padding to ensure footer is comfortably visible
-          const bottomPadding = 20;
-
-          // Calculate max container height with padding
-          const maxContainerHeight = viewportHeight - headerHeight - footerHeight - bottomPadding;
-          const maxCodeHeight = maxContainerHeight - visualizerHeight - controlsHeight;
+          // Use 60% of viewport height
+          const targetHeight = Math.min(viewportHeight * 0.6, 600);
 
           // Trigger transition
-          container.style.height = `${maxCodeHeight}px`;
-          container.style.maxHeight = `${maxCodeHeight}px`;
+          container.style.height = `${targetHeight}px`;
           container.style.opacity = '1';
         });
       });
@@ -309,6 +213,12 @@ export class CodeViewer extends HTMLElement {
           this.pre.scrollTop = 0;
         }
       }, 300); // Match transition duration
+    }
+  }
+
+  disconnectedCallback() {
+    if (this.observer) {
+      this.observer.disconnect();
     }
   }
 }
