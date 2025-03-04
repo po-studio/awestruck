@@ -320,6 +320,7 @@ function setupUIInteractions() {
   const infoButton = document.getElementById('info-button');
   const infoPanel = document.getElementById('info-panel');
   const infoPopup = document.getElementById('info-popup');
+  const closeButton = infoPopup?.querySelector('.close-button');
   const codeContainer = document.getElementById('code-container');
   const menuBackdrop = document.getElementById('menu-backdrop');
 
@@ -402,6 +403,16 @@ function setupUIInteractions() {
       infoPanel.style.display = 'none';
     }
   });
+
+  // Close button click handler
+  if (closeButton) {
+    closeButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (infoPopup) {
+        hidePopup(infoPopup);
+      }
+    });
+  }
 
   // Close menus when clicking outside
   document.addEventListener('click', hideAllPopups);

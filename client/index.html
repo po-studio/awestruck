@@ -33,14 +33,7 @@
     <nav class="navbar">
         <div class="flex items-center">
             <a href="/" class="flex items-center">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
-                    class="mr-3">
-                    <path
-                        d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
-                        stroke="currentColor" stroke-width="2" />
-                    <path d="M8 12.5L10.5 15L16 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                        stroke-linejoin="round" />
-                </svg>
+                <img src="/BrandSquare.svg" alt="Awestruck Logo" class="w-7 h-7 mr-3" />
                 <span class="text-xl font-medium">Awestruck</span>
             </a>
         </div>
@@ -77,14 +70,19 @@
                 <!-- Info popup -->
                 <div id="info-popup" class="popup-menu hidden z-20">
                     <div class="p-4">
-                        <h2 class="text-lg font-medium mb-3">Deployable Synths</h2>
-                        <p class="mb-3 text-sm opacity-80">AI-driven audio synthesis with real-time WebRTC streaming</p>
-
-                        <h3 class="text-base font-medium mt-4 mb-2">Coming soon:</h3>
-                        <ul class="pl-5">
-                            <li class="text-sm mb-2 opacity-75">Networked OSC for real-time synth modulation</li>
-                            <li class="text-sm mb-2 opacity-75">Text-to-audio prompting for on-demand synths</li>
-                            <li class="text-sm mb-2 opacity-75">APIs and SDKs for developer integrations</li>
+                        <button class="close-button" aria-label="Close">
+                            <svg viewBox="0 0 24 24">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                        <h2>Deployable Synths</h2>
+                        <p>Awestruck offers on-demand, streamable synths for developer integrations.</p>
+                        <h3>Coming soon:</h3>
+                        <ul>
+                            <li>Networked OSC for real-time synth modulation</li>
+                            <li>Text-to-audio prompting for custom synths</li>
+                            <li>APIs and SDKs for developer integrations</li>
                         </ul>
                     </div>
                 </div>
@@ -162,7 +160,7 @@
     <!-- Footer -->
     <footer class="py-4 px-6 border-t mt-auto">
         <div class="max-w-[90%] w-[600px] mx-auto flex flex-col md:flex-row justify-between items-center">
-            <span class="text-sm opacity-60 mb-2 md:mb-0">po at po dot studio</span>
+            <a href="https://po.studio" class="text-sm opacity-60 hover:opacity-100 transition-opacity">po.studio</a>
             <span class="text-sm opacity-60">&copy; 2025 Aurafex Technologies</span>
         </div>
     </footer>
